@@ -1,0 +1,198 @@
+import { basename, dirname } from "node:path";
+import { pathToFileURL } from "node:url";
+import {
+	atomicWrite,
+	listPlanVersions,
+	readClarifications,
+	readText,
+	type PlanVersion,
+	type WorkflowClarification,
+	type WorkflowFiles,
+} from "./storage.ts";
+
+export interface WorkflowDashboardData {
+	slug?: string;
+	description?: string;
+	generatedAt: string;
+	versions: Array<Pick<PlanVersion, "number" | "createdAt" | "content">>;
+	clarifications: WorkflowClarification[];
+}
+
+export async function writeWorkflowDashboard(files: WorkflowFiles): Promise<void> {
+	const [versions, clarifications, description] = await Promise.all([
+		listPlanVersions(files),
+		readClarifications(files),
+		readText(files.description),
+	]);
+	const data: WorkflowDashboardData = {
+		slug: basename(dirname(files.root)) === ".drafts" ? undefined : basename(files.root),
+		description: description.trim() || undefined,
+		generatedAt: new Date().toISOString(),
+		versions: versions.map(({ number, createdAt, content }) => ({ number, createdAt, content })),
+		clarifications: clarifications.entries,
+	};
+	await atomicWrite(files.dashboard, renderWorkflowDashboard(data));
+}
+
+export async function writeWorkflowDashboardRedirect(from: string, destination: string): Promise<void> {
+	const url = pathToFileURL(destination).href;
+	const serializedUrl = JSON.stringify(url).replaceAll("<", "\\u003c");
+	await atomicWrite(
+		from,
+		`<!doctype html>\n<html lang="en">\n<head>\n<meta charset="utf-8">\n<meta http-equiv="refresh" content="0;url=${escapeHtml(url)}">\n<title>Implementation plan moved</title>\n</head>\n<body>\n<p>This implementation plan moved to <a href="${escapeHtml(url)}">its completed workflow dashboard</a>.</p>\n<script>location.replace(${serializedUrl});</script>\n</body>\n</html>\n`,
+	);
+}
+
+export function renderWorkflowDashboard(data: WorkflowDashboardData): string {
+	const serialized = JSON.stringify(data).replaceAll("<", "\\u003c");
+	return String.raw`<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Implementation plan${data.slug ? ` · ${escapeHtml(data.slug)}` : ""}</title>
+<style>
+/* Isara design-system semantic tokens and component geometry. */
+:root {
+  --ds-black:#000;--ds-white:#fff;
+  --ds-blue-50:#eff5fe;--ds-blue-100:#cfe2ff;--ds-blue-200:#9ec5ff;--ds-blue-300:#6ea9ff;--ds-blue-400:#3d8cff;--ds-blue-500:#0d6fe1;--ds-blue-600:#0a59cc;--ds-blue-700:#084399;--ds-blue-800:#0d2c58;--ds-blue-900:#041e46;
+  --ds-cream-50:#f7f5f4;--ds-cream-100:#ece9e6;--ds-cream-200:#dad5d1;--ds-cream-300:#c1bbb6;--ds-cream-400:#a19a94;--ds-cream-600:#655d58;--ds-cream-900:#161412;
+  --ds-gray-600:#606060;--ds-gray-800:#2c2c2c;--ds-green-50:#e5f7e7;--ds-green-700:#066a2c;--ds-green-900:#072810;--ds-red-50:#ffe4e1;--ds-red-700:#921921;--ds-red-900:#330b0b;
+  --ds-font-sans:"Inter",-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;--ds-font-serif:"Libre Baskerville",Georgia,"Times New Roman",serif;--ds-font-mono:"SFMono-Regular",Consolas,"Liberation Mono",monospace;
+  --ds-text-primary:var(--ds-gray-800);--ds-text-secondary:var(--ds-gray-600);--ds-text-muted:var(--ds-cream-600);--ds-text-faint:var(--ds-cream-400);--ds-text-heading:var(--ds-black);
+  --ds-border-subtle:var(--ds-cream-200);--ds-border-strong:var(--ds-cream-300);--ds-surface-default:var(--ds-white);--ds-surface-subtle:var(--ds-cream-50);--ds-surface-inset:var(--ds-cream-100);--ds-surface-raised:var(--ds-white);
+  --ds-accent-action:var(--ds-blue-500);--ds-accent-action-hover:var(--ds-blue-600);--ds-accent-subtle:var(--ds-blue-100);--ds-accent-text:var(--ds-blue-700);--ds-focus-ring:var(--ds-blue-300);--ds-control-border:var(--ds-cream-300);--ds-control-muted:var(--ds-cream-600);--ds-control-hover-bg:var(--ds-cream-100);
+  --ds-success-text:var(--ds-green-700);--ds-success-subtle:var(--ds-green-50);--ds-danger-text:var(--ds-red-700);--ds-danger-subtle:var(--ds-red-50);
+  --ds-space-1:4px;--ds-space-2:8px;--ds-space-3:12px;--ds-space-4:16px;--ds-space-5:20px;--ds-space-6:24px;--ds-space-8:32px;--ds-space-10:40px;--ds-space-12:48px;
+  --ds-radius-sm:4px;--ds-radius-md:10px;--ds-radius-lg:15px;--ds-radius-full:9999px;--ds-shadow-sm:0 1px 2px rgba(22,20,18,.06);--ds-shadow-md:0 4px 12px rgba(22,20,18,.08);
+}
+[data-theme="dark"] {
+  --ds-text-primary:var(--ds-cream-50);--ds-text-secondary:var(--ds-cream-200);--ds-text-muted:var(--ds-cream-300);--ds-text-faint:var(--ds-cream-400);--ds-text-heading:var(--ds-white);
+  --ds-border-subtle:var(--ds-gray-800);--ds-border-strong:var(--ds-gray-600);--ds-surface-default:var(--ds-black);--ds-surface-subtle:var(--ds-cream-900);--ds-surface-inset:var(--ds-gray-800);--ds-surface-raised:var(--ds-cream-900);
+  --ds-accent-action:var(--ds-blue-400);--ds-accent-action-hover:var(--ds-white);--ds-accent-subtle:var(--ds-blue-100);--ds-accent-text:var(--ds-blue-800);--ds-control-border:var(--ds-gray-600);--ds-control-muted:var(--ds-cream-300);--ds-control-hover-bg:var(--ds-gray-800);
+  --ds-success-text:#81d090;--ds-success-subtle:var(--ds-green-900);--ds-danger-text:#fb8d87;--ds-danger-subtle:var(--ds-red-900);
+}
+*{box-sizing:border-box}html{background:var(--ds-surface-subtle);color:var(--ds-text-primary);font-family:var(--ds-font-sans)}body{margin:0;min-width:320px}button,select{font:inherit}
+.ds-app-header{position:sticky;top:0;z-index:20;display:flex;align-items:center;gap:var(--ds-space-4);height:60px;padding:0 var(--ds-space-6);background:color-mix(in srgb,var(--ds-surface-default) 94%,transparent);border-bottom:1px solid var(--ds-border-subtle);backdrop-filter:blur(14px)}
+.brand{display:flex;align-items:center;gap:var(--ds-space-3);min-width:0}.brand svg{width:28px;height:28px;flex:none;color:var(--ds-accent-action)}.brand-title{font-size:15px;font-weight:500;line-height:20px}
+.ds-tabs{display:flex;align-self:stretch;height:60px;margin-left:var(--ds-space-6)}.ds-tabs__tab{display:inline-flex;align-items:center;height:60px;padding:0 var(--ds-space-4);border:0;border-bottom:2px solid transparent;background:transparent;color:var(--ds-text-secondary);cursor:pointer;font-size:13px}.ds-tabs__tab:hover{color:var(--ds-text-primary)}.ds-tabs__tab--active{color:var(--ds-accent-action);border-bottom-color:var(--ds-accent-action)}
+.header-actions{display:flex;align-items:center;gap:var(--ds-space-2);margin-left:auto}.ds-badge{display:inline-flex;align-items:center;height:20px;padding:0 8px;border-radius:6px;background:var(--ds-surface-subtle);color:var(--ds-text-muted);font-size:11px;font-weight:600}.ds-badge[hidden]{display:none}.ds-button{display:inline-flex;align-items:center;justify-content:center;height:32px;padding:0 12px;border:1px solid var(--ds-control-border);border-radius:var(--ds-radius-md);background:transparent;color:var(--ds-control-muted);cursor:pointer;font-size:13px}.ds-button:hover{background:var(--ds-control-hover-bg)}button:focus-visible,select:focus-visible{outline:2px solid var(--ds-focus-ring);outline-offset:2px}
+.shell{width:min(1380px,100%);margin:0 auto;padding:var(--ds-space-8)}.view[hidden]{display:none}.plan-layout{display:grid;grid-template-columns:minmax(0,1fr) 340px;gap:var(--ds-space-6);align-items:start}.card{background:var(--ds-surface-default);border:1px solid var(--ds-border-subtle);border-radius:var(--ds-radius-lg);box-shadow:var(--ds-shadow-sm)}.plan-card{padding:clamp(24px,5vw,64px)}
+.markdown{max-width:850px;margin:0 auto;font-size:15px;line-height:1.7}.plan-document-header{display:flex;align-items:baseline;justify-content:space-between;gap:var(--ds-space-6);margin:0 0 32px;padding-bottom:20px;border-bottom:1px solid var(--ds-border-subtle)}.plan-document-header .plan-version{flex:none;color:var(--ds-accent-action);font-family:var(--ds-font-serif);font-size:24px;font-weight:400;line-height:34px;white-space:nowrap}.markdown h1,.markdown h2,.markdown h3,.markdown h4{color:var(--ds-text-heading);scroll-margin-top:80px}.markdown h1{margin:0 0 32px;font-family:var(--ds-font-serif);font-size:32px;font-weight:400;line-height:44px}.plan-document-header h1{margin:0}.markdown h2{margin:40px 0 12px;padding-top:8px;border-top:1px solid var(--ds-border-subtle);font-size:22px;font-weight:500;line-height:32px}.markdown h3{margin:28px 0 8px;font-size:18px;font-weight:500}.markdown p{margin:0 0 16px}.markdown ul,.markdown ol{margin:0 0 20px;padding-left:24px}.markdown li{margin:6px 0}.markdown blockquote{margin:20px 0;padding:12px 16px;border-left:3px solid var(--ds-accent-action);background:var(--ds-surface-subtle);color:var(--ds-text-secondary)}code{padding:2px 5px;border-radius:var(--ds-radius-sm);background:var(--ds-surface-inset);font-family:var(--ds-font-mono);font-size:.9em}.markdown pre{overflow:auto;padding:16px;border:1px solid var(--ds-border-subtle);border-radius:var(--ds-radius-md);background:var(--ds-surface-subtle)}.markdown pre code{padding:0;background:none}.empty{padding:48px;text-align:center;color:var(--ds-text-muted)}
+.clarifications{position:sticky;top:84px;overflow:hidden}.section-head{display:flex;align-items:center;justify-content:space-between;padding:18px 20px;border-bottom:1px solid var(--ds-border-subtle)}.section-head h2{margin:0;font-size:15px;font-weight:500}.clarification-list{display:flex;max-height:calc(100vh - 150px);overflow:auto;flex-direction:column}.clarification{padding:18px 20px;border-bottom:1px solid var(--ds-border-subtle)}.clarification:last-child{border-bottom:0}.clarification-label{margin-bottom:8px;color:var(--ds-accent-action);font-size:11px;font-weight:600;text-transform:uppercase}.clarification-question{margin:0 0 10px;color:var(--ds-text-secondary);font-size:13px;line-height:20px}.clarification-answer{margin:0;white-space:pre-wrap;font-size:15px;line-height:24px}.clarification-time{margin-top:10px;color:var(--ds-text-faint);font-size:11px}.clarification-empty{padding:24px 20px;color:var(--ds-text-muted);font-size:13px;line-height:20px}
+.diff-card{overflow:hidden}.diff-toolbar{display:flex;align-items:end;gap:var(--ds-space-3);padding:16px 20px;border-bottom:1px solid var(--ds-border-subtle);background:var(--ds-surface-default)}.field{display:flex;flex-direction:column;gap:5px}.field label{color:var(--ds-text-muted);font-size:11px;font-weight:600}.ds-select{min-width:180px;height:38px;padding:0 34px 0 12px;border:1px solid var(--ds-border-subtle);border-radius:var(--ds-radius-md);background:var(--ds-surface-default);color:var(--ds-text-primary);cursor:pointer}.arrow{color:var(--ds-text-faint);font-size:18px;padding-bottom:8px}.diff-summary{margin-left:auto;align-self:center;color:var(--ds-text-muted);font-size:13px}.diff-scroll{overflow:auto;max-height:calc(100vh - 180px);background:var(--ds-surface-default)}.diff-table{width:100%;border-collapse:collapse;table-layout:fixed;font-family:var(--ds-font-mono);font-size:12px;line-height:20px}.diff-table col.line{width:52px}.diff-table td{vertical-align:top;border-bottom:1px solid color-mix(in srgb,var(--ds-border-subtle) 55%,transparent)}.line-number{padding:1px 8px;text-align:right;color:var(--ds-text-faint);background:var(--ds-surface-subtle);user-select:none}.diff-code{padding:1px 12px;white-space:pre-wrap;overflow-wrap:anywhere}.diff-code::before{display:inline-block;width:16px;color:var(--ds-text-faint)}tr.add .line-number,tr.add .diff-code{background:var(--ds-success-subtle)}tr.add .diff-code::before{content:"+";color:var(--ds-success-text)}tr.remove .line-number,tr.remove .diff-code{background:var(--ds-danger-subtle)}tr.remove .diff-code::before{content:"−";color:var(--ds-danger-text)}tr.context .diff-code::before{content:" ";}.diff-empty{padding:48px;text-align:center;color:var(--ds-text-muted)}
+@media(max-width:900px){.ds-app-header{padding:0 12px;gap:8px}.header-actions .ds-badge{display:none}.ds-tabs{margin-left:0}.ds-tabs__tab{padding:0 10px}.shell{padding:16px}.plan-layout{grid-template-columns:1fr}.clarifications{position:static}.clarification-list{max-height:none}.diff-toolbar{align-items:stretch;flex-direction:column}.ds-select{width:100%}.arrow{display:none}.diff-summary{margin-left:0}.diff-table col.line{width:38px}.line-number{padding:1px 4px}.diff-code{padding:1px 6px}}
+@media(max-width:560px){.plan-document-header{align-items:flex-start;flex-direction:column;gap:var(--ds-space-2)}.plan-document-header .plan-version{font-size:20px;line-height:28px}}
+</style>
+</head>
+<body>
+<header class="ds-app-header">
+  <div class="brand">
+    <svg viewBox="0 0 191.2 191.2" fill="none" role="img" aria-label="Isara"><g fill="currentColor"><path d="M163,148.17c12.19-15.89,24.55-43.65,13.71-62.73-3.85-6.21-8.43-8.22-15.66-8.26-9.73-.04-19.29,2.45-28.62,5.12-25.24,7.07-48.2,20.29-73.29,27.8-10.75,3.08-29.88,8.88-39.99,2.95-11.17-7.71-11.94-23.42-9.19-35.53,5.72-24.95,24.81-48.51,47.39-60.33,11.19-5.81,26.64-9.64,37.51-1,9.13,8.17,9.85,29.11,10.38,40.73.39,16.63-.64,33.08-3.18,49.55-3.12,15.54-6.42,31.41-6.61,47.26.14,6.05.28,13.17,4.04,17.93,3.86,4.15,9.71,5.87,15.36,5.95,19.73-.01,36.53-14.68,48.17-29.44Z"/><path d="M117.42,146.6c13.08-5.48,26.36-13.42,33.77-25.66,2.56-4.43,4.34-11.12-.32-14.72-6.79-5.47-16.54-6.75-24.82-7.85-20.27-2.84-40.82-1.23-61.1-3.98-7.62-1.12-15.37-2.38-22.49-5.52-5.82-2.51-8.59-6.24-8.17-12.68.77-7.96,6.03-14.62,11.51-19.98,17.25-16.24,47.6-27.95,71.13-22.09,5.25,1.49,10.62,4.65,12.49,10.22,1.26,5.95-1.2,11.12-3.34,16.28-9.81,21.37-28.45,38.27-43.05,58.25-3.37,4.86-7.06,11.12-5.45,17.15,5.53,15.26,32.61,10.85,43.75,6.54Z"/></g><circle cx="95.6" cy="95.6" r="94.6" stroke="currentColor" stroke-width="2"/></svg>
+    <div class="brand-title">Implementation plan</div>
+  </div>
+  <nav class="ds-tabs" aria-label="Dashboard views">
+    <button class="ds-tabs__tab" id="plan-tab" data-view="plan">Plan</button>
+    <button class="ds-tabs__tab" id="diff-tab" data-view="diff">Compare versions</button>
+  </nav>
+  <div class="header-actions"><span class="ds-badge" id="workflow-name"></span><button class="ds-button" id="refresh-button" type="button">Refresh</button><button class="ds-button" id="theme-button" type="button" aria-label="Toggle color theme">Theme</button></div>
+</header>
+<main class="shell">
+  <section class="view" id="plan-view">
+    <div class="plan-layout">
+      <article class="card plan-card"><div class="markdown"><div class="plan-document-header" id="plan-document-header"><div class="plan-version" id="version-badge"></div></div><div id="plan-content"></div></div></article>
+      <aside class="card clarifications"><div class="section-head"><h2>User clarifications</h2><span class="ds-badge" id="clarification-count"></span></div><div class="clarification-list" id="clarification-list"></div></aside>
+    </div>
+  </section>
+  <section class="view" id="diff-view" hidden>
+    <div class="card diff-card">
+      <div class="diff-toolbar">
+        <div class="field"><label for="from-version">Base version</label><select class="ds-select" id="from-version"></select></div><div class="arrow" aria-hidden="true">→</div>
+        <div class="field"><label for="to-version">Compare version</label><select class="ds-select" id="to-version"></select></div><div class="diff-summary" id="diff-summary"></div>
+      </div>
+      <div class="diff-scroll" id="diff-content"></div>
+    </div>
+  </section>
+</main>
+<script>
+const dashboard = ${serialized};
+const stateKey = "isara-workflow-dashboard:" + location.pathname;
+function escapeHtml(value) { return String(value).replace(/[&<>\"]/g, function(character) { if (character === "&") return "&amp;"; if (character === "<") return "&lt;"; if (character === ">") return "&gt;"; return "&quot;"; }); }
+function inlineMarkdown(value) { return escapeHtml(value).replace(/\x60([^\x60]+)\x60/g, "<code>$1</code>").replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>"); }
+function renderMarkdown(markdown) {
+  const lines = String(markdown || "").replace(/\r\n/g, "\n").split("\n");
+  let html = "", list = "", code = false, codeLines = [];
+  function closeList() { if (list) { html += "</" + list + ">"; list = ""; } }
+  for (const raw of lines) {
+    if (/^\s*\x60{3}/.test(raw)) { closeList(); if (code) { html += "<pre><code>" + escapeHtml(codeLines.join("\n")) + "</code></pre>"; codeLines = []; } code = !code; continue; }
+    if (code) { codeLines.push(raw); continue; }
+    const heading = /^(#{1,4})\s+(.+)$/.exec(raw);
+    if (heading) { closeList(); const level = heading[1].length; html += "<h" + level + ">" + inlineMarkdown(heading[2]) + "</h" + level + ">"; continue; }
+    const unordered = /^\s*[-*]\s+(.+)$/.exec(raw), ordered = /^\s*\d+[.)]\s+(.+)$/.exec(raw);
+    if (unordered || ordered) { const next = unordered ? "ul" : "ol"; if (list !== next) { closeList(); list = next; html += "<" + list + ">"; } html += "<li>" + inlineMarkdown((unordered || ordered)[1]) + "</li>"; continue; }
+    closeList();
+    if (!raw.trim()) continue;
+    const quote = /^>\s?(.*)$/.exec(raw); if (quote) { html += "<blockquote>" + inlineMarkdown(quote[1]) + "</blockquote>"; } else { html += "<p>" + inlineMarkdown(raw) + "</p>"; }
+  }
+  closeList(); if (code) html += "<pre><code>" + escapeHtml(codeLines.join("\n")) + "</code></pre>";
+  return html || '<div class="empty">The plan is empty.</div>';
+}
+function readState() { try { return JSON.parse(localStorage.getItem(stateKey) || "{}"); } catch { return {}; } }
+function saveState(patch) { try { localStorage.setItem(stateKey, JSON.stringify(Object.assign(readState(), patch))); } catch {} }
+function setView(view) {
+  const diff = view === "diff";
+  document.getElementById("plan-view").hidden = diff; document.getElementById("diff-view").hidden = !diff;
+  document.getElementById("plan-tab").classList.toggle("ds-tabs__tab--active", !diff); document.getElementById("diff-tab").classList.toggle("ds-tabs__tab--active", diff);
+  saveState({view: diff ? "diff" : "plan"});
+}
+function lines(value) { return String(value).replace(/\r\n/g, "\n").split("\n"); }
+function lineDiff(before, after) {
+  const a = lines(before), b = lines(after), cells = a.length * b.length;
+  if (cells > 2000000) {
+    const rows = [], length = Math.max(a.length, b.length);
+    for (let i=0;i<length;i++) { if (a[i] === b[i]) rows.push({kind:"context",old:i+1,new:i+1,text:a[i] || ""}); else { if (i<a.length) rows.push({kind:"remove",old:i+1,new:null,text:a[i]}); if (i<b.length) rows.push({kind:"add",old:null,new:i+1,text:b[i]}); } }
+    return rows;
+  }
+  const table = Array.from({length:a.length+1}, function(){ return new Uint32Array(b.length+1); });
+  for (let i=a.length-1;i>=0;i--) for (let j=b.length-1;j>=0;j--) table[i][j] = a[i] === b[j] ? table[i+1][j+1]+1 : Math.max(table[i+1][j],table[i][j+1]);
+  const result = []; let i=0,j=0;
+  while (i<a.length || j<b.length) {
+    if (i<a.length && j<b.length && a[i] === b[j]) { result.push({kind:"context",old:i+1,new:j+1,text:a[i]}); i++;j++; }
+    else if (j<b.length && (i===a.length || table[i][j+1] >= table[i+1][j])) { result.push({kind:"add",old:null,new:j+1,text:b[j++]}); }
+    else { result.push({kind:"remove",old:i+1,new:null,text:a[i++]}); }
+  }
+  return result;
+}
+function renderDiff() {
+  const from = Number(document.getElementById("from-version").value), to = Number(document.getElementById("to-version").value);
+  const before = dashboard.versions.find(function(version){return version.number===from;}), after = dashboard.versions.find(function(version){return version.number===to;});
+  if (!before || !after) return;
+  const rows = lineDiff(before.content,after.content); const added = rows.filter(function(row){return row.kind==="add";}).length, removed = rows.filter(function(row){return row.kind==="remove";}).length;
+  document.getElementById("diff-summary").textContent = added + " additions · " + removed + " deletions";
+  if (!added && !removed) { document.getElementById("diff-content").innerHTML = '<div class="diff-empty">These versions are identical.</div>'; return; }
+  let body = ""; for (const row of rows) body += '<tr class="' + row.kind + '"><td class="line-number">' + (row.old || "") + '</td><td class="line-number">' + (row.new || "") + '</td><td class="diff-code">' + escapeHtml(row.text || " ") + '</td></tr>';
+  document.getElementById("diff-content").innerHTML = '<table class="diff-table" aria-label="Plan version differences"><colgroup><col class="line"><col class="line"><col></colgroup><tbody>' + body + '</tbody></table>';
+}
+function initialize() {
+  const latest = dashboard.versions[dashboard.versions.length-1], description = dashboard.description || "", slugBadge = document.getElementById("workflow-name"), planContent = document.getElementById("plan-content"), planHeader = document.getElementById("plan-document-header"); slugBadge.textContent = dashboard.slug || ""; slugBadge.hidden = !dashboard.slug;
+  document.getElementById("version-badge").textContent = latest ? "Version " + latest.number : "No versions"; planContent.innerHTML = renderMarkdown(latest ? latest.content : ""); const planTitle = planContent.querySelector("h1") || Object.assign(document.createElement("h1"), {textContent:"Implementation plan"}); if (description) planTitle.textContent = description; planHeader.prepend(planTitle);
+  const clarificationList = document.getElementById("clarification-list"); document.getElementById("clarification-count").textContent = String(dashboard.clarifications.length);
+  if (!dashboard.clarifications.length) clarificationList.innerHTML = '<div class="clarification-empty">Answers from implementation questions will appear here verbatim.</div>';
+  for (const item of dashboard.clarifications) { const section=document.createElement("section"); section.className="clarification"; const label=document.createElement("div"); label.className="clarification-label"; label.textContent=item.label; const question=document.createElement("p"); question.className="clarification-question"; question.textContent=item.question; const answer=document.createElement("p"); answer.className="clarification-answer"; answer.textContent=item.answer; const time=document.createElement("div"); time.className="clarification-time"; time.textContent=new Date(item.answeredAt).toLocaleString(); section.append(label,question,answer,time); clarificationList.appendChild(section); }
+  const state=readState(), latestNumber=latest ? latest.number : 1, previousNumber=dashboard.versions.length>1 ? dashboard.versions[dashboard.versions.length-2].number : latestNumber;
+  for (const id of ["from-version","to-version"]) { const select=document.getElementById(id); for (const version of dashboard.versions) { const option=document.createElement("option"); option.value=String(version.number); option.textContent="Version " + version.number + " · " + new Date(version.createdAt).toLocaleString(); select.appendChild(option); } }
+  document.getElementById("from-version").value=String(previousNumber); document.getElementById("to-version").value=String(latestNumber);
+  document.querySelectorAll("[data-view]").forEach(function(tab){tab.addEventListener("click",function(){setView(tab.dataset.view);});}); document.getElementById("from-version").addEventListener("change",renderDiff); document.getElementById("to-version").addEventListener("change",renderDiff); document.getElementById("refresh-button").addEventListener("click",function(){location.reload();});
+  const preferredTheme=state.theme || (matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light"); document.documentElement.dataset.theme=preferredTheme; document.getElementById("theme-button").addEventListener("click",function(){const theme=document.documentElement.dataset.theme==="dark"?"light":"dark";document.documentElement.dataset.theme=theme;saveState({theme:theme});});
+  setView(state.view === "diff" ? "diff" : "plan"); renderDiff(); const scroll=Number(sessionStorage.getItem(stateKey+":scroll")); if (scroll) { scrollTo(0,scroll); sessionStorage.removeItem(stateKey+":scroll"); }
+}
+let blurredAt=0; window.addEventListener("blur",function(){blurredAt=Date.now();}); window.addEventListener("focus",function(){if(blurredAt && Date.now()-blurredAt>500){try{sessionStorage.setItem(stateKey+":scroll",String(scrollY));}catch{} location.reload();}});
+initialize();
+</script>
+</body>
+</html>`;
+}
+
+function escapeHtml(value: string): string {
+	return value.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;");
+}
