@@ -56,8 +56,9 @@
   },
   "scripts": {
     "smoke": "node ./scripts/smoke.mjs",
+    "test:dashboard": "node ./scripts/dashboard-test.mjs",
     "typecheck": "tsc --noEmit",
-    "test": "npm run typecheck && npm run smoke"
+    "test": "npm run typecheck && npm run smoke && npm run test:dashboard"
   },
   "devDependencies": {
     "@earendil-works/pi-ai": "0.84.2",
