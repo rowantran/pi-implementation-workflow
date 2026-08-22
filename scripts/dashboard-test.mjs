@@ -14,7 +14,7 @@ const data = {
     {
       number: 1,
       createdAt: "2025-01-02T03:04:05.000Z",
-      content: "# Plan\n\nRender <safe> content.",
+      content: "# Plan\n\nRender </template><script>unsafe</script> content.",
     },
   ],
   clarifications: [],
@@ -25,12 +25,22 @@ const html = renderWorkflowDashboard(data);
 assert.ok(html.startsWith("<!doctype html>"));
 assert.ok(
   html.includes(
-    "<title>Implementation plan · example&lt;/title&gt;&lt;script&gt;alert(&quot;unsafe&quot;)&lt;/script&gt;</title>",
+    "<title>Implementation plan · example&lt;&#x2F;title&gt;&lt;script&gt;alert(&quot;unsafe&quot;)&lt;&#x2F;script&gt;</title>",
   ),
 );
-assert.ok(html.includes('"description":"Extract the dashboard template"'));
-assert.ok(html.includes("Render \\u003csafe> content."));
-assert.ok(!html.includes("{{DASHBOARD_"));
-assert.ok(!html.includes("</title><script>alert"));
+assert.ok(html.includes('<template id="dashboard-data">{&quot;slug&quot;:'));
+assert.ok(
+  html.includes(
+    "Render &lt;&#x2F;template&gt;&lt;script&gt;unsafe&lt;&#x2F;script&gt; content.",
+  ),
+);
+assert.ok(
+  html.includes(
+    'const dashboard = JSON.parse(document.getElementById("dashboard-data").content.textContent);',
+  ),
+);
+assert.ok(!html.includes("{{dashboard"));
+assert.ok(!html.includes("</title><script>"));
+assert.ok(!html.includes("</template><script>"));
 
 console.log("Dashboard test passed: the HTML template rendered data and escaped dynamic values.");

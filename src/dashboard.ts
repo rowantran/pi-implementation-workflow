@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { basename, dirname } from "node:path";
 import { pathToFileURL } from "node:url";
+import Mustache from "mustache";
 import {
 	atomicWrite,
 	listPlanVersions,
@@ -47,20 +48,9 @@ export async function writeWorkflowDashboardRedirect(from: string, destination: 
 }
 
 export function renderWorkflowDashboard(data: WorkflowDashboardData): string {
-	const values = {
-		DASHBOARD_DATA: JSON.stringify(data).replaceAll("<", "\\u003c"),
-		DASHBOARD_TITLE_SUFFIX: data.slug ? ` · ${escapeHtml(data.slug)}` : "",
-	};
-	return renderDashboardTemplate(values);
-}
-
-function renderDashboardTemplate(values: Record<string, string>): string {
-	return DASHBOARD_TEMPLATE.replace(/\{\{([A-Z_]+)\}\}/g, (placeholder, name: string) => {
-		const value = values[name];
-		if (value === undefined) {
-			throw new Error(`Missing dashboard template value: ${placeholder}`);
-		}
-		return value;
+	return Mustache.render(DASHBOARD_TEMPLATE, {
+		dashboardData: JSON.stringify(data),
+		slug: data.slug,
 	});
 }
 
