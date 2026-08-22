@@ -56,8 +56,9 @@
   },
   "scripts": {
     "smoke": "node ./scripts/smoke.mjs",
+    "test:storage": "node ./scripts/storage.mjs",
     "typecheck": "tsc --noEmit",
-    "test": "npm run typecheck && npm run smoke"
+    "test": "npm run typecheck && npm run smoke && npm run test:storage"
   },
   "devDependencies": {
     "@earendil-works/pi-ai": "0.84.2",

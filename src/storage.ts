@@ -1,4 +1,4 @@
-import { mkdir, readFile, readdir, rename, stat, writeFile } from "node:fs/promises";
+import { mkdir, readFile, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
 
@@ -6,7 +6,7 @@ export const WORKFLOW_STATE_VERSION = 1;
 export const CLARIFICATIONS_STATE_VERSION = 1;
 export const IDENTIFIER_PATTERN = /^[a-z0-9][a-z0-9-]{0,79}$/;
 
-export type WorkflowStatus =
+export type CompletedWorkflowStatus =
 	| "ready_for_implementation"
 	| "implementing"
 	| "implementation_complete"
@@ -14,12 +14,19 @@ export type WorkflowStatus =
 	| "cleanup_pending"
 	| "review_complete";
 
-export interface WorkflowMetadata {
+export interface DraftWorkflowMetadata {
+	version: number;
+	status: "planning";
+	draftId: string;
+	description: string;
+	createdAt: string;
+}
+
+export interface CompletedWorkflowMetadata {
 	version: number;
 	identifier: string;
-	/** Concise plain-English summary. Optional only for workflows created before this field existed. */
-	description?: string;
-	status: WorkflowStatus;
+	description: string;
+	status: CompletedWorkflowStatus;
 	repositoryRoot: string;
 	gitCommonDir: string;
 	baseBranch: string;
@@ -34,6 +41,8 @@ export interface WorkflowMetadata {
 	pullRequestUrl?: string;
 	pullRequestNumber?: number;
 }
+
+export type WorkflowMetadata = DraftWorkflowMetadata | CompletedWorkflowMetadata;
 
 export interface PlanVersion {
 	number: number;
@@ -60,11 +69,12 @@ export interface WorkflowClarifications {
 export interface WorkflowFiles {
 	root: string;
 	plan: string;
-	description: string;
 	versions: string;
 	clarifications: string;
 	dashboard: string;
 	metadata: string;
+	/** Legacy standalone description storage. Read only during migration. */
+	legacyDescription: string;
 	/** Legacy two-version storage. Read only during migration. */
 	previousPlan: string;
 }
@@ -87,11 +97,11 @@ function filesAt(root: string): WorkflowFiles {
 	return {
 		root,
 		plan: join(root, "plan.md"),
-		description: join(root, "description.txt"),
 		versions: join(root, "versions"),
 		clarifications: join(root, "clarifications.json"),
 		dashboard: join(root, "dashboard.html"),
 		metadata: join(root, "metadata.json"),
+		legacyDescription: join(root, "description.txt"),
 		previousPlan: join(root, "plan.previous.md"),
 	};
 }
@@ -102,24 +112,29 @@ export function assertIdentifier(identifier: string): void {
 	}
 }
 
-export async function createDraft(files: WorkflowFiles, initialPlan: string): Promise<void> {
+export async function createDraft(
+	files: WorkflowFiles,
+	initialPlan: string,
+	metadata: DraftWorkflowMetadata,
+): Promise<void> {
 	if (await pathExists(files.root)) throw new Error(`Workflow draft already exists: ${files.root}`);
+	assertDraftMetadataForFiles(files, metadata);
 	await mkdir(files.versions, { recursive: true });
 	await Promise.all([
 		atomicWrite(files.plan, initialPlan),
-		atomicWrite(files.description, ""),
+		atomicWrite(files.metadata, `${JSON.stringify(metadata, null, 2)}\n`),
 		atomicWrite(files.clarifications, `${JSON.stringify(emptyClarifications(), null, 2)}\n`),
 	]);
 	await writeVersionFile(files, 1, initialPlan);
 }
 
-export async function ensureDraft(files: WorkflowFiles): Promise<void> {
+export async function ensureWorkflowFiles(files: WorkflowFiles): Promise<WorkflowMetadata> {
 	await mkdir(files.root, { recursive: true });
 	await ensureFile(files.plan, "# Implementation plan\n");
-	await ensureFile(files.description, "");
 	await ensureFile(files.clarifications, `${JSON.stringify(emptyClarifications(), null, 2)}\n`);
 	await migratePlanVersions(files);
 	await readClarifications(files);
+	return readWorkflowMetadata(files);
 }
 
 export async function savePlanVersion(files: WorkflowFiles, content: string): Promise<PlanVersion> {
@@ -227,26 +242,116 @@ export async function atomicWrite(path: string, content: string): Promise<void> 
 	await rename(temporary, path);
 }
 
-export async function readMetadata(identifier: string): Promise<WorkflowMetadata> {
+export async function readDraftWorkflowMetadata(files: WorkflowFiles): Promise<DraftWorkflowMetadata> {
+	const metadata = await readWorkflowMetadata(files);
+	if (metadata.status !== "planning") {
+		throw new Error(`Workflow draft ${basename(files.root)} has completed metadata.`);
+	}
+	assertDraftMetadataForFiles(files, metadata);
+	return metadata;
+}
+
+export async function writeDraftWorkflowMetadata(
+	files: WorkflowFiles,
+	metadata: DraftWorkflowMetadata,
+): Promise<void> {
+	assertDraftMetadataForFiles(files, metadata);
+	await writeWorkflowMetadata(files, metadata);
+}
+
+export async function writeWorkflowMetadata(
+	files: WorkflowFiles,
+	metadata: WorkflowMetadata,
+): Promise<void> {
+	if (metadata.status === "planning") assertDraftMetadataForFiles(files, metadata);
+	else assertIdentifier(metadata.identifier);
+	await atomicWrite(files.metadata, `${JSON.stringify(metadata, null, 2)}\n`);
+}
+
+export async function readCompletedWorkflowMetadata(
+	identifier: string,
+): Promise<CompletedWorkflowMetadata> {
 	const files = workflowFiles(identifier);
-	const text = await readText(files.metadata);
-	if (!text.trim()) throw new Error(`Workflow ${identifier} has no metadata.`);
+	const metadata = await readWorkflowMetadata(files);
+	if (metadata.status === "planning" || metadata.identifier !== identifier) {
+		throw new Error(`Workflow ${identifier} has invalid completed metadata.`);
+	}
+	return metadata;
+}
+
+export async function writeCompletedWorkflowMetadata(
+	metadata: CompletedWorkflowMetadata,
+): Promise<void> {
+	await writeWorkflowMetadata(workflowFiles(metadata.identifier), metadata);
+}
+
+export async function readWorkflowMetadata(files: WorkflowFiles): Promise<WorkflowMetadata> {
+	const [text, legacyDescriptionText] = await Promise.all([
+		readText(files.metadata),
+		readText(files.legacyDescription),
+	]);
+	const legacyDescription = legacyDescriptionText.trim();
+
+	if (!text.trim()) {
+		if (basename(dirname(files.root)) !== ".drafts") {
+			throw new Error(`Workflow ${basename(files.root)} has no metadata.`);
+		}
+		const metadata: DraftWorkflowMetadata = {
+			version: WORKFLOW_STATE_VERSION,
+			status: "planning",
+			draftId: basename(files.root),
+			description: legacyDescription,
+			createdAt: new Date().toISOString(),
+		};
+		await writeDraftWorkflowMetadata(files, metadata);
+		await rm(files.legacyDescription, { force: true });
+		return metadata;
+	}
 
 	let value: unknown;
 	try {
 		value = JSON.parse(text);
 	} catch {
-		throw new Error(`Workflow ${identifier} has invalid metadata JSON.`);
+		throw new Error(`Workflow ${basename(files.root)} has invalid metadata JSON.`);
 	}
-	if (!isWorkflowMetadata(value) || value.identifier !== identifier) {
-		throw new Error(`Workflow ${identifier} has invalid metadata.`);
+	let metadata: WorkflowMetadata;
+	let migrated = false;
+	if (isDraftWorkflowMetadata(value)) {
+		metadata = value;
+	} else if (isStoredCompletedWorkflowMetadata(value)) {
+		metadata = { ...value, description: value.description ?? legacyDescription };
+		migrated = value.description === undefined;
+	} else {
+		throw new Error(`Workflow ${basename(files.root)} has invalid metadata.`);
 	}
-	return value;
+
+	if (!metadata.description && legacyDescription) {
+		metadata = { ...metadata, description: legacyDescription };
+		migrated = true;
+	}
+	assertWorkflowMetadataForFiles(files, metadata);
+	if (migrated) await atomicWrite(files.metadata, `${JSON.stringify(metadata, null, 2)}\n`);
+	await rm(files.legacyDescription, { force: true });
+	return metadata;
 }
 
-export async function writeMetadata(metadata: WorkflowMetadata): Promise<void> {
-	assertIdentifier(metadata.identifier);
-	await atomicWrite(workflowFiles(metadata.identifier).metadata, `${JSON.stringify(metadata, null, 2)}\n`);
+function assertWorkflowMetadataForFiles(files: WorkflowFiles, metadata: WorkflowMetadata): void {
+	if (basename(dirname(files.root)) === ".drafts") {
+		if (metadata.status !== "planning") {
+			throw new Error(`Workflow draft ${basename(files.root)} has completed metadata.`);
+		}
+		assertDraftMetadataForFiles(files, metadata);
+		return;
+	}
+	if (metadata.status === "planning" || metadata.identifier !== basename(files.root)) {
+		throw new Error(`Workflow ${basename(files.root)} has invalid completed metadata.`);
+	}
+}
+
+function assertDraftMetadataForFiles(files: WorkflowFiles, metadata: DraftWorkflowMetadata): void {
+	if (basename(dirname(files.root)) !== ".drafts" || metadata.draftId !== basename(files.root)) {
+		throw new Error(`Workflow draft ${metadata.draftId} does not match ${files.root}.`);
+	}
 }
 
 async function migratePlanVersions(files: WorkflowFiles): Promise<void> {
@@ -302,10 +407,27 @@ function isWorkflowClarifications(value: unknown): value is WorkflowClarificatio
 	});
 }
 
-function isWorkflowMetadata(value: unknown): value is WorkflowMetadata {
+function isDraftWorkflowMetadata(value: unknown): value is DraftWorkflowMetadata {
 	if (!value || typeof value !== "object") return false;
-	const item = value as Partial<WorkflowMetadata>;
-	const statuses: WorkflowStatus[] = [
+	const item = value as Partial<DraftWorkflowMetadata>;
+	return (
+		item.version === WORKFLOW_STATE_VERSION &&
+		item.status === "planning" &&
+		typeof item.draftId === "string" &&
+		/^[a-zA-Z0-9-]+$/.test(item.draftId) &&
+		typeof item.description === "string" &&
+		typeof item.createdAt === "string"
+	);
+}
+
+type StoredCompletedWorkflowMetadata = Omit<CompletedWorkflowMetadata, "description"> & {
+	description?: string;
+};
+
+function isStoredCompletedWorkflowMetadata(value: unknown): value is StoredCompletedWorkflowMetadata {
+	if (!value || typeof value !== "object") return false;
+	const item = value as Partial<StoredCompletedWorkflowMetadata>;
+	const statuses: CompletedWorkflowStatus[] = [
 		"ready_for_implementation",
 		"implementing",
 		"implementation_complete",
@@ -317,10 +439,9 @@ function isWorkflowMetadata(value: unknown): value is WorkflowMetadata {
 		item.version === WORKFLOW_STATE_VERSION &&
 		typeof item.identifier === "string" &&
 		IDENTIFIER_PATTERN.test(item.identifier) &&
-		(item.description === undefined ||
-			(typeof item.description === "string" && item.description.trim().length > 0)) &&
+		(item.description === undefined || typeof item.description === "string") &&
 		typeof item.status === "string" &&
-		statuses.includes(item.status as WorkflowStatus) &&
+		statuses.includes(item.status as CompletedWorkflowStatus) &&
 		typeof item.repositoryRoot === "string" &&
 		typeof item.gitCommonDir === "string" &&
 		typeof item.baseBranch === "string" &&

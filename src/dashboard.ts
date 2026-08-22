@@ -4,7 +4,7 @@ import {
 	atomicWrite,
 	listPlanVersions,
 	readClarifications,
-	readText,
+	readWorkflowMetadata,
 	type PlanVersion,
 	type WorkflowClarification,
 	type WorkflowFiles,
@@ -19,14 +19,14 @@ export interface WorkflowDashboardData {
 }
 
 export async function writeWorkflowDashboard(files: WorkflowFiles): Promise<void> {
-	const [versions, clarifications, description] = await Promise.all([
+	const [versions, clarifications, metadata] = await Promise.all([
 		listPlanVersions(files),
 		readClarifications(files),
-		readText(files.description),
+		readWorkflowMetadata(files),
 	]);
 	const data: WorkflowDashboardData = {
 		slug: basename(dirname(files.root)) === ".drafts" ? undefined : basename(files.root),
-		description: description.trim() || undefined,
+		description: metadata.description?.trim() || undefined,
 		generatedAt: new Date().toISOString(),
 		versions: versions.map(({ number, createdAt, content }) => ({ number, createdAt, content })),
 		clarifications: clarifications.entries,
