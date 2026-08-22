@@ -93,32 +93,23 @@ Review completion shows progress while checking and removing the worktree. It sw
 - `/workflow-review <identifier>` — enter a fresh read-only review session in the stored worktree.
 - `/workflow-next` — advance planning or review to the next phase, or manually retry advancing from implementation.
 
-## Session and status indicators
+## Session names
 
-Completed planning, implementation, review, cleanup, and completed-workflow session names put the English description next to the stable slug:
+Planning, implementation, and review session names put the English description next to the stable slug:
 
 ```text
-Plan: <identifier> · <description>
+Planning: <identifier> · <description>
 Implement: <identifier> · <description>
 Review: <identifier> · <description>
-Cleanup: <identifier> · <description>
-Completed: <identifier> · <description>
 ```
 
 Before planning has a final slug, the unavailable slug and separator are omitted:
 
 ```text
-Plan: <description>
+Planning: <description>
 ```
 
-Workflows created before descriptions were introduced keep the shorter title without the description.
-
-The footer status is reserved for phases that do not already have an equivalent session name:
-
-```text
-planning
-cleaning: <identifier>
-```
+Workflows created before descriptions were introduced keep the shorter title without the description. Cleanup and completion do not add session names or footer status because they are short, non-agentic transitions.
 
 ## State
 

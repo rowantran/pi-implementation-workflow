@@ -102,7 +102,7 @@ export default function implementationWorkflow(pi: ExtensionAPI): void {
 			await atomicWrite(files.description, `${description}\n`);
 			trackedPlan = plan;
 			planDescription = description;
-			pi.setSessionName(workflowSessionName("Plan", undefined, description));
+			pi.setSessionName(workflowSessionName("Planning", undefined, description));
 			await writeWorkflowDashboard(files);
 			return { version: version.number };
 		});
@@ -151,15 +151,6 @@ export default function implementationWorkflow(pi: ExtensionAPI): void {
 			return;
 		}
 		pi.setActiveTools(withoutWorkflowTools);
-	}
-
-	function updateStatus(ctx: ExtensionContext): void {
-		let text: string | undefined;
-		if (phase === "planning") text = "planning";
-		// Implementation and review already identify themselves through the session name.
-		// Publishing the same identifier as a status makes custom footers render it twice.
-		if (phase === "cleanup") text = `cleaning: ${identifier}`;
-		ctx.ui.setStatus("implementation-workflow", text ? ctx.ui.theme.fg("accent", text) : undefined);
 	}
 
 	async function saveClarifications(files: WorkflowFiles, result: WorkflowQuestionnaireResult): Promise<void> {
@@ -343,7 +334,6 @@ export default function implementationWorkflow(pi: ExtensionAPI): void {
 				.getActiveTools()
 				.filter((name) => name !== WORKFLOW_QUESTION_TOOL && name !== WORKFLOW_UPDATE_PLAN_TOOL);
 			applyPhaseTools();
-			updateStatus(ctx);
 			pi.setSessionName("");
 			await prepareActivePlan(files);
 			await openDashboard(ctx);
@@ -632,8 +622,7 @@ export default function implementationWorkflow(pi: ExtensionAPI): void {
 		appendPhase({ phase: "complete", identifier: nextIdentifier });
 		metadata = nextMetadata;
 		activeFiles = destination;
-		updateStatus(ctx);
-		pi.setSessionName(workflowSessionName("Plan", nextIdentifier, nextMetadata.description));
+		pi.setSessionName(workflowSessionName("Planning", nextIdentifier, nextMetadata.description));
 		if (dashboardWarnings.length > 0) ctx.ui.notify(dashboardWarnings.join("\n"), "warning");
 
 		const command = `/workflow-implement ${nextIdentifier}`;
@@ -716,7 +705,6 @@ export default function implementationWorkflow(pi: ExtensionAPI): void {
 			metadata = workflow;
 			lastAutomaticFailure = undefined;
 			applyPhaseTools();
-			updateStatus(ctx);
 			await copyReviewCommand(ctx, workflow);
 		} catch (error) {
 			ctx.ui.notify(`Could not complete implementation: ${errorMessage(error)}`, "error");
@@ -870,8 +858,6 @@ export default function implementationWorkflow(pi: ExtensionAPI): void {
 		await writeMetadata(workflow);
 		metadata = workflow;
 		appendPhase({ phase: "complete", identifier: workflowIdentifier });
-		updateStatus(ctx);
-		pi.setSessionName(workflowSessionName("Completed", workflowIdentifier, workflow.description));
 		showWorkflowCompletion(pi, ctx, {
 			title: "Review complete",
 			details: [
@@ -1043,7 +1029,7 @@ export default function implementationWorkflow(pi: ExtensionAPI): void {
 			const files = draftFiles(draftId);
 			await ensureDraft(files);
 			await prepareActivePlan(files);
-			pi.setSessionName(planDescription ? workflowSessionName("Plan", undefined, planDescription) : "");
+			pi.setSessionName(planDescription ? workflowSessionName("Planning", undefined, planDescription) : "");
 		}
 		if ((phase === "implementation" || phase === "review" || phase === "cleanup" || phase === "complete") && identifier) {
 			try {
@@ -1055,19 +1041,11 @@ export default function implementationWorkflow(pi: ExtensionAPI): void {
 		}
 
 		applyPhaseTools();
-		updateStatus(ctx);
 		if (phase === "implementation" && identifier) {
 			pi.setSessionName(workflowSessionName("Implement", identifier, metadata?.description ?? planDescription));
 		}
 		if (phase === "review" && identifier) {
 			pi.setSessionName(workflowSessionName("Review", identifier, metadata?.description ?? planDescription));
-		}
-		if (phase === "cleanup" && identifier) {
-			pi.setSessionName(workflowSessionName("Cleanup", identifier, metadata?.description ?? planDescription));
-		}
-		if (phase === "complete" && identifier) {
-			const label = metadata?.status === "review_complete" ? "Completed" : "Plan";
-			pi.setSessionName(workflowSessionName(label, identifier, metadata?.description ?? planDescription));
 		}
 		if ((phase === "planning" || phase === "implementation" || phase === "review") && activeFiles) {
 			await openDashboard(ctx);
