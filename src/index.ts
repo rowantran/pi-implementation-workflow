@@ -354,7 +354,7 @@ export default function implementationWorkflow(pi: ExtensionAPI): void {
 						"Inspect the code as needed, discuss ambiguities with me normally, and keep the plan document current as our decisions change.",
 				);
 			} else {
-				ctx.ui.notify(`Planning started. Complete it with /workflow-complete.`, "info");
+				ctx.ui.notify(`Planning started. Advance to implementation with /workflow-next.`, "info");
 			}
 		},
 	});
@@ -456,15 +456,15 @@ export default function implementationWorkflow(pi: ExtensionAPI): void {
 				withSession: async (replacementCtx) => {
 					await replacementCtx.sendUserMessage(
 						`Review pull request ${workflow.pullRequestUrl} against the frozen plan at ${workflowFiles(requestedIdentifier).plan}, then explain what the pull request actually implements. ` +
-							"Start with review findings. Check necessity, architectural cleanliness, sufficiency, and intent. Use concrete file and line evidence. Report directly in this conversation; do not create an external document or load a documentation skill unless I ask. Do not modify code. Complete review with /workflow-complete.",
+							"Start with review findings. Check necessity, architectural cleanliness, sufficiency, and intent. Use concrete file and line evidence. Report directly in this conversation; do not create an external document or load a documentation skill unless I ask. Do not modify code. Advance to cleanup with /workflow-next.",
 					);
 				},
 			});
 		},
 	});
 
-	pi.registerCommand("workflow-complete", {
-		description: "Complete the active workflow phase",
+	pi.registerCommand("workflow-next", {
+		description: "Advance the active workflow to its next phase",
 		handler: async (_args, ctx) => {
 			await ctx.waitForIdle();
 			if (phase === "planning") {
@@ -483,7 +483,7 @@ export default function implementationWorkflow(pi: ExtensionAPI): void {
 				await finishReviewCleanup(ctx, identifier);
 				return;
 			}
-			ctx.ui.notify("No active workflow phase can be completed in this session.", "error");
+			ctx.ui.notify("No active workflow phase can advance in this session.", "error");
 		},
 	});
 
@@ -992,13 +992,13 @@ export default function implementationWorkflow(pi: ExtensionAPI): void {
 		if (!activeFiles || !phase) return;
 		let instructions = "";
 		if (phase === "planning") {
-			instructions = `\n\nIMPLEMENTATION WORKFLOW — PLANNING\nThe persistent plan is ${activeFiles.plan}. Treat it as the source of truth. Read it when needed and use ${WORKFLOW_UPDATE_PLAN_TOOL} whenever conclusions change; each call must provide the complete Markdown plan plus a concise plain-English description in one sentence or sentence fragment, and creates a numbered version. Work with the user conversationally. The plan must state WHAT changes and WHY, with enough detail for another agent, but avoid needless implementation detail. Do not implement the plan or modify project files. The user completes this phase with /workflow-complete.`;
+			instructions = `\n\nIMPLEMENTATION WORKFLOW — PLANNING\nThe persistent plan is ${activeFiles.plan}. Treat it as the source of truth. Read it when needed and use ${WORKFLOW_UPDATE_PLAN_TOOL} whenever conclusions change; each call must provide the complete Markdown plan plus a concise plain-English description in one sentence or sentence fragment, and creates a numbered version. Work with the user conversationally. The plan must state WHAT changes and WHY, with enough detail for another agent, but avoid needless implementation detail. Do not implement the plan or modify project files. The user advances to implementation with /workflow-next.`;
 		}
 		if (phase === "implementation" && metadata?.status !== "implementation_complete") {
 			instructions = `\n\nIMPLEMENTATION WORKFLOW — IMPLEMENTATION\nWorkflow: ${identifier}. The frozen plan is read-only at ${activeFiles.plan}. First inspect it and the repository. If material ambiguity remains, use ${WORKFLOW_QUESTION_TOOL} before changing code; ask all questions in one multiple-choice batch when practical and explain option consequences. If the questionnaire is cancelled, stop. Work only in the current worktree. Implement necessary scope with clean architecture, verify it, commit, push, and open a pull request to ${metadata?.baseBranch}. Implementation completion runs automatically when the agent settles and succeeds only for a clean worktree with the expected open pull request.`;
 		}
 		if (phase === "review") {
-			instructions = `\n\nIMPLEMENTATION WORKFLOW — REVIEW\nWorkflow: ${identifier}. Pull request: ${metadata?.pullRequestUrl}. Frozen plan: ${activeFiles.plan}. Review before explaining. Necessary means no unrelated scope while still allowing clean and elegant architecture. Sufficient means the pull request implements the plan's WHAT and respects its WHY and intent. Report actionable findings first, then explain the actual implementation with concrete evidence directly in this conversation. Do not create an external document or load a documentation skill unless asked. Do not modify code. The user completes this phase with /workflow-complete.`;
+			instructions = `\n\nIMPLEMENTATION WORKFLOW — REVIEW\nWorkflow: ${identifier}. Pull request: ${metadata?.pullRequestUrl}. Frozen plan: ${activeFiles.plan}. Review before explaining. Necessary means no unrelated scope while still allowing clean and elegant architecture. Sufficient means the pull request implements the plan's WHAT and respects its WHY and intent. Report actionable findings first, then explain the actual implementation with concrete evidence directly in this conversation. Do not create an external document or load a documentation skill unless asked. Do not modify code. The user advances to cleanup with /workflow-next.`;
 		}
 		if (!instructions) return;
 		return { systemPrompt: event.systemPrompt + instructions };
