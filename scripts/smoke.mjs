@@ -38,7 +38,7 @@ const expected = {
     "workflow-plan",
     "workflow-implement",
     "workflow-review",
-    "workflow-complete",
+    "workflow-next",
     "workflow-dashboard",
   ],
   events: ["before_agent_start", "tool_call", "agent_settled", "session_start", "session_shutdown"],
@@ -52,6 +52,10 @@ for (const [kind, names] of Object.entries(expected)) {
   for (const name of names) {
     if (!actual.includes(name)) throw new Error(`Missing ${kind} registration: ${name}`);
   }
+}
+
+if (registrations.commands.length !== expected.commands.length) {
+  throw new Error(`Unexpected command registrations: ${registrations.commands.join(", ")}`);
 }
 
 console.log("Smoke test passed: extension loaded and registered its commands, events, renderer, shortcut, and tools.");

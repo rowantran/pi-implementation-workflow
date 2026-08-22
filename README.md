@@ -48,10 +48,10 @@ Press `Ctrl+Alt+D` or run `/workflow-dashboard` to open the dashboard again.
 
 During planning, the agent uses `workflow_update_plan` instead of direct `edit` or `write` calls. Each tool call stores the complete plan as the next numbered Markdown file under `versions/` and updates its one-sentence-or-less English description, including calls whose plan content matches the prior version. Manual changes to `plan.md` are also detected and stored as new versions.
 
-Complete planning explicitly:
+Advance from planning to implementation explicitly:
 
 ```text
-/workflow-complete
+/workflow-next
 ```
 
 Planning completion:
@@ -75,12 +75,12 @@ Implementation completes automatically when the agent settles and all gates pass
 - the worktree is clean;
 - an open pull request exists from the workflow branch to the recorded base branch.
 
-The extension shows progress while checking the worktree and finding the pull request. It then records the pull request, copies `/workflow-review <identifier>` to the clipboard, and shows a high-contrast completion card. `/workflow-complete` remains available as a manual retry when a completion gate fails.
+The extension shows progress while checking the worktree and finding the pull request. It then records the pull request, copies `/workflow-review <identifier>` to the clipboard, and shows a high-contrast completion card. `/workflow-next` remains available to manually retry advancing when a completion gate fails.
 
-Paste the review command directly into the implementation session. It creates and switches to a separate review session in the same worktree, so the implementation conversation remains saved and does not enter review context. Starting with `/new` first is still supported but is not necessary. Review opens the frozen-plan dashboard and reviews the recorded pull request. Complete review explicitly:
+Paste the review command directly into the implementation session. It creates and switches to a separate review session in the same worktree, so the implementation conversation remains saved and does not enter review context. Starting with `/new` first is still supported but is not necessary. Review opens the frozen-plan dashboard and reviews the recorded pull request. Advance from review to cleanup explicitly:
 
 ```text
-/workflow-complete
+/workflow-next
 ```
 
 Review completion shows progress while checking and removing the worktree. It switches Pi back to the original repository and removes the worktree directory and Git worktree registration. A high-contrast completion card confirms the result. It keeps the local branch, remote branch, pull request, and saved workflow state.
@@ -91,34 +91,25 @@ Review completion shows progress while checking and removing the worktree. It sw
 - `/workflow-dashboard` — regenerate and open the active workflow dashboard.
 - `/workflow-implement <identifier>` — enter a fresh implementation session in the stored worktree.
 - `/workflow-review <identifier>` — enter a fresh read-only review session in the stored worktree.
-- `/workflow-complete` — complete planning or review, or manually retry implementation completion.
+- `/workflow-next` — advance planning or review to the next phase, or manually retry advancing from implementation.
 
-## Session and status indicators
+## Session names
 
-Completed planning, implementation, review, cleanup, and completed-workflow session names put the English description next to the stable slug:
+Planning, implementation, and review session names put the English description next to the stable slug:
 
 ```text
-Plan: <identifier> · <description>
+Planning: <identifier> · <description>
 Implement: <identifier> · <description>
 Review: <identifier> · <description>
-Cleanup: <identifier> · <description>
-Completed: <identifier> · <description>
 ```
 
 Before planning has a final slug, the unavailable slug and separator are omitted:
 
 ```text
-Plan: <description>
+Planning: <description>
 ```
 
-Workflows created before descriptions were introduced keep the shorter title without the description.
-
-The footer status is reserved for phases that do not already have an equivalent session name:
-
-```text
-planning
-cleaning: <identifier>
-```
+Workflows created before descriptions were introduced keep the shorter title without the description. Cleanup and completion do not add session names or footer status because they are short, non-agentic transitions.
 
 ## State
 
