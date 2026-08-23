@@ -56,14 +56,15 @@ Advance from planning to implementation explicitly:
 
 Planning completion:
 
-1. warns before excluding uncommitted files from the original checkout;
-2. shows a live progress checklist while it generates the final plan slug, finalizes the separate English description, and creates the worktree;
-3. freezes the plan and its version history under `~/.pi/agent/workflows/<identifier>/`;
-4. preserves the planning dashboard URL as a redirect to the completed workflow dashboard;
-5. creates branch `workflow/<identifier>`;
-6. creates `<repository>/.worktrees/<identifier>`;
-7. copies `/workflow-implement <identifier>` to the clipboard;
-8. shows a high-contrast completion card with the copied command.
+1. requires the plan's separate English description to have been saved;
+2. warns before excluding uncommitted files from the original checkout;
+3. shows a live progress checklist while it generates the final plan slug and creates the worktree;
+4. freezes the plan and its version history under `~/.pi/agent/workflows/<identifier>/`;
+5. preserves the planning dashboard URL as a redirect to the completed workflow dashboard;
+6. creates branch `workflow/<identifier>`;
+7. creates `<repository>/.worktrees/<identifier>`;
+8. copies `/workflow-implement <identifier>` to the clipboard;
+9. shows a high-contrast completion card with the copied command.
 
 Paste the copied command directly into the planning session. The command creates and switches to a separate worktree-bound implementation session, so the planning conversation remains saved and does not enter implementation context. Starting with `/new` first is still supported but is not necessary.
 
