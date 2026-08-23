@@ -50,5 +50,46 @@ assert.ok(
 assert.ok(!html.includes("{{dashboard"));
 assert.ok(!html.includes("</title><script>"));
 assert.ok(!html.includes("</template><script>"));
+assert.ok(html.includes("function renderRichDiff(rows, before, after)"));
+assert.ok(html.includes('class="markdown diff-document"'));
+assert.ok(html.includes("renderRichDiff(rows,before.content,after.content)"));
+assert.ok(!html.includes('class="diff-table"'));
+const dashboardScript = html.match(/<script>([\s\S]*)<\/script>/)?.[1];
+assert.ok(dashboardScript);
+assert.doesNotThrow(() => new Function(dashboardScript));
+const helperSource = dashboardScript.slice(
+  dashboardScript.indexOf("function escapeHtml"),
+  dashboardScript.indexOf("function initialize"),
+);
+const { lineDiff, renderRichDiff } = new Function(
+  `${helperSource}; return { lineDiff, renderRichDiff };`,
+)();
+const before = `# Delivery plan
 
-console.log("Dashboard test passed: multiline original asks render as safe plain text outside plan content.");
+## Steps
+
+1. Keep **formatted text**
+2. Show raw source
+
+\`\`\`js
+const view = "raw";
+\`\`\``;
+const after = `# Delivery plan
+
+## Steps
+
+1. Keep **formatted text**
+2. Show a rich diff
+
+\`\`\`js
+const view = "rich";
+\`\`\``;
+const richDiff = renderRichDiff(lineDiff(before, after), before, after);
+assert.ok(richDiff.includes('<h2 class="diff-line context">Steps</h2>'));
+assert.ok(richDiff.includes('<strong>formatted text</strong>'));
+assert.ok(richDiff.includes('<li class="diff-line remove" value="2">Show raw source</li>'));
+assert.ok(richDiff.includes('<li class="diff-line add" value="2">Show a rich diff</li>'));
+assert.ok(richDiff.includes('<span class="diff-code-line remove">const view = &quot;raw&quot;;</span>'));
+assert.ok(richDiff.includes('<span class="diff-code-line add">const view = &quot;rich&quot;;</span>'));
+
+console.log("Dashboard test passed: original asks remain safe and version comparisons use the rich diff view.");

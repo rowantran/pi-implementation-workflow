@@ -33,8 +33,8 @@
 .shell{width:min(1380px,100%);margin:0 auto;padding:var(--ds-space-8)}.view[hidden]{display:none}.plan-layout{display:grid;grid-template-columns:minmax(0,1fr) 340px;gap:var(--ds-space-6);align-items:start}.card{background:var(--ds-surface-default);border:1px solid var(--ds-border-subtle);border-radius:var(--ds-radius-lg);box-shadow:var(--ds-shadow-sm)}.plan-card{padding:clamp(24px,5vw,64px)}
 .markdown{max-width:850px;margin:0 auto;font-size:15px;line-height:1.7}.plan-document-header{display:flex;align-items:baseline;justify-content:space-between;gap:var(--ds-space-6);margin:0 0 32px;padding-bottom:20px;border-bottom:1px solid var(--ds-border-subtle)}.plan-document-header .plan-version{flex:none;color:var(--ds-accent-action);font-family:var(--ds-font-serif);font-size:24px;font-weight:400;line-height:34px;white-space:nowrap}.markdown h1,.markdown h2,.markdown h3,.markdown h4{color:var(--ds-text-heading);scroll-margin-top:80px}.markdown h1{margin:0 0 32px;font-family:var(--ds-font-serif);font-size:32px;font-weight:400;line-height:44px}.plan-document-header h1{margin:0}.markdown h2{margin:40px 0 12px;padding-top:8px;border-top:1px solid var(--ds-border-subtle);font-size:22px;font-weight:500;line-height:32px}.markdown h3{margin:28px 0 8px;font-size:18px;font-weight:500}.markdown p{margin:0 0 16px}.markdown ul,.markdown ol{margin:0 0 20px;padding-left:24px}.markdown li{margin:6px 0}.markdown blockquote{margin:20px 0;padding:12px 16px;border-left:3px solid var(--ds-accent-action);background:var(--ds-surface-subtle);color:var(--ds-text-secondary)}code{padding:2px 5px;border-radius:var(--ds-radius-sm);background:var(--ds-surface-inset);font-family:var(--ds-font-mono);font-size:.9em}.markdown pre{overflow:auto;padding:16px;border:1px solid var(--ds-border-subtle);border-radius:var(--ds-radius-md);background:var(--ds-surface-subtle)}.markdown pre code{padding:0;background:none}.empty{padding:48px;text-align:center;color:var(--ds-text-muted)}
 .clarifications{position:sticky;top:84px;overflow:hidden}.section-head{display:flex;align-items:center;justify-content:space-between;padding:18px 20px;border-bottom:1px solid var(--ds-border-subtle)}.section-head h2{margin:0;font-size:15px;font-weight:500}.original-ask{padding:18px 20px;border-bottom:1px solid var(--ds-border-subtle)}.original-ask-label{margin-bottom:8px;color:var(--ds-accent-action);font-size:11px;font-weight:600;text-transform:uppercase}.original-ask-text{margin:0;white-space:pre-wrap;overflow-wrap:anywhere;font-size:15px;line-height:24px}.clarification-list{display:flex;max-height:calc(100vh - 260px);overflow:auto;flex-direction:column}.clarification{padding:18px 20px;border-bottom:1px solid var(--ds-border-subtle)}.clarification:last-child{border-bottom:0}.clarification-label{margin-bottom:8px;color:var(--ds-accent-action);font-size:11px;font-weight:600;text-transform:uppercase}.clarification-question{margin:0 0 10px;color:var(--ds-text-secondary);font-size:13px;line-height:20px}.clarification-answer{margin:0;white-space:pre-wrap;font-size:15px;line-height:24px}.clarification-time{margin-top:10px;color:var(--ds-text-faint);font-size:11px}.clarification-empty{padding:24px 20px;color:var(--ds-text-muted);font-size:13px;line-height:20px}
-.diff-card{overflow:hidden}.diff-toolbar{display:flex;align-items:end;gap:var(--ds-space-3);padding:16px 20px;border-bottom:1px solid var(--ds-border-subtle);background:var(--ds-surface-default)}.field{display:flex;flex-direction:column;gap:5px}.field label{color:var(--ds-text-muted);font-size:11px;font-weight:600}.ds-select{min-width:180px;height:38px;padding:0 34px 0 12px;border:1px solid var(--ds-border-subtle);border-radius:var(--ds-radius-md);background:var(--ds-surface-default);color:var(--ds-text-primary);cursor:pointer}.arrow{color:var(--ds-text-faint);font-size:18px;padding-bottom:8px}.diff-summary{margin-left:auto;align-self:center;color:var(--ds-text-muted);font-size:13px}.diff-scroll{overflow:auto;max-height:calc(100vh - 180px);background:var(--ds-surface-default)}.diff-table{width:100%;border-collapse:collapse;table-layout:fixed;font-family:var(--ds-font-mono);font-size:12px;line-height:20px}.diff-table col.line{width:52px}.diff-table td{vertical-align:top;border-bottom:1px solid color-mix(in srgb,var(--ds-border-subtle) 55%,transparent)}.line-number{padding:1px 8px;text-align:right;color:var(--ds-text-faint);background:var(--ds-surface-subtle);user-select:none}.diff-code{padding:1px 12px;white-space:pre-wrap;overflow-wrap:anywhere}.diff-code::before{display:inline-block;width:16px;color:var(--ds-text-faint)}tr.add .line-number,tr.add .diff-code{background:var(--ds-success-subtle)}tr.add .diff-code::before{content:"+";color:var(--ds-success-text)}tr.remove .line-number,tr.remove .diff-code{background:var(--ds-danger-subtle)}tr.remove .diff-code::before{content:"−";color:var(--ds-danger-text)}tr.context .diff-code::before{content:" ";}.diff-empty{padding:48px;text-align:center;color:var(--ds-text-muted)}
-@media(max-width:900px){.ds-app-header{padding:0 12px;gap:8px}.header-actions .ds-badge{display:none}.ds-tabs{margin-left:0}.ds-tabs__tab{padding:0 10px}.shell{padding:16px}.plan-layout{grid-template-columns:1fr}.clarifications{position:static}.clarification-list{max-height:none}.diff-toolbar{align-items:stretch;flex-direction:column}.ds-select{width:100%}.arrow{display:none}.diff-summary{margin-left:0}.diff-table col.line{width:38px}.line-number{padding:1px 4px}.diff-code{padding:1px 6px}}
+.diff-card{overflow:hidden}.diff-toolbar{display:flex;align-items:end;gap:var(--ds-space-3);padding:16px 20px;border-bottom:1px solid var(--ds-border-subtle);background:var(--ds-surface-default)}.field{display:flex;flex-direction:column;gap:5px}.field label{color:var(--ds-text-muted);font-size:11px;font-weight:600}.ds-select{min-width:180px;height:38px;padding:0 34px 0 12px;border:1px solid var(--ds-border-subtle);border-radius:var(--ds-radius-md);background:var(--ds-surface-default);color:var(--ds-text-primary);cursor:pointer}.arrow{color:var(--ds-text-faint);font-size:18px;padding-bottom:8px}.diff-summary{margin-left:auto;align-self:center;color:var(--ds-text-muted);font-size:13px}.diff-scroll{overflow:auto;max-height:calc(100vh - 180px);background:var(--ds-surface-default)}.diff-document{min-height:240px;padding:clamp(24px,5vw,64px)}.diff-document .diff-line{position:relative;border-radius:var(--ds-radius-sm)}.diff-document .diff-line.add,.diff-document .diff-code-line.add,.diff-document .diff-blank-line.add{background:var(--ds-success-subtle)}.diff-document .diff-line.remove,.diff-document .diff-code-line.remove,.diff-document .diff-blank-line.remove{background:var(--ds-danger-subtle)}.diff-document .diff-line.add::before,.diff-document .diff-line.remove::before,.diff-document .diff-code-line.add::before,.diff-document .diff-code-line.remove::before,.diff-document .diff-blank-line.add::before,.diff-document .diff-blank-line.remove::before{position:absolute;font-family:var(--ds-font-mono);font-weight:700;text-align:center}.diff-document .diff-line.add::before,.diff-document .diff-code-line.add::before,.diff-document .diff-blank-line.add::before{content:"+";color:var(--ds-success-text)}.diff-document .diff-line.remove::before,.diff-document .diff-code-line.remove::before,.diff-document .diff-blank-line.remove::before{content:"−";color:var(--ds-danger-text)}.diff-document .diff-line::before{top:.15em;right:calc(100% + 8px);width:18px}.diff-document h1.diff-line::before,.diff-document h2.diff-line::before,.diff-document h3.diff-line::before{top:.5em}.diff-document li.diff-line::before{right:calc(100% + 24px)}.diff-document blockquote.diff-line.add{border-left-color:var(--ds-success-text)}.diff-document blockquote.diff-line.remove{border-left-color:var(--ds-danger-text)}.diff-code-block{padding:16px 0!important}.diff-code-line{position:relative;display:block;min-height:1.7em;padding:0 16px 0 36px;white-space:pre-wrap;overflow-wrap:anywhere}.diff-code-line::before,.diff-blank-line::before{top:0;left:10px;width:18px}.diff-blank-line{position:relative;min-height:12px;margin:4px 0;border-radius:var(--ds-radius-sm)}.diff-empty{padding:48px;text-align:center;color:var(--ds-text-muted)}
+@media(max-width:900px){.ds-app-header{padding:0 12px;gap:8px}.header-actions .ds-badge{display:none}.ds-tabs{margin-left:0}.ds-tabs__tab{padding:0 10px}.shell{padding:16px}.plan-layout{grid-template-columns:1fr}.clarifications{position:static}.clarification-list{max-height:none}.diff-toolbar{align-items:stretch;flex-direction:column}.ds-select{width:100%}.arrow{display:none}.diff-summary{margin-left:0}.diff-document{padding:24px}.diff-document .diff-line::before{right:calc(100% + 3px)}.diff-document li.diff-line::before{right:calc(100% + 19px)}}
 @media(max-width:560px){.plan-document-header{align-items:flex-start;flex-direction:column;gap:var(--ds-space-2)}.plan-document-header .plan-version{font-size:20px;line-height:28px}}
 </style>
 </head>
@@ -117,6 +117,60 @@ function lineDiff(before, after) {
   }
   return result;
 }
+function analyzeMarkdown(markdown) {
+  let inCode = false, list = "", orderedIndex = 0;
+  return lines(markdown).map(function(raw) {
+    if (/^\s*\x60{3}/.test(raw)) { inCode = !inCode; list = ""; return {type:"fence"}; }
+    if (inCode) return {type:"code", text:raw};
+    const heading = /^(#{1,4})\s+(.+)$/.exec(raw);
+    if (heading) { list = ""; return {type:"heading", level:heading[1].length, html:inlineMarkdown(heading[2])}; }
+    const unordered = /^\s*[-*]\s+(.+)$/.exec(raw), ordered = /^\s*\d+[.)]\s+(.+)$/.exec(raw);
+    if (unordered || ordered) {
+      const next = unordered ? "ul" : "ol";
+      if (list !== next) orderedIndex = 0;
+      list = next;
+      if (next === "ol") orderedIndex++;
+      return {type:next, html:inlineMarkdown((unordered || ordered)[1]), ordinal:orderedIndex};
+    }
+    list = "";
+    if (!raw.trim()) return {type:"blank"};
+    const quote = /^>\s?(.*)$/.exec(raw);
+    return quote ? {type:"quote", html:inlineMarkdown(quote[1])} : {type:"paragraph", html:inlineMarkdown(raw)};
+  });
+}
+function renderRichDiff(rows, before, after) {
+  const oldLines = analyzeMarkdown(before), newLines = analyzeMarkdown(after);
+  let html = "", list = "", code = false;
+  function closeList() { if (list) { html += "</" + list + ">"; list = ""; } }
+  function closeCode() { if (code) { html += "</code></pre>"; code = false; } }
+  function changeClass(kind, base) { return base + (kind === "context" ? " context" : " " + kind); }
+  for (const row of rows) {
+    const record = row.kind === "remove" ? oldLines[row.old - 1] : newLines[row.new - 1];
+    if (!record) continue;
+    if (record.type === "fence") { closeList(); closeCode(); if (row.kind !== "context") html += '<div class="' + changeClass(row.kind,"diff-blank-line") + '" title="Code block formatting changed"></div>'; continue; }
+    if (record.type === "code") {
+      closeList();
+      if (!code) { html += '<pre class="diff-code-block"><code>'; code = true; }
+      html += '<span class="' + changeClass(row.kind,"diff-code-line") + '">' + (escapeHtml(record.text) || "&#8203;") + "</span>";
+      continue;
+    }
+    closeCode();
+    if (record.type === "ul" || record.type === "ol") {
+      if (list !== record.type) { closeList(); list = record.type; html += "<" + list + ">"; }
+      const value = record.type === "ol" ? ' value="' + record.ordinal + '"' : "";
+      html += '<li class="' + changeClass(row.kind,"diff-line") + '"' + value + ">" + record.html + "</li>";
+      continue;
+    }
+    closeList();
+    if (record.type === "blank") { if (row.kind !== "context") html += '<div class="' + changeClass(row.kind,"diff-blank-line") + '" aria-label="' + (row.kind === "add" ? "Added" : "Removed") + ' blank line"></div>'; continue; }
+    const className = changeClass(row.kind,"diff-line");
+    if (record.type === "heading") html += "<h" + record.level + ' class="' + className + '">' + record.html + "</h" + record.level + ">";
+    else if (record.type === "quote") html += '<blockquote class="' + className + '">' + record.html + "</blockquote>";
+    else html += '<p class="' + className + '">' + record.html + "</p>";
+  }
+  closeList(); closeCode();
+  return html;
+}
 function renderDiff() {
   const from = Number(document.getElementById("from-version").value), to = Number(document.getElementById("to-version").value);
   const before = dashboard.versions.find(function(version){return version.number===from;}), after = dashboard.versions.find(function(version){return version.number===to;});
@@ -124,8 +178,7 @@ function renderDiff() {
   const rows = lineDiff(before.content,after.content); const added = rows.filter(function(row){return row.kind==="add";}).length, removed = rows.filter(function(row){return row.kind==="remove";}).length;
   document.getElementById("diff-summary").textContent = added + " additions · " + removed + " deletions";
   if (!added && !removed) { document.getElementById("diff-content").innerHTML = '<div class="diff-empty">These versions are identical.</div>'; return; }
-  let body = ""; for (const row of rows) body += '<tr class="' + row.kind + '"><td class="line-number">' + (row.old || "") + '</td><td class="line-number">' + (row.new || "") + '</td><td class="diff-code">' + escapeHtml(row.text || " ") + '</td></tr>';
-  document.getElementById("diff-content").innerHTML = '<table class="diff-table" aria-label="Plan version differences"><colgroup><col class="line"><col class="line"><col></colgroup><tbody>' + body + '</tbody></table>';
+  document.getElementById("diff-content").innerHTML = '<article class="markdown diff-document" aria-label="Formatted plan version differences">' + renderRichDiff(rows,before.content,after.content) + "</article>";
 }
 function initialize() {
   const latest = dashboard.versions[dashboard.versions.length-1], description = dashboard.description || "", slugBadge = document.getElementById("workflow-name"), planContent = document.getElementById("plan-content"), planHeader = document.getElementById("plan-document-header"); slugBadge.textContent = dashboard.slug || ""; slugBadge.hidden = !dashboard.slug;

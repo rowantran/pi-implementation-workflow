@@ -48,7 +48,7 @@ The extension saves the submitted ask verbatim as immutable workflow metadata, s
 
 - a concise plain-English plan description as the main document title, beside its prominent current version number;
 - a **Plan** view for the latest plan, the immutable original ask, and structured user clarifications;
-- a **Compare versions** view with two version selectors and a GitHub-style colored line diff;
+- a **Compare versions** view with two version selectors and a rich, formatted plan diff with green additions and red deletions;
 - light and dark themes;
 - automatic refresh when the browser regains focus.
 
