@@ -1,7 +1,6 @@
 import { readFileSync } from "node:fs";
 import Mustache from "mustache";
 
-const CONTINUE_PLANNING_USER_TEMPLATE = loadTemplate("injected-user-messages/continue-planning.md");
 const IMPLEMENTATION_SYSTEM_TEMPLATE = loadTemplate("system/implementation.md");
 const IMPLEMENTATION_USER_TEMPLATE = loadTemplate("injected-user-messages/implementation.md");
 const PLAN_SLUG_SYSTEM_TEMPLATE = loadTemplate("system/plan-slug.md");
@@ -13,13 +12,11 @@ const REVIEW_USER_TEMPLATE = loadTemplate("injected-user-messages/review.md");
 const UPDATE_PLAN_TOOL_GUIDELINE = loadTemplate("system/update-plan-tool-guideline.md");
 const UPDATE_PLAN_TOOL_SNIPPET = loadTemplate("system/update-plan-tool-snippet.md");
 
-export function continuePlanningUserMessage(issue: string): string {
-	return render(CONTINUE_PLANNING_USER_TEMPLATE, { issue });
-}
-
 export function implementationSystemPrompt(values: {
 	identifier: string | undefined;
+	metadataPath: string;
 	planPath: string;
+	clarificationsPath: string;
 	questionTool: string;
 	baseBranch: string | undefined;
 }): string {
@@ -27,7 +24,9 @@ export function implementationSystemPrompt(values: {
 }
 
 export function implementationUserMessage(values: {
+	metadataPath: string;
 	planPath: string;
+	clarificationsPath: string;
 	worktreePath: string;
 	workflowBranch: string;
 	baseBranch: string;
@@ -47,19 +46,26 @@ export function planningSystemPrompt(values: { planPath: string; updatePlanTool:
 	return render(PLANNING_SYSTEM_TEMPLATE, values);
 }
 
-export function startPlanningUserMessage(issue: string): string {
-	return render(START_PLANNING_USER_TEMPLATE, { issue });
+export function startPlanningUserMessage(ask: string): string {
+	return render(START_PLANNING_USER_TEMPLATE, { ask });
 }
 
 export function reviewSystemPrompt(values: {
 	identifier: string | undefined;
 	pullRequestUrl: string | undefined;
+	metadataPath: string;
 	planPath: string;
+	clarificationsPath: string;
 }): string {
 	return render(REVIEW_SYSTEM_TEMPLATE, stringifyUndefined(values));
 }
 
-export function reviewUserMessage(values: { pullRequestUrl: string; planPath: string }): string {
+export function reviewUserMessage(values: {
+	pullRequestUrl: string;
+	metadataPath: string;
+	planPath: string;
+	clarificationsPath: string;
+}): string {
 	return render(REVIEW_USER_TEMPLATE, values);
 }
 

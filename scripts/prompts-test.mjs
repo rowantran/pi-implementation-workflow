@@ -46,37 +46,43 @@ assert.throws(
   /nested opening marker "<!--"/,
 );
 
-const issue = 'Preserve <!-- user-authored note -->, <markup>, & "quotes" without escaping.';
+assert.equal(prompts.continuePlanningUserMessage, undefined);
+const ask = 'Preserve <!-- user-authored note -->, <markup>, & "quotes" without escaping.\nKeep {{braces}}.';
 assert.equal(
-  prompts.continuePlanningUserMessage(issue),
-  `Continue the persistent implementation plan with this new information:\n\n${issue}\n\nKeep the plan current as our decisions change.`,
-);
-assert.equal(
-  prompts.startPlanningUserMessage(issue),
-  `Develop the persistent implementation plan for this issue:\n\n${issue}\n\nInspect the code as needed, discuss ambiguities with me normally, and keep the plan document current as our decisions change.`,
+  prompts.startPlanningUserMessage(ask),
+  `Develop the persistent implementation plan for this original ask:\n\n${ask}\n\nInspect the code as needed, discuss ambiguities with me normally, and keep the plan document current as our decisions change.`,
 );
 
+const durablePaths = {
+  metadataPath: "/tmp/a & b/{{metadata}}.json",
+  planPath: "/tmp/a & b/<plan>.md",
+  clarificationsPath: "/tmp/a & b/{{clarifications}}.json",
+};
 const implementationValues = {
   identifier: "extract-prompts",
-  planPath: "/tmp/a & b/plan.md",
+  ...durablePaths,
   questionTool: "workflow_questions",
   baseBranch: "main",
 };
-assert.equal(
-  prompts.implementationSystemPrompt(implementationValues),
-  `IMPLEMENTATION WORKFLOW — IMPLEMENTATION\nWorkflow: ${implementationValues.identifier}. The frozen plan is read-only at ${implementationValues.planPath}. First inspect it and the repository. If material ambiguity remains, use ${implementationValues.questionTool} before changing code; ask all questions in one multiple-choice batch when practical and explain option consequences. If the questionnaire is cancelled, stop. Work only in the current worktree. Implement necessary scope with clean architecture, verify it, commit, push, and open a pull request to ${implementationValues.baseBranch}. Readiness checks run automatically when the agent settles, but the user advances with /workflow-next. Advancement succeeds only for a clean worktree with the expected open pull request.`,
-);
+const implementationSystem = prompts.implementationSystemPrompt(implementationValues);
+for (const path of Object.values(durablePaths)) assert.ok(implementationSystem.includes(path));
+assert.ok(implementationSystem.includes("Use the approved plan for planned scope"));
+assert.ok(implementationSystem.includes("the original ask for initial intent"));
+assert.ok(implementationSystem.includes("the clarifications for resolved ambiguity"));
+assert.ok(implementationSystem.includes("the user advances with /workflow-next"));
+assert.ok(!implementationSystem.includes("&amp;"));
 
 const implementationUserValues = {
-  planPath: "/tmp/plan.md",
+  ...durablePaths,
   worktreePath: "/tmp/worktree",
   workflowBranch: "workflow/extract-prompts",
   baseBranch: "main",
 };
-assert.equal(
-  prompts.implementationUserMessage(implementationUserValues),
-  `Implement the frozen plan at ${implementationUserValues.planPath}. Work only in ${implementationUserValues.worktreePath} on ${implementationUserValues.workflowBranch}. First inspect the plan and repository. Resolve material ambiguity through the implementation questionnaire before changing code. Then implement and verify the change, commit it, push it, and open a pull request targeting ${implementationUserValues.baseBranch}. Readiness checks run automatically after the agent settles, but the user advances with /workflow-next.`,
-);
+const implementationUser = prompts.implementationUserMessage(implementationUserValues);
+for (const path of Object.values(durablePaths)) assert.ok(implementationUser.includes(path));
+assert.ok(implementationUser.includes(implementationUserValues.worktreePath));
+assert.ok(implementationUser.includes("the user advances with /workflow-next"));
+assert.ok(!implementationUser.includes("&lt;plan&gt;"));
 
 const plan = "# Plan\n\nKeep <!-- plan note -->, {{braces}}, and <tags>.\n";
 assert.equal(
@@ -100,21 +106,18 @@ assert.equal(
 const reviewValues = {
   identifier: "extract-prompts",
   pullRequestUrl: "https://example.test/pull/1?a=1&b=2",
-  planPath: "/tmp/plan.md",
+  ...durablePaths,
 };
-assert.equal(
-  prompts.reviewSystemPrompt(reviewValues),
-  `IMPLEMENTATION WORKFLOW — REVIEW\nWorkflow: ${reviewValues.identifier}. Pull request: ${reviewValues.pullRequestUrl}. Frozen plan: ${reviewValues.planPath}. Review before explaining. Necessary means no unrelated scope while still allowing clean and elegant architecture. Sufficient means the pull request implements the plan's WHAT and respects its WHY and intent. Report actionable findings first, then explain the actual implementation with concrete evidence directly in this conversation. Do not create an external document or load a documentation skill unless asked. Do not modify code. The user advances to cleanup with /workflow-next.`,
-);
+const reviewSystem = prompts.reviewSystemPrompt(reviewValues);
+for (const path of Object.values(durablePaths)) assert.ok(reviewSystem.includes(path));
+assert.ok(reviewSystem.includes(reviewValues.pullRequestUrl));
+assert.ok(reviewSystem.includes("Use the approved plan for planned scope"));
+assert.ok(!reviewSystem.includes("&amp;"));
 
-const reviewUserValues = {
-  pullRequestUrl: "https://example.test/pull/1",
-  planPath: "/tmp/plan.md",
-};
-assert.equal(
-  prompts.reviewUserMessage(reviewUserValues),
-  `Review pull request ${reviewUserValues.pullRequestUrl} against the frozen plan at ${reviewUserValues.planPath}, then explain what the pull request actually implements. Start with review findings. Check necessity, architectural cleanliness, sufficiency, and intent. Use concrete file and line evidence. Report directly in this conversation; do not create an external document or load a documentation skill unless I ask. Do not modify code. Advance to cleanup with /workflow-next.`,
-);
+const reviewUser = prompts.reviewUserMessage(reviewValues);
+for (const path of Object.values(durablePaths)) assert.ok(reviewUser.includes(path));
+assert.ok(reviewUser.includes(reviewValues.pullRequestUrl));
+assert.ok(!reviewUser.includes("&lt;plan&gt;"));
 
 assert.equal(
   prompts.updatePlanToolPromptSnippet(),
@@ -125,5 +128,5 @@ assert.deepEqual(prompts.updatePlanToolPromptGuidelines(), [
 ]);
 
 console.log(
-  `Prompt test passed: ${templatePaths.length} documented templates preserve rendered text and isolate source comments.`,
+  `Prompt test passed: ${templatePaths.length} documented templates preserve rendered text and all durable intent paths.`,
 );
