@@ -215,9 +215,11 @@ try {
 		harness.setSwitchCancelled(false);
 		await harness.commands.get("workflow-next")("", ctx);
 		assert.equal(harness.switches.length, 2, "a cancelled implementation switch can be retried");
-		assert.match(harness.userMessages.at(-1), /Implement the approved workflow/);
+		assert.match(harness.userMessages.at(-1), /Implement the plan/);
 		assert.match(harness.userMessages.at(-1), /immutable original ask/);
-		assert.match(harness.userMessages.at(-1), /structured clarifications/);
+		assert.match(harness.userMessages.at(-1), /implementation questionnaire/);
+		assert.doesNotMatch(harness.userMessages.at(-1), new RegExp(worktreePath));
+		assert.doesNotMatch(harness.userMessages.at(-1), new RegExp(workflowBranch));
 		assert.equal(harness.entries.some((entry) => entry.customType === "implementation-workflow-completion"), false);
 		await harness.emit("session_shutdown", ctx);
 	}
@@ -235,6 +237,10 @@ try {
 			phaseEntry("implementation", { identifier: workflow.metadata.identifier }),
 		]);
 		await harness.emit("session_start", ctx);
+		const beforeAgentStart = harness.getEventHandlers("before_agent_start")[0];
+		const implementationPrompt = await beforeAgentStart({ systemPrompt: "base prompt" }, ctx);
+		assert.match(implementationPrompt.systemPrompt, new RegExp(workflow.worktreePath));
+		assert.match(implementationPrompt.systemPrompt, new RegExp(workflow.workflowBranch));
 		await harness.emit("agent_settled", ctx);
 		const completed = await readMetadata(workflow.metadata.identifier);
 		assert.equal(completed.status, "implementation_complete");

@@ -454,8 +454,6 @@ export default function implementationWorkflow(pi: ExtensionAPI): void {
 						metadataPath: files.metadata,
 						planPath: files.plan,
 						clarificationsPath: files.clarifications,
-						worktreePath: workflow.worktreePath,
-						workflowBranch: workflow.workflowBranch,
 						baseBranch: workflow.baseBranch,
 					}),
 				);
@@ -1020,7 +1018,9 @@ export default function implementationWorkflow(pi: ExtensionAPI): void {
 				planPath: activeFiles.plan,
 				clarificationsPath: activeFiles.clarifications,
 				questionTool: WORKFLOW_QUESTION_TOOL,
-				baseBranch: metadata?.baseBranch,
+				worktreePath: metadata.worktreePath,
+				workflowBranch: metadata.workflowBranch,
+				baseBranch: metadata.baseBranch,
 			});
 		}
 		if (phase === "review") {

@@ -18,6 +18,8 @@ export function implementationSystemPrompt(values: {
 	planPath: string;
 	clarificationsPath: string;
 	questionTool: string;
+	worktreePath: string;
+	workflowBranch: string;
 	baseBranch: string | undefined;
 }): string {
 	return render(IMPLEMENTATION_SYSTEM_TEMPLATE, stringifyUndefined(values));
@@ -27,8 +29,6 @@ export function implementationUserMessage(values: {
 	metadataPath: string;
 	planPath: string;
 	clarificationsPath: string;
-	worktreePath: string;
-	workflowBranch: string;
 	baseBranch: string;
 }): string {
 	return render(IMPLEMENTATION_USER_TEMPLATE, values);
