@@ -1,10 +1,52 @@
 import assert from "node:assert/strict";
+import { readdirSync, readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import { join, relative } from "node:path";
 import { createJiti } from "jiti/static";
 
 const jiti = createJiti(import.meta.url, { moduleCache: false });
 const prompts = await jiti.import(new URL("../src/prompts.ts", import.meta.url).pathname);
+const promptsDirectory = fileURLToPath(new URL("../src/prompts/", import.meta.url));
 
-const issue = 'Preserve <markup> & "quotes" without escaping.';
+function markdownFiles(directory) {
+  return readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
+    const path = join(directory, entry.name);
+    if (entry.isDirectory()) return markdownFiles(path);
+    return entry.isFile() && entry.name.endsWith(".md") ? [path] : [];
+  });
+}
+
+const templatePaths = markdownFiles(promptsDirectory);
+assert.ok(templatePaths.length > 0, "Expected at least one Markdown prompt template.");
+for (const path of templatePaths) {
+  const source = readFileSync(path, "utf8");
+  const usageComment = /^<!-- Usage: ([^\r\n]+) -->\r?\n/.exec(source);
+  const name = relative(promptsDirectory, path);
+  assert.ok(usageComment, `${name} must start with a one-line <!-- Usage: ... --> comment.`);
+  assert.ok(usageComment[1].trim(), `${name} must have a non-empty usage explanation.`);
+}
+
+assert.equal(
+  prompts.stripHtmlComments(
+    "<!-- Usage: leading comment -->\nFirst line.\n<!-- Non-leading comment. -->\nSecond line.",
+    "multiple-comments.md",
+  ),
+  "\nFirst line.\n\nSecond line.",
+);
+assert.throws(
+  () => prompts.stripHtmlComments("Text before <!-- an unfinished comment", "unterminated.md"),
+  /opening marker "<!--" is unterminated/,
+);
+assert.throws(
+  () => prompts.stripHtmlComments("Text before --> a stray closing marker", "stray-closing.md"),
+  /closing marker "-->" without an opening marker/,
+);
+assert.throws(
+  () => prompts.stripHtmlComments("<!-- outer <!-- nested -->", "nested.md"),
+  /nested opening marker "<!--"/,
+);
+
+const issue = 'Preserve <!-- user-authored note -->, <markup>, & "quotes" without escaping.';
 assert.equal(
   prompts.continuePlanningUserMessage(issue),
   `Continue the persistent implementation plan with this new information:\n\n${issue}\n\nKeep the plan current as our decisions change.`,
@@ -36,7 +78,7 @@ assert.equal(
   `Implement the frozen plan at ${implementationUserValues.planPath}. Work only in ${implementationUserValues.worktreePath} on ${implementationUserValues.workflowBranch}. First inspect the plan and repository. Resolve material ambiguity through the implementation questionnaire before changing code. Then implement and verify the change, commit it, push it, and open a pull request targeting ${implementationUserValues.baseBranch}. Readiness checks run automatically after the agent settles, but the user advances with /workflow-next.`,
 );
 
-const plan = "# Plan\n\nKeep {{braces}} and <tags>.\n";
+const plan = "# Plan\n\nKeep <!-- plan note -->, {{braces}}, and <tags>.\n";
 assert.equal(
   prompts.planSlugUserMessage(plan),
   `Generate the identifier for this implementation plan:\n\n${plan}`,
@@ -82,4 +124,6 @@ assert.deepEqual(prompts.updatePlanToolPromptGuidelines(), [
   "Use workflow_update_plan for every implementation-plan change during workflow planning; provide the complete updated Markdown plan and a one-sentence-or-less English description.",
 ]);
 
-console.log("Prompt test passed: standalone system and user templates preserve their complete rendered text.");
+console.log(
+  `Prompt test passed: ${templatePaths.length} documented templates preserve rendered text and isolate source comments.`,
+);

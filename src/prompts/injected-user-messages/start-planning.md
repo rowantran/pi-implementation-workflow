@@ -1,3 +1,4 @@
+<!-- Usage: Injected as a user message when /workflow-plan starts a new planning phase with issue text. -->
 Develop the persistent implementation plan for this issue:
 
 {{{issue}}}

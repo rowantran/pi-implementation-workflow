@@ -1,1 +1,2 @@
+<!-- Usage: Sent as the initial user message after /workflow-review switches to the review phase session. -->
 Review pull request {{{pullRequestUrl}}} against the frozen plan at {{{planPath}}}, then explain what the pull request actually implements. Start with review findings. Check necessity, architectural cleanliness, sufficiency, and intent. Use concrete file and line evidence. Report directly in this conversation; do not create an external document or load a documentation skill unless I ask. Do not modify code. Advance to cleanup with /workflow-next.
