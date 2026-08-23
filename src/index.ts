@@ -32,7 +32,6 @@ import {
 } from "./questions.ts";
 import {
 	appendClarifications,
-	assertIdentifier,
 	createDraft,
 	draftFiles,
 	ensureWorkflowFiles,
@@ -189,7 +188,7 @@ export default function implementationWorkflow(pi: ExtensionAPI): void {
 			pi.setActiveTools([...new Set([...readOnlyTools, WORKFLOW_UPDATE_PLAN_TOOL])]);
 			return;
 		}
-		if (phase === "implementation" && metadata?.status !== "implementation_complete") {
+		if (phase === "implementation" && metadata?.status === "implementing") {
 			pi.setActiveTools([...new Set([...withoutWorkflowTools, WORKFLOW_QUESTION_TOOL])]);
 			return;
 		}
@@ -411,119 +410,98 @@ export default function implementationWorkflow(pi: ExtensionAPI): void {
 		},
 	});
 
-	pi.registerCommand("workflow-implement", {
-		description: "Enter a workflow worktree and implement its frozen plan",
-		getArgumentCompletions: () => null,
-		handler: async (args, ctx) => {
-			await ctx.waitForIdle();
-			const requestedIdentifier = args.trim();
-			try {
-				assertIdentifier(requestedIdentifier);
-			} catch (error) {
-				ctx.ui.notify(errorMessage(error), "error");
-				return;
-			}
+	async function loadCompletedWorkflow(
+		ctx: ExtensionContext,
+		requestedIdentifier: string,
+	): Promise<CompletedWorkflowMetadata | undefined> {
+		try {
+			return await readCompletedWorkflowMetadata(requestedIdentifier);
+		} catch (error) {
+			ctx.ui.notify(errorMessage(error), "error");
+			return undefined;
+		}
+	}
 
-			let workflow: CompletedWorkflowMetadata;
-			try {
-				workflow = await readCompletedWorkflowMetadata(requestedIdentifier);
-			} catch (error) {
-				ctx.ui.notify(errorMessage(error), "error");
-				return;
-			}
-			if (workflow.status !== "ready_for_implementation" && workflow.status !== "implementing") {
-				ctx.ui.notify(`Workflow ${requestedIdentifier} is ${workflow.status}; it cannot enter implementation.`, "error");
-				return;
-			}
-			if (!(await requireLaunchRepository(ctx, workflow))) return;
-			const validation = await validateWorktree(workflow);
-			if (validation) {
-				ctx.ui.notify(validation.message, "error");
-				return;
-			}
+	async function transitionToImplementation(
+		ctx: ExtensionCommandContext,
+		requestedIdentifier: string,
+	): Promise<void> {
+		const workflow = await loadCompletedWorkflow(ctx, requestedIdentifier);
+		if (!workflow) return;
+		if (workflow.status !== "ready_for_implementation" && workflow.status !== "implementing") {
+			ctx.ui.notify(`Workflow ${requestedIdentifier} is ${workflow.status}; it cannot enter implementation.`, "error");
+			return;
+		}
+		if (!(await requireLaunchRepository(ctx, workflow))) return;
+		const validation = await validateWorktree(workflow);
+		if (validation) {
+			ctx.ui.notify(validation.message, "error");
+			return;
+		}
 
-			const sessionFile = await createPhaseSession(workflow.worktreePath, {
-				phase: "implementation",
-				identifier: requestedIdentifier,
-			});
-			workflow.status = "implementing";
-			workflow.implementationStartedAt ??= new Date().toISOString();
-			await writeCompletedWorkflowMetadata(workflow);
-			const files = workflowFiles(requestedIdentifier);
-			await ctx.switchSession(sessionFile, {
-				withSession: async (replacementCtx) => {
-					await replacementCtx.sendUserMessage(
-						implementationUserMessage({
-							metadataPath: files.metadata,
-							planPath: files.plan,
-							clarificationsPath: files.clarifications,
-							worktreePath: workflow.worktreePath,
-							workflowBranch: workflow.workflowBranch,
-							baseBranch: workflow.baseBranch,
-						}),
-					);
-				},
-			});
-		},
-	});
+		const sessionFile = await createPhaseSession(workflow.worktreePath, {
+			phase: "implementation",
+			identifier: requestedIdentifier,
+		});
+		workflow.status = "implementing";
+		workflow.implementationStartedAt ??= new Date().toISOString();
+		await writeCompletedWorkflowMetadata(workflow);
+		const files = workflowFiles(requestedIdentifier);
+		await ctx.switchSession(sessionFile, {
+			withSession: async (replacementCtx) => {
+				await replacementCtx.sendUserMessage(
+					implementationUserMessage({
+						metadataPath: files.metadata,
+						planPath: files.plan,
+						clarificationsPath: files.clarifications,
+						worktreePath: workflow.worktreePath,
+						workflowBranch: workflow.workflowBranch,
+						baseBranch: workflow.baseBranch,
+					}),
+				);
+			},
+		});
+	}
 
-	pi.registerCommand("workflow-review", {
-		description: "Enter a workflow worktree and review its pull request against the frozen plan",
-		getArgumentCompletions: () => null,
-		handler: async (args, ctx) => {
-			await ctx.waitForIdle();
-			const requestedIdentifier = args.trim();
-			try {
-				assertIdentifier(requestedIdentifier);
-			} catch (error) {
-				ctx.ui.notify(errorMessage(error), "error");
-				return;
-			}
+	async function transitionToReview(ctx: ExtensionCommandContext, requestedIdentifier: string): Promise<void> {
+		const workflow = await loadCompletedWorkflow(ctx, requestedIdentifier);
+		if (!workflow) return;
+		if (workflow.status !== "implementation_complete" && workflow.status !== "reviewing") {
+			ctx.ui.notify(`Workflow ${requestedIdentifier} is ${workflow.status}; it cannot enter review.`, "error");
+			return;
+		}
+		if (!workflow.pullRequestUrl) {
+			ctx.ui.notify(`Workflow ${requestedIdentifier} has no recorded pull request.`, "error");
+			return;
+		}
+		if (!(await requireLaunchRepository(ctx, workflow))) return;
+		const validation = await validateWorktree(workflow);
+		if (validation) {
+			ctx.ui.notify(validation.message, "error");
+			return;
+		}
 
-			let workflow: CompletedWorkflowMetadata;
-			try {
-				workflow = await readCompletedWorkflowMetadata(requestedIdentifier);
-			} catch (error) {
-				ctx.ui.notify(errorMessage(error), "error");
-				return;
-			}
-			if (workflow.status !== "implementation_complete" && workflow.status !== "reviewing") {
-				ctx.ui.notify(`Workflow ${requestedIdentifier} is ${workflow.status}; it cannot enter review.`, "error");
-				return;
-			}
-			if (!workflow.pullRequestUrl) {
-				ctx.ui.notify(`Workflow ${requestedIdentifier} has no recorded pull request.`, "error");
-				return;
-			}
-			if (!(await requireLaunchRepository(ctx, workflow))) return;
-			const validation = await validateWorktree(workflow);
-			if (validation) {
-				ctx.ui.notify(validation.message, "error");
-				return;
-			}
-
-			const sessionFile = await createPhaseSession(workflow.worktreePath, {
-				phase: "review",
-				identifier: requestedIdentifier,
-			});
-			workflow.status = "reviewing";
-			workflow.reviewStartedAt ??= new Date().toISOString();
-			await writeCompletedWorkflowMetadata(workflow);
-			const files = workflowFiles(requestedIdentifier);
-			await ctx.switchSession(sessionFile, {
-				withSession: async (replacementCtx) => {
-					await replacementCtx.sendUserMessage(
-						reviewUserMessage({
-							pullRequestUrl: workflow.pullRequestUrl!,
-							metadataPath: files.metadata,
-							planPath: files.plan,
-							clarificationsPath: files.clarifications,
-						}),
-					);
-				},
-			});
-		},
-	});
+		const sessionFile = await createPhaseSession(workflow.worktreePath, {
+			phase: "review",
+			identifier: requestedIdentifier,
+		});
+		workflow.status = "reviewing";
+		workflow.reviewStartedAt ??= new Date().toISOString();
+		await writeCompletedWorkflowMetadata(workflow);
+		const files = workflowFiles(requestedIdentifier);
+		await ctx.switchSession(sessionFile, {
+			withSession: async (replacementCtx) => {
+				await replacementCtx.sendUserMessage(
+					reviewUserMessage({
+						pullRequestUrl: workflow.pullRequestUrl!,
+						metadataPath: files.metadata,
+						planPath: files.plan,
+						clarificationsPath: files.clarifications,
+					}),
+				);
+			},
+		});
+	}
 
 	pi.registerCommand("workflow-next", {
 		description: "Advance the active workflow to its next phase",
@@ -534,7 +512,7 @@ export default function implementationWorkflow(pi: ExtensionAPI): void {
 				return;
 			}
 			if (phase === "implementation") {
-				await completeImplementation(ctx, false);
+				await advanceImplementation(ctx);
 				return;
 			}
 			if (phase === "review") {
@@ -544,6 +522,13 @@ export default function implementationWorkflow(pi: ExtensionAPI): void {
 			if (phase === "cleanup" && identifier) {
 				await finishReviewCleanup(ctx, identifier);
 				return;
+			}
+			if (phase === "complete" && identifier) {
+				const workflow = await loadCompletedWorkflow(ctx, identifier);
+				if (workflow?.status === "ready_for_implementation" || workflow?.status === "implementing") {
+					await transitionToImplementation(ctx, identifier);
+					return;
+				}
 			}
 			ctx.ui.notify("No active workflow phase can advance in this session.", "error");
 		},
@@ -704,99 +689,88 @@ export default function implementationWorkflow(pi: ExtensionAPI): void {
 		updatePhaseStatus(ctx);
 		pi.setSessionName(workflowSessionName("Planning", nextIdentifier, nextMetadata.description));
 		if (dashboardWarnings.length > 0) ctx.ui.notify(dashboardWarnings.join("\n"), "warning");
-
-		const command = `/workflow-implement ${nextIdentifier}`;
-		let clipboardError: unknown;
-		try {
-			await copyToClipboard(command);
-		} catch (error) {
-			clipboardError = error;
-		}
-		showWorkflowCompletion(pi, ctx, {
-			title: "Planning complete",
-			details: [
-				`Generated plan slug: ${nextIdentifier}`,
-				`Plan description: ${nextMetadata.description}`,
-				`Created worktree: ${nextMetadata.worktreePath}`,
-			],
-			command,
-			clipboard: clipboardError ? "failed" : "copied",
-			instruction: clipboardError
-				? `Could not copy the command: ${errorMessage(clipboardError)}. Copy it above and paste it here to start a separate implementation session. This planning session stays saved.`
-				: "Copied to the clipboard. Paste this command here to start a separate implementation session. This planning session stays saved.",
-		});
+		await transitionToImplementation(ctx, nextIdentifier);
 	}
 
-	async function completeImplementation(ctx: ExtensionContext, readinessCheckOnly: boolean): Promise<void> {
+	async function advanceImplementation(ctx: ExtensionCommandContext): Promise<void> {
 		if (!identifier) return;
-		if (completionInFlight) return;
+		const workflow = await loadCompletedWorkflow(ctx, identifier);
+		if (!workflow) return;
+		if (workflow.status === "implementation_complete" || workflow.status === "reviewing") {
+			await transitionToReview(ctx, identifier);
+			return;
+		}
+		const completedWorkflow = await completeImplementation(ctx, false);
+		if (completedWorkflow) await transitionToReview(ctx, identifier);
+	}
+
+	async function completeImplementation(
+		ctx: ExtensionContext,
+		automatic: boolean,
+	): Promise<CompletedWorkflowMetadata | undefined> {
+		if (!identifier || completionInFlight) return undefined;
 		completionInFlight = true;
 		try {
 			const workflow = await readCompletedWorkflowMetadata(identifier);
 			metadata = workflow;
-			if (workflow.status === "implementation_complete") {
-				if (!readinessCheckOnly) await copyReviewCommand(ctx, workflow);
-				return;
-			}
+			if (workflow.status === "implementation_complete") return workflow;
 			if (workflow.status !== "implementing") {
-				if (!readinessCheckOnly) ctx.ui.notify(`Workflow ${identifier} is ${workflow.status}.`, "error");
-				return;
+				if (!automatic) ctx.ui.notify(`Workflow ${identifier} is ${workflow.status}.`, "error");
+				return undefined;
 			}
 			const completion = await runWorkflowProgress<
 				{ failure: CompletionFailure } | { pullRequest: PullRequestInfo }
-			>(
-				ctx,
-				readinessCheckOnly ? "Checking implementation readiness" : "Completing implementation",
-				["Checking worktree", "Finding pull request"],
-				async (progress) => {
-					const failure = await implementationCompletionFailure(workflow);
-					if (failure) {
-						progress.fail("Worktree is not ready");
-						return { failure };
-					}
-					progress.complete("Checked clean worktree");
-					const pullRequest = await findPullRequest(workflow);
-					if (!pullRequest) {
-						const failure = {
-							message: `no open pull request from ${workflow.workflowBranch} to ${workflow.baseBranch}`,
-						};
-						progress.fail("Open pull request not found");
-						return { failure };
-					}
-					progress.complete(`Found pull request #${pullRequest.number}`);
-					return { pullRequest };
-				},
-			);
+			>(ctx, "Completing implementation", ["Checking worktree", "Finding pull request"], async (progress) => {
+				const failure = await implementationCompletionFailure(workflow);
+				if (failure) {
+					progress.fail("Worktree is not ready");
+					return { failure };
+				}
+				progress.complete("Checked clean worktree");
+				const pullRequest = await findPullRequest(workflow);
+				if (!pullRequest) {
+					const failure = {
+						message: `no open pull request from ${workflow.workflowBranch} to ${workflow.baseBranch}`,
+					};
+					progress.fail("Open pull request not found");
+					return { failure };
+				}
+				progress.complete(`Found pull request #${pullRequest.number}`);
+				return { pullRequest };
+			});
 			if ("failure" in completion) {
 				const message = completion.failure.message;
-				if (!readinessCheckOnly || lastAutomaticFailure !== message) {
-					ctx.ui.notify(`Implementation is not complete: ${message}.`, readinessCheckOnly ? "warning" : "error");
+				if (!automatic || lastAutomaticFailure !== message) {
+					ctx.ui.notify(`Implementation is not complete: ${message}.`, automatic ? "warning" : "error");
 				}
 				lastAutomaticFailure = message;
-				return;
+				return undefined;
 			}
-			const { pullRequest } = completion;
-			lastAutomaticFailure = undefined;
-			if (readinessCheckOnly) return;
 
 			workflow.status = "implementation_complete";
 			workflow.implementationCompletedAt = new Date().toISOString();
-			workflow.pullRequestUrl = pullRequest.url;
-			workflow.pullRequestNumber = pullRequest.number;
+			workflow.pullRequestUrl = completion.pullRequest.url;
+			workflow.pullRequestNumber = completion.pullRequest.number;
 			await writeCompletedWorkflowMetadata(workflow);
 			metadata = workflow;
+			lastAutomaticFailure = undefined;
 			applyPhaseTools();
 			updatePhaseStatus(ctx);
-			await copyReviewCommand(ctx, workflow);
+			if (automatic) await showImplementationCompletion(ctx, workflow);
+			return workflow;
 		} catch (error) {
 			ctx.ui.notify(`Could not complete implementation: ${errorMessage(error)}`, "error");
+			return undefined;
 		} finally {
 			completionInFlight = false;
 		}
 	}
 
-	async function copyReviewCommand(ctx: ExtensionContext, workflow: CompletedWorkflowMetadata): Promise<void> {
-		const command = `/workflow-review ${workflow.identifier}`;
+	async function showImplementationCompletion(
+		ctx: ExtensionContext,
+		workflow: CompletedWorkflowMetadata,
+	): Promise<void> {
+		const command = "/workflow-next";
 		let clipboardError: unknown;
 		try {
 			await copyToClipboard(command);
@@ -1039,7 +1013,7 @@ export default function implementationWorkflow(pi: ExtensionAPI): void {
 				updatePlanTool: WORKFLOW_UPDATE_PLAN_TOOL,
 			});
 		}
-		if (phase === "implementation" && metadata?.status !== "implementation_complete") {
+		if (phase === "implementation" && metadata?.status === "implementing") {
 			instructions = implementationSystemPrompt({
 				identifier,
 				metadataPath: activeFiles.metadata,

@@ -69,7 +69,8 @@ for (const path of Object.values(durablePaths)) assert.ok(implementationSystem.i
 assert.ok(implementationSystem.includes("Use the approved plan for planned scope"));
 assert.ok(implementationSystem.includes("the original ask for initial intent"));
 assert.ok(implementationSystem.includes("the clarifications for resolved ambiguity"));
-assert.ok(implementationSystem.includes("the user advances with /workflow-next"));
+assert.ok(implementationSystem.includes("Implementation completion runs automatically"));
+assert.ok(implementationSystem.includes("the user enters review with /workflow-next"));
 assert.ok(!implementationSystem.includes("&amp;"));
 
 const implementationUserValues = {
@@ -81,7 +82,8 @@ const implementationUserValues = {
 const implementationUser = prompts.implementationUserMessage(implementationUserValues);
 for (const path of Object.values(durablePaths)) assert.ok(implementationUser.includes(path));
 assert.ok(implementationUser.includes(implementationUserValues.worktreePath));
-assert.ok(implementationUser.includes("the user advances with /workflow-next"));
+assert.ok(implementationUser.includes("Completion runs automatically"));
+assert.ok(implementationUser.includes("enter review with /workflow-next"));
 assert.ok(!implementationUser.includes("&lt;plan&gt;"));
 
 const plan = "# Plan\n\nKeep <!-- plan note -->, {{braces}}, and <tags>.\n";
