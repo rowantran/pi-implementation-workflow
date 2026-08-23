@@ -1,1 +1,2 @@
+<!-- Usage: Sent as the initial user message after /workflow-implement switches to the implementation phase session. -->
 Implement the frozen plan at {{{planPath}}}. Work only in {{{worktreePath}}} on {{{workflowBranch}}}. First inspect the plan and repository. Resolve material ambiguity through the implementation questionnaire before changing code. Then implement and verify the change, commit it, push it, and open a pull request targeting {{{baseBranch}}}. Readiness checks run automatically after the agent settles, but the user advances with /workflow-next.

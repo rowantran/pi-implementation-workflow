@@ -1,2 +1,3 @@
+<!-- Usage: Appended to the system prompt before each agent turn during an active review phase. -->
 IMPLEMENTATION WORKFLOW — REVIEW
 Workflow: {{{identifier}}}. Pull request: {{{pullRequestUrl}}}. Frozen plan: {{{planPath}}}. Review before explaining. Necessary means no unrelated scope while still allowing clean and elegant architecture. Sufficient means the pull request implements the plan's WHAT and respects its WHY and intent. Report actionable findings first, then explain the actual implementation with concrete evidence directly in this conversation. Do not create an external document or load a documentation skill unless asked. Do not modify code. The user advances to cleanup with /workflow-next.

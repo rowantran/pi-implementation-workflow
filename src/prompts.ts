@@ -72,7 +72,44 @@ export function updatePlanToolPromptSnippet(): string {
 }
 
 function loadTemplate(name: string): string {
-	return readFileSync(new URL(`./prompts/${name}`, import.meta.url), "utf8").trim();
+	const source = readFileSync(new URL(`./prompts/${name}`, import.meta.url), "utf8");
+	return stripHtmlComments(source, name).trim();
+}
+
+export function stripHtmlComments(template: string, name = "<inline template>"): string {
+	let result = "";
+	let cursor = 0;
+
+	while (cursor < template.length) {
+		const opening = template.indexOf("<!--", cursor);
+		const closing = template.indexOf("-->", cursor);
+		if (closing !== -1 && (opening === -1 || closing < opening)) {
+			throw new Error(
+				`Malformed HTML comment in prompt template "${name}": found closing marker "-->" without an opening marker.`,
+			);
+		}
+		if (opening === -1) {
+			result += template.slice(cursor);
+			break;
+		}
+
+		result += template.slice(cursor, opening);
+		const commentClosing = template.indexOf("-->", opening + 4);
+		if (commentClosing === -1) {
+			throw new Error(
+				`Malformed HTML comment in prompt template "${name}": opening marker "<!--" is unterminated.`,
+			);
+		}
+		const nestedOpening = template.indexOf("<!--", opening + 4);
+		if (nestedOpening !== -1 && nestedOpening < commentClosing) {
+			throw new Error(
+				`Malformed HTML comment in prompt template "${name}": found a nested opening marker "<!--".`,
+			);
+		}
+		cursor = commentClosing + 3;
+	}
+
+	return result;
 }
 
 function render(template: string, values: Record<string, unknown>): string {
