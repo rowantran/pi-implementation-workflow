@@ -1,17 +1,17 @@
 import { readFileSync } from "node:fs";
 import Mustache from "mustache";
 
-const CONTINUE_PLANNING_USER_TEMPLATE = loadTemplate("continue-planning-user.md");
-const IMPLEMENTATION_SYSTEM_TEMPLATE = loadTemplate("implementation-system.md");
-const IMPLEMENTATION_USER_TEMPLATE = loadTemplate("implementation-user.md");
-const PLAN_SLUG_SYSTEM_TEMPLATE = loadTemplate("plan-slug-system.md");
-const PLAN_SLUG_USER_TEMPLATE = loadTemplate("plan-slug-user.md");
-const PLANNING_SYSTEM_TEMPLATE = loadTemplate("planning-system.md");
-const START_PLANNING_USER_TEMPLATE = loadTemplate("start-planning-user.md");
-const REVIEW_SYSTEM_TEMPLATE = loadTemplate("review-system.md");
-const REVIEW_USER_TEMPLATE = loadTemplate("review-user.md");
-const UPDATE_PLAN_TOOL_GUIDELINE = loadTemplate("update-plan-tool-guideline.md");
-const UPDATE_PLAN_TOOL_SNIPPET = loadTemplate("update-plan-tool-snippet.md");
+const CONTINUE_PLANNING_USER_TEMPLATE = loadTemplate("injected-user-messages/continue-planning.md");
+const IMPLEMENTATION_SYSTEM_TEMPLATE = loadTemplate("system/implementation.md");
+const IMPLEMENTATION_USER_TEMPLATE = loadTemplate("injected-user-messages/implementation.md");
+const PLAN_SLUG_SYSTEM_TEMPLATE = loadTemplate("system/plan-slug.md");
+const PLAN_SLUG_USER_TEMPLATE = loadTemplate("injected-user-messages/plan-slug.md");
+const PLANNING_SYSTEM_TEMPLATE = loadTemplate("system/planning.md");
+const START_PLANNING_USER_TEMPLATE = loadTemplate("injected-user-messages/start-planning.md");
+const REVIEW_SYSTEM_TEMPLATE = loadTemplate("system/review.md");
+const REVIEW_USER_TEMPLATE = loadTemplate("injected-user-messages/review.md");
+const UPDATE_PLAN_TOOL_GUIDELINE = loadTemplate("system/update-plan-tool-guideline.md");
+const UPDATE_PLAN_TOOL_SNIPPET = loadTemplate("system/update-plan-tool-snippet.md");
 
 export function continuePlanningUserMessage(issue: string): string {
 	return render(CONTINUE_PLANNING_USER_TEMPLATE, { issue });
