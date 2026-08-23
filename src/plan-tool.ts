@@ -1,6 +1,7 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Text } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
+import { updatePlanToolPromptGuidelines, updatePlanToolPromptSnippet } from "./prompts.ts";
 
 export const WORKFLOW_UPDATE_PLAN_TOOL = "workflow_update_plan";
 
@@ -27,10 +28,8 @@ export function registerWorkflowPlanTool(
 		label: "Update Plan",
 		description:
 			"Replace the persistent implementation plan and its concise plain-English description, then save a new numbered plan version. Use this for every plan change during workflow planning.",
-		promptSnippet: "Update the persistent workflow plan, its English description, and its numbered version",
-		promptGuidelines: [
-			"Use workflow_update_plan for every implementation-plan change during workflow planning; provide the complete updated Markdown plan and a one-sentence-or-less English description.",
-		],
+		promptSnippet: updatePlanToolPromptSnippet(),
+		promptGuidelines: updatePlanToolPromptGuidelines(),
 		parameters: Parameters,
 		executionMode: "sequential",
 
