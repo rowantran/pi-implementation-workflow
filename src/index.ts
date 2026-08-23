@@ -16,7 +16,6 @@ import { writeWorkflowDashboard, writeWorkflowDashboardRedirect } from "./dashbo
 import { PLAN_TITLE, planningCompletionError } from "./planning.ts";
 import { registerWorkflowPlanTool, WORKFLOW_UPDATE_PLAN_TOOL } from "./plan-tool.ts";
 import {
-	continuePlanningUserMessage,
 	implementationSystemPrompt,
 	implementationUserMessage,
 	planSlugSystemPrompt,
@@ -349,16 +348,16 @@ export default function implementationWorkflow(pi: ExtensionAPI): void {
 	}
 
 	pi.registerCommand("workflow-plan", {
-		description: "Start or resume a persistent WHAT/WHY implementation plan",
+		description: "Capture an ask in the multiline editor and start a persistent WHAT/WHY implementation plan",
 		getArgumentCompletions: () => null,
 		handler: async (args, ctx) => {
 			await ctx.waitForIdle();
-			const issue = args.trim();
 
 			if (phase === "planning" && draftId) {
-				await prepareActivePlan(draftFiles(draftId));
-				await openDashboard(ctx);
-				if (issue) pi.sendUserMessage(continuePlanningUserMessage(issue));
+				ctx.ui.notify(
+					"Workflow planning is already active. Continue planning through normal conversation instead of running /workflow-plan again.",
+					"info",
+				);
 				return;
 			}
 
@@ -367,19 +366,34 @@ export default function implementationWorkflow(pi: ExtensionAPI): void {
 				ctx.ui.notify("Workflow planning must start inside a Git repository.", "error");
 				return;
 			}
+
+			const ask = await ctx.ui.editor("Describe what this workflow should accomplish", args);
+			if (ask === undefined || !ask.trim()) {
+				ctx.ui.notify("Planning did not start because no ask was submitted.", "info");
+				return;
+			}
+
 			const nextDraftId = ctx.sessionManager.getSessionId().replaceAll(/[^a-zA-Z0-9-]/g, "-");
 			const files = draftFiles(nextDraftId);
-			if (await pathExists(files.root)) await ensureWorkflowFiles(files);
-			else {
-				const initial = issue ? `${PLAN_TITLE}\n\n## Issue\n\n${issue}\n` : `${PLAN_TITLE}\n`;
+			if (await pathExists(files.root)) {
+				const existing = await ensureWorkflowFiles(files);
+				if (existing.status !== "planning" || existing.ask !== ask) {
+					ctx.ui.notify(
+						"Planning did not start because this session already has a draft with a different immutable original ask.",
+						"error",
+					);
+					return;
+				}
+			} else {
 				const initialMetadata: DraftWorkflowMetadata = {
 					version: WORKFLOW_STATE_VERSION,
 					status: "planning",
 					draftId: nextDraftId,
 					description: "",
+					ask,
 					createdAt: new Date().toISOString(),
 				};
-				await createDraft(files, initial, initialMetadata);
+				await createDraft(files, `${PLAN_TITLE}\n`, initialMetadata);
 			}
 
 			appendPhase({ phase: "planning", draftId: nextDraftId });
@@ -393,12 +407,7 @@ export default function implementationWorkflow(pi: ExtensionAPI): void {
 			pi.setSessionName("");
 			await prepareActivePlan(files);
 			await openDashboard(ctx);
-
-			if (issue) {
-				pi.sendUserMessage(startPlanningUserMessage(issue));
-			} else {
-				ctx.ui.notify(`Planning started. Advance to implementation with /workflow-next.`, "info");
-			}
+			pi.sendUserMessage(startPlanningUserMessage(ask));
 		},
 	});
 
@@ -440,11 +449,14 @@ export default function implementationWorkflow(pi: ExtensionAPI): void {
 			workflow.status = "implementing";
 			workflow.implementationStartedAt ??= new Date().toISOString();
 			await writeCompletedWorkflowMetadata(workflow);
+			const files = workflowFiles(requestedIdentifier);
 			await ctx.switchSession(sessionFile, {
 				withSession: async (replacementCtx) => {
 					await replacementCtx.sendUserMessage(
 						implementationUserMessage({
-							planPath: workflowFiles(requestedIdentifier).plan,
+							metadataPath: files.metadata,
+							planPath: files.plan,
+							clarificationsPath: files.clarifications,
 							worktreePath: workflow.worktreePath,
 							workflowBranch: workflow.workflowBranch,
 							baseBranch: workflow.baseBranch,
@@ -497,13 +509,16 @@ export default function implementationWorkflow(pi: ExtensionAPI): void {
 			workflow.status = "reviewing";
 			workflow.reviewStartedAt ??= new Date().toISOString();
 			await writeCompletedWorkflowMetadata(workflow);
+			const files = workflowFiles(requestedIdentifier);
 			await ctx.switchSession(sessionFile, {
 				withSession: async (replacementCtx) => {
 					await replacementCtx.sendUserMessage(
 						reviewUserMessage({
-								pullRequestUrl: workflow.pullRequestUrl!,
-								planPath: workflowFiles(requestedIdentifier).plan,
-							}),
+							pullRequestUrl: workflow.pullRequestUrl!,
+							metadataPath: files.metadata,
+							planPath: files.plan,
+							clarificationsPath: files.clarifications,
+						}),
 					);
 				},
 			});
@@ -540,6 +555,10 @@ export default function implementationWorkflow(pi: ExtensionAPI): void {
 			return;
 		}
 		const currentDraftMetadata = draftMetadata;
+		if (currentDraftMetadata.version === WORKFLOW_STATE_VERSION && !currentDraftMetadata.ask?.trim()) {
+			ctx.ui.notify("Planning cannot complete without the immutable original ask.", "error");
+			return;
+		}
 		await recordExternalRevision();
 		const draft = activeFiles;
 		const plan = await readText(draft.plan);
@@ -604,9 +623,10 @@ export default function implementationWorkflow(pi: ExtensionAPI): void {
 					const worktreePath = join(repository.root, ".worktrees", nextIdentifier);
 					const workflowBranch = `${WORKFLOW_BRANCH_PREFIX}${nextIdentifier}`;
 					const nextMetadata: CompletedWorkflowMetadata = {
-						version: WORKFLOW_STATE_VERSION,
+						version: currentDraftMetadata.version,
 						identifier: nextIdentifier,
 						description,
+						ask: currentDraftMetadata.ask,
 						status: "ready_for_implementation",
 						repositoryRoot: repository.root,
 						gitCommonDir: repository.commonDir,
@@ -1022,7 +1042,9 @@ export default function implementationWorkflow(pi: ExtensionAPI): void {
 		if (phase === "implementation" && metadata?.status !== "implementation_complete") {
 			instructions = implementationSystemPrompt({
 				identifier,
+				metadataPath: activeFiles.metadata,
 				planPath: activeFiles.plan,
+				clarificationsPath: activeFiles.clarifications,
 				questionTool: WORKFLOW_QUESTION_TOOL,
 				baseBranch: metadata?.baseBranch,
 			});
@@ -1031,7 +1053,9 @@ export default function implementationWorkflow(pi: ExtensionAPI): void {
 			instructions = reviewSystemPrompt({
 				identifier,
 				pullRequestUrl: metadata?.pullRequestUrl,
+				metadataPath: activeFiles.metadata,
 				planPath: activeFiles.plan,
+				clarificationsPath: activeFiles.clarifications,
 			});
 		}
 		if (!instructions) return;
@@ -1039,20 +1063,12 @@ export default function implementationWorkflow(pi: ExtensionAPI): void {
 	});
 
 	pi.on("tool_call", async (event, ctx) => {
-		if (!activeFiles || (event.toolName !== "edit" && event.toolName !== "write")) return;
+		if (!activeFiles || !phase || (event.toolName !== "edit" && event.toolName !== "write")) return;
 		const rawPath = (event.input as { path?: unknown }).path;
 		if (typeof rawPath !== "string") return;
 		const target = resolve(ctx.cwd, rawPath.replace(/^@/, ""));
-		const planPath = resolve(activeFiles.plan);
-		if (phase === "planning") {
-			return {
-				block: true,
-				reason: `Planning file changes must use ${WORKFLOW_UPDATE_PLAN_TOOL}; direct edit/write calls are disabled.`,
-			};
-		}
-		if (target === planPath) {
-			return { block: true, reason: "The workflow plan is frozen and read-only in this phase." };
-		}
+		const reason = workflowWriteBlockReason(phase, activeFiles, target);
+		if (reason) return { block: true, reason };
 	});
 
 	pi.on("agent_settled", async (_event, ctx) => {
@@ -1111,6 +1127,23 @@ export default function implementationWorkflow(pi: ExtensionAPI): void {
 		watcher?.close();
 		watcher = undefined;
 	});
+}
+
+export function workflowWriteBlockReason(
+	phase: WorkflowPhase,
+	files: WorkflowFiles,
+	targetPath: string,
+): string | undefined {
+	if (phase === "planning") {
+		return `Planning file changes must use ${WORKFLOW_UPDATE_PLAN_TOOL}; direct edit/write calls are disabled.`;
+	}
+	if (resolve(targetPath) === resolve(files.metadata)) {
+		return "Workflow metadata, including the original ask, is managed by the workflow and read-only.";
+	}
+	if (resolve(targetPath) === resolve(files.plan)) {
+		return "The workflow plan is frozen and read-only in this phase.";
+	}
+	return undefined;
 }
 
 function normalizePlanSlug(response: string): string {

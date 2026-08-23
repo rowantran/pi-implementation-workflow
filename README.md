@@ -33,13 +33,21 @@ Each completed plan has a unique identifier, a complete numbered version history
 Start planning inside the repository:
 
 ```text
+/workflow-plan
+```
+
+The command opens a required multiline editor. Submit a non-empty ask to start planning. Press Escape to cancel without changing the session or workflow storage. You can provide optional inline text as an editor prefill, but you must still review and submit it:
+
+```text
 /workflow-plan describe the issue
 ```
 
-The extension opens `dashboard.html` in the default browser. The dashboard is a self-contained file styled with the Isara design system, so it does not need a web server. It has:
+If planning is already active, continue through normal conversation instead of running `/workflow-plan` again.
+
+The extension saves the submitted ask verbatim as immutable workflow metadata, starts `plan.md` with only the implementation-plan title, sends the ask as the planning kickoff message, and opens `dashboard.html` in the default browser. The dashboard is a self-contained file styled with the Isara design system, so it does not need a web server. It has:
 
 - a concise plain-English plan description as the main document title, beside its prominent current version number;
-- a **Plan** view for the latest plan and user clarifications;
+- a **Plan** view for the latest plan, the immutable original ask, and structured user clarifications;
 - a **Compare versions** view with two version selectors and a GitHub-style colored line diff;
 - light and dark themes;
 - automatic refresh when the browser regains focus.
@@ -68,7 +76,7 @@ Planning completion:
 
 Paste the copied command directly into the planning session. The command creates and switches to a separate worktree-bound implementation session, so the planning conversation remains saved and does not enter implementation context. Starting with `/new` first is still supported but is not necessary.
 
-If the approved plan has material ambiguity, the agent asks through `workflow_questions`. Submitted answers are appended verbatim to `clarifications.json` and shown in the dashboard. Selected answers retain the exact option label; custom answers retain the exact submitted text. Cancelled questionnaires are not stored.
+Implementation inspects three durable sources before it acts: the immutable original ask in `metadata.json`, the frozen approved scope in `plan.md`, and later explicit answers in `clarifications.json`. If the approved plan has material ambiguity, the agent asks through `workflow_questions`. Submitted answers are appended verbatim to `clarifications.json` and shown in the dashboard. Selected answers retain the exact option label; custom answers retain the exact submitted text. Cancelled questionnaires are not stored.
 
 After the agent settles, the extension automatically checks whether implementation is ready to advance:
 
@@ -78,7 +86,7 @@ After the agent settles, the extension automatically checks whether implementati
 
 The extension shows progress while checking the worktree and finding the pull request. When the gates pass, run `/workflow-next` to advance. The command repeats the checks, records the pull request, copies `/workflow-review <identifier>` to the clipboard, and shows a high-contrast completion card.
 
-Paste the review command directly into the implementation session. It creates and switches to a separate review session in the same worktree, so the implementation conversation remains saved and does not enter review context. Starting with `/new` first is still supported but is not necessary. Review opens the frozen-plan dashboard and reviews the recorded pull request. Advance from review to cleanup explicitly:
+Paste the review command directly into the implementation session. It creates and switches to a separate review session in the same worktree, so the implementation conversation remains saved and does not enter review context. Starting with `/new` first is still supported but is not necessary. Review opens the frozen-plan dashboard and compares the recorded pull request with the same three durable sources: `metadata.json`, `plan.md`, and `clarifications.json`. Advance from review to cleanup explicitly:
 
 ```text
 /workflow-next
@@ -88,7 +96,7 @@ Review completion shows progress while checking and removing the worktree. It sw
 
 ## Commands
 
-- `/workflow-plan [issue]` — start or resume planning and open the dashboard.
+- `/workflow-plan [ask]` — open the required multiline ask editor, optionally prefilled with the argument, then start planning and open the dashboard.
 - `/workflow-dashboard` — regenerate and open the active workflow dashboard.
 - `/workflow-implement <identifier>` — enter a fresh implementation session in the stored worktree.
 - `/workflow-review <identifier>` — enter a fresh read-only review session in the stored worktree.
@@ -143,7 +151,7 @@ Completed plans use the same files under their final identifier:
 └── metadata.json
 ```
 
-`metadata.json` exists from the start of planning. It contains `DraftWorkflowMetadata` while planning and is replaced by `CompletedWorkflowMetadata` when planning completes. Both types store the plain-English description. The completed type also stores the final identifier and workflow lifecycle state. Existing `description.txt` files are migrated into metadata and removed when the workflow next loads. The identifier remains the source of the plan-directory, branch, and worktree names.
+`metadata.json` exists from the start of planning. It contains `DraftWorkflowMetadata` while planning and is replaced by `CompletedWorkflowMetadata` when planning completes. Both types store the verbatim, write-once original ask and the plain-English description. The completed type also stores the final identifier and workflow lifecycle state. Workflows created before original-ask capture migrate with `ask: null`; new workflows require a non-empty ask. Existing `description.txt` files are migrated into metadata and removed when the workflow next loads. The identifier remains the source of the plan-directory, branch, and worktree names.
 
 On first load, old workflow directories that contain `plan.previous.md` are migrated into the numbered history. The legacy file is left in place but is no longer updated.
 

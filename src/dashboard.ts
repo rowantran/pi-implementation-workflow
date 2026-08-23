@@ -17,6 +17,7 @@ const DASHBOARD_TEMPLATE = readFileSync(new URL("./dashboard.html", import.meta.
 export interface WorkflowDashboardData {
 	slug?: string;
 	description?: string;
+	ask?: string;
 	generatedAt: string;
 	versions: Array<Pick<PlanVersion, "number" | "createdAt" | "content">>;
 	clarifications: WorkflowClarification[];
@@ -31,6 +32,7 @@ export async function writeWorkflowDashboard(files: WorkflowFiles): Promise<void
 	const data: WorkflowDashboardData = {
 		slug: basename(dirname(files.root)) === ".drafts" ? undefined : basename(files.root),
 		description: metadata.description?.trim() || undefined,
+		ask: metadata.ask ?? undefined,
 		generatedAt: new Date().toISOString(),
 		versions: versions.map(({ number, createdAt, content }) => ({ number, createdAt, content })),
 		clarifications: clarifications.entries,

@@ -9,6 +9,7 @@ const { renderWorkflowDashboard } = await jiti.import(
 const data = {
   slug: 'example</title><script>alert("unsafe")</script>',
   description: "Extract the dashboard template",
+  ask: 'First line\n\nSecond </template><script>alert("ask")</script> line.',
   generatedAt: "2025-01-02T03:04:05.000Z",
   versions: [
     {
@@ -36,6 +37,13 @@ assert.ok(
 );
 assert.ok(
   html.includes(
+    "First line\\n\\nSecond &lt;&#x2F;template&gt;&lt;script&gt;alert(\\&quot;ask\\&quot;)&lt;&#x2F;script&gt; line.",
+  ),
+);
+assert.ok(html.includes('originalAskText.textContent = dashboard.ask'));
+assert.equal(data.versions[0].content.includes(data.ask), false);
+assert.ok(
+  html.includes(
     'const dashboard = JSON.parse(document.getElementById("dashboard-data").content.textContent);',
   ),
 );
@@ -43,4 +51,4 @@ assert.ok(!html.includes("{{dashboard"));
 assert.ok(!html.includes("</title><script>"));
 assert.ok(!html.includes("</template><script>"));
 
-console.log("Dashboard test passed: the HTML template rendered data and escaped dynamic values.");
+console.log("Dashboard test passed: multiline original asks render as safe plain text outside plan content.");
