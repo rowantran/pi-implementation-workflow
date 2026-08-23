@@ -7,11 +7,13 @@ import {
 import { Box, type Component, Text, truncateToWidth, type TUI } from "@earendil-works/pi-tui";
 
 const COMPLETION_ENTRY = "implementation-workflow-completion";
+const PHASE_STATUS_ID = "implementation-workflow-phase";
 const SPINNER_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 const COMPLETION_DELAY_MS = 300;
 const FAILURE_DELAY_MS = 600;
 
 type ProgressStatus = "pending" | "active" | "complete" | "failed";
+export type WorkflowStatusPhase = "planning" | "implementation" | "review" | "cleanup" | "complete";
 
 interface ProgressStep {
 	label: string;
@@ -121,6 +123,18 @@ const NOOP_PROGRESS: WorkflowProgress = {
 	complete: () => {},
 	fail: () => {},
 };
+
+export function workflowPhaseStatusText(phase: WorkflowStatusPhase | undefined): string | undefined {
+	if (phase === "planning" || phase === "implementation" || phase === "review") {
+		return "/workflow-next when ready";
+	}
+	return undefined;
+}
+
+export function showWorkflowPhaseStatus(ctx: ExtensionContext, phase: WorkflowStatusPhase | undefined): void {
+	const status = workflowPhaseStatusText(phase);
+	ctx.ui.setStatus(PHASE_STATUS_ID, status ? ctx.ui.theme.fg("dim", status) : undefined);
+}
 
 export async function runWorkflowProgress<T>(
 	ctx: ExtensionContext,

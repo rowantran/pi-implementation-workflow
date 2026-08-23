@@ -70,13 +70,13 @@ Paste the copied command directly into the planning session. The command creates
 
 If the approved plan has material ambiguity, the agent asks through `workflow_questions`. Submitted answers are appended verbatim to `clarifications.json` and shown in the dashboard. Selected answers retain the exact option label; custom answers retain the exact submitted text. Cancelled questionnaires are not stored.
 
-Implementation completes automatically when the agent settles and all gates pass:
+After the agent settles, the extension automatically checks whether implementation is ready to advance:
 
 - the expected worktree and branch exist;
 - the worktree is clean;
 - an open pull request exists from the workflow branch to the recorded base branch.
 
-The extension shows progress while checking the worktree and finding the pull request. It then records the pull request, copies `/workflow-review <identifier>` to the clipboard, and shows a high-contrast completion card. `/workflow-next` remains available to manually retry advancing when a completion gate fails.
+The extension shows progress while checking the worktree and finding the pull request. When the gates pass, run `/workflow-next` to advance. The command repeats the checks, records the pull request, copies `/workflow-review <identifier>` to the clipboard, and shows a high-contrast completion card.
 
 Paste the review command directly into the implementation session. It creates and switches to a separate review session in the same worktree, so the implementation conversation remains saved and does not enter review context. Starting with `/new` first is still supported but is not necessary. Review opens the frozen-plan dashboard and reviews the recorded pull request. Advance from review to cleanup explicitly:
 
@@ -92,7 +92,7 @@ Review completion shows progress while checking and removing the worktree. It sw
 - `/workflow-dashboard` — regenerate and open the active workflow dashboard.
 - `/workflow-implement <identifier>` — enter a fresh implementation session in the stored worktree.
 - `/workflow-review <identifier>` — enter a fresh read-only review session in the stored worktree.
-- `/workflow-next` — advance planning or review to the next phase, or manually retry advancing from implementation.
+- `/workflow-next` — advance planning, implementation, or review to the next phase.
 
 ## Session names
 
@@ -110,7 +110,11 @@ Before planning has a final slug, the unavailable slug and separator are omitted
 Planning: <description>
 ```
 
-Workflows created before descriptions were introduced keep the shorter title without the description. Cleanup and completion do not add session names or footer status because they are short, non-agentic transitions.
+Workflows created before descriptions were introduced keep the shorter title without the description.
+
+After the first agent turn settles in a phase, the footer shows `/workflow-next when ready`. The session title already identifies whether the active phase is planning, implementation, or review.
+
+The reminder stays visible if the session resumes. Implementation readiness checks still run after each settled turn, but only `/workflow-next` advances the workflow. Cleanup and completion do not add session names or footer status because they are short, non-agentic transitions.
 
 ## State
 

@@ -56,6 +56,7 @@ import {
 	registerWorkflowCompletionRenderer,
 	runWorkflowProgress,
 	showWorkflowCompletion,
+	showWorkflowPhaseStatus,
 } from "./ui.ts";
 
 type WorkflowPhase = "planning" | "implementation" | "review" | "cleanup" | "complete";
@@ -83,6 +84,7 @@ interface CompletionFailure {
 }
 
 const PHASE_ENTRY = "implementation-workflow-phase";
+const PHASE_REMINDER_ENTRY = "implementation-workflow-phase-reminder";
 const DASHBOARD_SHORTCUT = "ctrl+alt+d";
 const WORKFLOW_BRANCH_PREFIX = "workflow/";
 const REVIEW_DISABLED_TOOLS = new Set(["edit", "write"]);
@@ -104,6 +106,7 @@ export default function implementationWorkflow(pi: ExtensionAPI): void {
 	let dashboardOpened = false;
 	let completionInFlight = false;
 	let lastAutomaticFailure: string | undefined;
+	let phaseReminderVisible = false;
 
 	registerWorkflowPlanTool(pi, async (plan, rawDescription) => {
 		if (phase !== "planning" || !activeFiles) {
@@ -142,11 +145,40 @@ export default function implementationWorkflow(pi: ExtensionAPI): void {
 		return undefined;
 	}
 
+	function phaseReminderWasShown(entries: SessionEntry[]): boolean {
+		for (let index = entries.length - 1; index >= 0; index--) {
+			const entry = entries[index];
+			if (entry.type !== "custom") continue;
+			if (entry.customType === PHASE_REMINDER_ENTRY) return true;
+			if (entry.customType === PHASE_ENTRY) return false;
+		}
+		return false;
+	}
+
 	function appendPhase(data: WorkflowPhaseData): void {
 		phase = data.phase;
 		draftId = data.draftId;
 		identifier = data.identifier;
+		phaseReminderVisible = false;
 		pi.appendEntry(PHASE_ENTRY, data);
+	}
+
+	function updatePhaseStatus(ctx: ExtensionContext): void {
+		const activePhase =
+			phase === "planning" ||
+			(phase === "implementation" && metadata?.status === "implementing") ||
+			(phase === "review" && metadata?.status === "reviewing")
+				? phase
+				: undefined;
+		showWorkflowPhaseStatus(ctx, phaseReminderVisible ? activePhase : undefined);
+	}
+
+	function revealPhaseReminder(ctx: ExtensionContext): void {
+		if (phaseReminderVisible) return;
+		if (phase !== "planning" && phase !== "implementation" && phase !== "review") return;
+		phaseReminderVisible = true;
+		pi.appendEntry(PHASE_REMINDER_ENTRY, { phase, draftId, identifier });
+		updatePhaseStatus(ctx);
 	}
 
 	function applyPhaseTools(): void {
@@ -357,6 +389,7 @@ export default function implementationWorkflow(pi: ExtensionAPI): void {
 				.getActiveTools()
 				.filter((name) => name !== WORKFLOW_QUESTION_TOOL && name !== WORKFLOW_UPDATE_PLAN_TOOL);
 			applyPhaseTools();
+			updatePhaseStatus(ctx);
 			pi.setSessionName("");
 			await prepareActivePlan(files);
 			await openDashboard(ctx);
@@ -648,6 +681,7 @@ export default function implementationWorkflow(pi: ExtensionAPI): void {
 		metadata = nextMetadata;
 		draftMetadata = undefined;
 		activeFiles = destination;
+		updatePhaseStatus(ctx);
 		pi.setSessionName(workflowSessionName("Planning", nextIdentifier, nextMetadata.description));
 		if (dashboardWarnings.length > 0) ctx.ui.notify(dashboardWarnings.join("\n"), "warning");
 
@@ -673,7 +707,7 @@ export default function implementationWorkflow(pi: ExtensionAPI): void {
 		});
 	}
 
-	async function completeImplementation(ctx: ExtensionContext, automatic: boolean): Promise<void> {
+	async function completeImplementation(ctx: ExtensionContext, readinessCheckOnly: boolean): Promise<void> {
 		if (!identifier) return;
 		if (completionInFlight) return;
 		completionInFlight = true;
@@ -681,18 +715,18 @@ export default function implementationWorkflow(pi: ExtensionAPI): void {
 			const workflow = await readCompletedWorkflowMetadata(identifier);
 			metadata = workflow;
 			if (workflow.status === "implementation_complete") {
-				if (!automatic) await copyReviewCommand(ctx, workflow);
+				if (!readinessCheckOnly) await copyReviewCommand(ctx, workflow);
 				return;
 			}
 			if (workflow.status !== "implementing") {
-				if (!automatic) ctx.ui.notify(`Workflow ${identifier} is ${workflow.status}.`, "error");
+				if (!readinessCheckOnly) ctx.ui.notify(`Workflow ${identifier} is ${workflow.status}.`, "error");
 				return;
 			}
 			const completion = await runWorkflowProgress<
 				{ failure: CompletionFailure } | { pullRequest: PullRequestInfo }
 			>(
 				ctx,
-				"Completing implementation",
+				readinessCheckOnly ? "Checking implementation readiness" : "Completing implementation",
 				["Checking worktree", "Finding pull request"],
 				async (progress) => {
 					const failure = await implementationCompletionFailure(workflow);
@@ -715,13 +749,15 @@ export default function implementationWorkflow(pi: ExtensionAPI): void {
 			);
 			if ("failure" in completion) {
 				const message = completion.failure.message;
-				if (!automatic || lastAutomaticFailure !== message) {
-					ctx.ui.notify(`Implementation is not complete: ${message}.`, automatic ? "warning" : "error");
+				if (!readinessCheckOnly || lastAutomaticFailure !== message) {
+					ctx.ui.notify(`Implementation is not complete: ${message}.`, readinessCheckOnly ? "warning" : "error");
 				}
 				lastAutomaticFailure = message;
 				return;
 			}
 			const { pullRequest } = completion;
+			lastAutomaticFailure = undefined;
+			if (readinessCheckOnly) return;
 
 			workflow.status = "implementation_complete";
 			workflow.implementationCompletedAt = new Date().toISOString();
@@ -729,8 +765,8 @@ export default function implementationWorkflow(pi: ExtensionAPI): void {
 			workflow.pullRequestNumber = pullRequest.number;
 			await writeCompletedWorkflowMetadata(workflow);
 			metadata = workflow;
-			lastAutomaticFailure = undefined;
 			applyPhaseTools();
+			updatePhaseStatus(ctx);
 			await copyReviewCommand(ctx, workflow);
 		} catch (error) {
 			ctx.ui.notify(`Could not complete implementation: ${errorMessage(error)}`, "error");
@@ -884,6 +920,7 @@ export default function implementationWorkflow(pi: ExtensionAPI): void {
 		await writeCompletedWorkflowMetadata(workflow);
 		metadata = workflow;
 		appendPhase({ phase: "complete", identifier: workflowIdentifier });
+		updatePhaseStatus(ctx);
 		showWorkflowCompletion(pi, ctx, {
 			title: "Review complete",
 			details: [
@@ -1022,13 +1059,15 @@ export default function implementationWorkflow(pi: ExtensionAPI): void {
 		if (phase === "implementation" && metadata?.status === "implementing") {
 			await completeImplementation(ctx, true);
 		}
+		revealPhaseReminder(ctx);
 	});
 
 	pi.on("session_start", async (_event, ctx) => {
 		baseTools = pi
 			.getActiveTools()
 			.filter((name) => name !== WORKFLOW_QUESTION_TOOL && name !== WORKFLOW_UPDATE_PLAN_TOOL);
-		const saved = latestPhase(ctx.sessionManager.getBranch());
+		const branch = ctx.sessionManager.getBranch();
+		const saved = latestPhase(branch);
 		phase = saved?.phase;
 		draftId = saved?.draftId;
 		identifier = saved?.identifier;
@@ -1036,6 +1075,7 @@ export default function implementationWorkflow(pi: ExtensionAPI): void {
 		draftMetadata = undefined;
 		activeFiles = undefined;
 		planDescription = "";
+		phaseReminderVisible = phaseReminderWasShown(branch);
 
 		if (phase === "planning" && draftId) {
 			const files = draftFiles(draftId);
@@ -1053,6 +1093,7 @@ export default function implementationWorkflow(pi: ExtensionAPI): void {
 		}
 
 		applyPhaseTools();
+		updatePhaseStatus(ctx);
 		if (phase === "implementation" && identifier) {
 			pi.setSessionName(workflowSessionName("Implement", identifier, metadata?.description ?? planDescription));
 		}

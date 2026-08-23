@@ -22,7 +22,7 @@ const implementationValues = {
 };
 assert.equal(
   prompts.implementationSystemPrompt(implementationValues),
-  `IMPLEMENTATION WORKFLOW — IMPLEMENTATION\nWorkflow: ${implementationValues.identifier}. The frozen plan is read-only at ${implementationValues.planPath}. First inspect it and the repository. If material ambiguity remains, use ${implementationValues.questionTool} before changing code; ask all questions in one multiple-choice batch when practical and explain option consequences. If the questionnaire is cancelled, stop. Work only in the current worktree. Implement necessary scope with clean architecture, verify it, commit, push, and open a pull request to ${implementationValues.baseBranch}. Implementation completion runs automatically when the agent settles and succeeds only for a clean worktree with the expected open pull request.`,
+  `IMPLEMENTATION WORKFLOW — IMPLEMENTATION\nWorkflow: ${implementationValues.identifier}. The frozen plan is read-only at ${implementationValues.planPath}. First inspect it and the repository. If material ambiguity remains, use ${implementationValues.questionTool} before changing code; ask all questions in one multiple-choice batch when practical and explain option consequences. If the questionnaire is cancelled, stop. Work only in the current worktree. Implement necessary scope with clean architecture, verify it, commit, push, and open a pull request to ${implementationValues.baseBranch}. Readiness checks run automatically when the agent settles, but the user advances with /workflow-next. Advancement succeeds only for a clean worktree with the expected open pull request.`,
 );
 
 const implementationUserValues = {
@@ -33,7 +33,7 @@ const implementationUserValues = {
 };
 assert.equal(
   prompts.implementationUserMessage(implementationUserValues),
-  `Implement the frozen plan at ${implementationUserValues.planPath}. Work only in ${implementationUserValues.worktreePath} on ${implementationUserValues.workflowBranch}. First inspect the plan and repository. Resolve material ambiguity through the implementation questionnaire before changing code. Then implement and verify the change, commit it, push it, and open a pull request targeting ${implementationUserValues.baseBranch}. The workflow will complete automatically after the agent settles if the worktree is clean and the pull request exists.`,
+  `Implement the frozen plan at ${implementationUserValues.planPath}. Work only in ${implementationUserValues.worktreePath} on ${implementationUserValues.workflowBranch}. First inspect the plan and repository. Resolve material ambiguity through the implementation questionnaire before changing code. Then implement and verify the change, commit it, push it, and open a pull request targeting ${implementationUserValues.baseBranch}. Readiness checks run automatically after the agent settles, but the user advances with /workflow-next.`,
 );
 
 const plan = "# Plan\n\nKeep {{braces}} and <tags>.\n";
