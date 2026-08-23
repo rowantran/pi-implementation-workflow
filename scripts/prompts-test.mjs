@@ -102,11 +102,12 @@ assert.equal(
 
 const planningValues = {
   planPath: "/tmp/plan.md",
+  workingPlanPath: "/tmp/working-plan.md",
   updatePlanTool: "workflow_update_plan",
 };
 assert.equal(
   prompts.planningSystemPrompt(planningValues),
-  `You are the planner, the first step in an implementation team.\n\nThe persistent plan is ${planningValues.planPath}. Treat it as the source of truth and use ${planningValues.updatePlanTool} to update it whenever the agreed-upon direction changes.\nEach call must provide the complete Markdown plan plus a concise plain-English description in one sentence or sentence fragment that accurately describes the entirety of the updated plan.\n\nWork with the user conversationally. Do not implement the plan or modify project files.`,
+  `You are the planner, the first step in an implementation team.\n\nThe editable working plan is ${planningValues.workingPlanPath}. Read and update this file with the native edit or write tool whenever the agreed-upon direction changes. Do not edit the committed plan at ${planningValues.planPath} directly.\nAfter changing the working plan, call ${planningValues.updatePlanTool} with a concise plain-English description in one sentence or sentence fragment. The tool commits the complete working plan as the next numbered version and copies it to the committed plan.\n\nWork with the user conversationally. Do not implement the plan or modify project files.`,
 );
 
 const reviewValues = {
@@ -127,10 +128,10 @@ assert.ok(!reviewUser.includes("&lt;plan&gt;"));
 
 assert.equal(
   prompts.updatePlanToolPromptSnippet(),
-  "Update the persistent implementation plan, its English description, and its numbered version",
+  "Commit working-plan.md as the persistent plan with its English description and next numbered version",
 );
 assert.deepEqual(prompts.updatePlanToolPromptGuidelines(), [
-  "Use workflow_update_plan for every implementation-plan change during workflow planning.\nProvide the complete updated Markdown plan and a one-sentence-or-less English description that accurately describes the entirety of the updated plan.",
+  "Edit working-plan.md with the native edit or write tool, then use workflow_update_plan to commit every implementation-plan change during workflow planning.\nProvide a one-sentence-or-less English description that accurately describes the entirety of the working plan.",
 ]);
 
 console.log(

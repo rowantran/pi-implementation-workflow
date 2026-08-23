@@ -44,7 +44,7 @@ The command opens a required multiline editor. Submit a non-empty ask to start p
 
 If planning is already active, continue through normal conversation instead of running `/workflow-plan` again.
 
-The extension saves the submitted ask verbatim as immutable workflow metadata, starts `plan.md` with only the implementation-plan title, sends the ask as the planning kickoff message, and opens `dashboard.html` in the default browser. The dashboard is a self-contained file styled with the Isara design system, so it does not need a web server. It has:
+The extension saves the submitted ask verbatim as immutable workflow metadata, starts `plan.md` and `working-plan.md` with only the implementation-plan title, sends the ask as the planning kickoff message, and opens `dashboard.html` in the default browser. The dashboard is a self-contained file styled with the Isara design system, so it does not need a web server. It has:
 
 - a concise plain-English plan description as the main document title, beside its prominent current version number;
 - a **Plan** view for the latest plan, the immutable original ask, and structured user clarifications;
@@ -54,7 +54,7 @@ The extension saves the submitted ask verbatim as immutable workflow metadata, s
 
 Press `Ctrl+Alt+D` or run `/workflow-dashboard` to open the dashboard again.
 
-During planning, the agent uses `workflow_update_plan` instead of direct `edit` or `write` calls. Each tool call stores the complete plan as the next numbered Markdown file under `versions/` and updates its one-sentence-or-less English description, including calls whose plan content matches the prior version. Manual changes to `plan.md` are also detected and stored as new versions.
+During planning, the agent uses native `edit` or `write` calls only on `working-plan.md`. It then calls `workflow_update_plan` with a one-sentence-or-less English description. The tool is the only way to commit a plan change: it stores the complete working plan as the next numbered Markdown file under `versions/`, copies the same content to `plan.md`, and updates the description. Calls whose working-plan content matches the prior version still create a new version. `/workflow-next` refuses to advance while `working-plan.md` differs from the committed `plan.md`.
 
 Advance from planning to implementation explicitly:
 
@@ -128,6 +128,7 @@ Planning drafts are session-specific:
 ```text
 ~/.pi/agent/workflows/.drafts/<session-id>/
 ├── plan.md
+├── working-plan.md
 ├── versions/
 ├── clarifications.json
 ├── dashboard.html

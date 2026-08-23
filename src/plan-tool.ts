@@ -14,27 +14,24 @@ const Parameters = Type.Object({
 		maxLength: 160,
 		description: "A concise plain-English description of the plan in one sentence or sentence fragment of at most 18 words",
 	}),
-	plan: Type.String({
-		description: "The complete updated implementation plan in Markdown. This replaces plan.md and creates a new numbered version.",
-	}),
 });
 
 export function registerWorkflowPlanTool(
 	pi: ExtensionAPI,
-	onUpdate: (plan: string, description: string) => Promise<UpdatePlanResult>,
+	onUpdate: (description: string) => Promise<UpdatePlanResult>,
 ): void {
 	pi.registerTool({
 		name: WORKFLOW_UPDATE_PLAN_TOOL,
 		label: "Update Plan",
 		description:
-			"Replace the persistent implementation plan and its concise plain-English description, then save a new numbered plan version. Use this for every plan change during workflow planning.",
+			"Commit working-plan.md as the persistent implementation plan with its concise plain-English description and a new numbered version. Use this for every plan change during workflow planning.",
 		promptSnippet: updatePlanToolPromptSnippet(),
 		promptGuidelines: updatePlanToolPromptGuidelines(),
 		parameters: Parameters,
 		executionMode: "sequential",
 
 		async execute(_toolCallId, params) {
-			const result = await onUpdate(params.plan, params.description);
+			const result = await onUpdate(params.description);
 			return {
 				content: [{ type: "text", text: `Saved implementation plan version ${result.version}.` }],
 				details: result,

@@ -35,7 +35,7 @@ implementationWorkflow(pi);
 
 const expected = {
   commands: ["workflow-plan", "workflow-next", "workflow-dashboard"],
-  events: ["before_agent_start", "tool_call", "agent_settled", "session_start", "session_shutdown"],
+  events: ["before_agent_start", "tool_call", "agent_settled", "session_start"],
   renderers: ["implementation-workflow-completion"],
   shortcuts: ["ctrl+alt+d"],
   tools: ["workflow_update_plan", "workflow_questions"],

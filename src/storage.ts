@@ -74,6 +74,7 @@ export interface WorkflowClarifications {
 export interface WorkflowFiles {
 	root: string;
 	plan: string;
+	workingPlan: string;
 	versions: string;
 	clarifications: string;
 	dashboard: string;
@@ -102,6 +103,7 @@ function filesAt(root: string): WorkflowFiles {
 	return {
 		root,
 		plan: join(root, "plan.md"),
+		workingPlan: join(root, "working-plan.md"),
 		versions: join(root, "versions"),
 		clarifications: join(root, "clarifications.json"),
 		dashboard: join(root, "dashboard.html"),
@@ -128,6 +130,7 @@ export async function createDraft(
 	await mkdir(files.versions, { recursive: true });
 	await Promise.all([
 		atomicWrite(files.plan, initialPlan),
+		atomicWrite(files.workingPlan, initialPlan),
 		atomicWrite(files.metadata, `${JSON.stringify(metadata, null, 2)}\n`),
 		atomicWrite(files.clarifications, `${JSON.stringify(emptyClarifications(), null, 2)}\n`),
 	]);
@@ -140,7 +143,9 @@ export async function ensureWorkflowFiles(files: WorkflowFiles): Promise<Workflo
 	await ensureFile(files.clarifications, `${JSON.stringify(emptyClarifications(), null, 2)}\n`);
 	await migratePlanVersions(files);
 	await readClarifications(files);
-	return readWorkflowMetadata(files);
+	const metadata = await readWorkflowMetadata(files);
+	if (metadata.status === "planning") await ensureFile(files.workingPlan, await readText(files.plan));
+	return metadata;
 }
 
 export async function savePlanVersion(files: WorkflowFiles, content: string): Promise<PlanVersion> {
@@ -216,6 +221,7 @@ export async function appendClarifications(
 export async function promoteDraft(draft: WorkflowFiles, destination: WorkflowFiles): Promise<void> {
 	await mkdir(dirname(destination.root), { recursive: true });
 	await rename(draft.root, destination.root);
+	await rm(destination.workingPlan, { force: true }).catch(() => undefined);
 }
 
 export async function pathExists(path: string): Promise<boolean> {
@@ -416,9 +422,8 @@ async function migratePlanVersions(files: WorkflowFiles): Promise<void> {
 		await writeVersionFile(files, number, current);
 		return;
 	}
-	if (versions[versions.length - 1]?.content !== current) {
-		await savePlanVersion(files, current);
-	}
+	const latest = versions[versions.length - 1];
+	if (latest && latest.content !== current) await atomicWrite(files.plan, latest.content);
 }
 
 async function latestPlanVersionNumber(files: WorkflowFiles): Promise<number> {

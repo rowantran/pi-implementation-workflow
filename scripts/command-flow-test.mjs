@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { existsSync } from "node:fs";
-import { access, mkdtemp, readFile, rm } from "node:fs/promises";
+import { access, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createJiti } from "jiti/static";
@@ -27,6 +27,7 @@ async function scenario({ args = "", editorResult, afterFirstStart } = {}) {
 
 	const commands = new Map();
 	const events = new Map();
+	const tools = new Map();
 	const editorCalls = [];
 	const notifications = [];
 	const phaseEntries = [];
@@ -54,7 +55,9 @@ async function scenario({ args = "", editorResult, afterFirstStart } = {}) {
 		},
 		registerEntryRenderer() {},
 		registerShortcut() {},
-		registerTool() {},
+		registerTool(definition) {
+			tools.set(definition.name, definition);
+		},
 		sendUserMessage(message) {
 			kickoffAssertion?.(message);
 			sentMessages.push(message);
@@ -97,10 +100,13 @@ async function scenario({ args = "", editorResult, afterFirstStart } = {}) {
 			await afterFirstStart({
 				ctx,
 				command: commands.get("workflow-plan"),
+				nextCommand: commands.get("workflow-next"),
 				editorCalls,
 				notifications,
 				phaseEntries,
 				sentMessages,
+				draftRoot,
+				tools,
 				setEditorResult(value) {
 					editorValue = value;
 				},
@@ -119,6 +125,10 @@ async function scenario({ args = "", editorResult, afterFirstStart } = {}) {
 			plan: (await exists(join(draftRoot, "plan.md")))
 				? await readFile(join(draftRoot, "plan.md"), "utf8")
 				: undefined,
+			workingPlan: (await exists(join(draftRoot, "working-plan.md")))
+				? await readFile(join(draftRoot, "working-plan.md"), "utf8")
+				: undefined,
+			activeTools,
 		};
 	} finally {
 		await events.get("session_shutdown")?.();
@@ -151,8 +161,21 @@ assert.equal(fromEmptyEditor.metadata.ask, "Ask typed into the empty editor");
 
 const protectedFiles = {
 	plan: "/workflow/plan.md",
+	workingPlan: "/workflow/working-plan.md",
 	metadata: "/workflow/metadata.json",
 };
+assert.equal(
+	workflowModule.workflowWriteBlockReason("planning", protectedFiles, protectedFiles.workingPlan),
+	undefined,
+);
+assert.match(
+	workflowModule.workflowWriteBlockReason("planning", protectedFiles, protectedFiles.plan),
+	/only change.*working-plan\.md/,
+);
+assert.match(
+	workflowModule.workflowWriteBlockReason("planning", protectedFiles, "/repository/src/index.ts"),
+	/only change.*working-plan\.md/,
+);
 assert.match(
 	workflowModule.workflowWriteBlockReason("implementation", protectedFiles, protectedFiles.metadata),
 	/original ask/,
@@ -171,9 +194,42 @@ const started = await scenario({ args: "inline prefill", editorResult: submitted
 assert.equal(started.editorCalls[0].prefill, "inline prefill");
 assert.equal(started.metadata.ask, submittedAsk);
 assert.equal(started.plan, "# Implementation plan\n");
+assert.equal(started.workingPlan, started.plan);
+assert.ok(started.activeTools.includes("edit"));
+assert.ok(started.activeTools.includes("write"));
 assert.ok(!started.plan.includes(submittedAsk));
 assert.equal(started.phaseEntries.length, 1);
 assert.equal(started.sentMessages.length, 1);
+
+await scenario({
+	editorResult: "Leave a working plan uncommitted",
+	afterFirstStart: async ({ ctx, draftRoot, nextCommand, notifications }) => {
+		await writeFile(join(draftRoot, "working-plan.md"), "# Implementation plan\n\nUncommitted.\n", "utf8");
+		await nextCommand.handler("", ctx);
+		assert.match(notifications.at(-1).message, /working plan has uncommitted changes/);
+	},
+});
+
+await scenario({
+	editorResult: "Commit a working plan",
+	afterFirstStart: async ({ draftRoot, tools }) => {
+		const updatePlan = tools.get("workflow_update_plan");
+		assert.ok(updatePlan);
+		assert.equal(updatePlan.parameters.properties.plan, undefined);
+		assert.ok(updatePlan.parameters.properties.description);
+
+		const updatedPlan = "# Implementation plan\n\n## Scope\n\nCommit the working plan.\n";
+		await writeFile(join(draftRoot, "working-plan.md"), updatedPlan, "utf8");
+		const result = await updatePlan.execute("update-plan", {
+			description: "Commit the editable working plan",
+		});
+		assert.equal(result.details.version, 2);
+		assert.equal(await readFile(join(draftRoot, "plan.md"), "utf8"), updatedPlan);
+		assert.equal(await readFile(join(draftRoot, "working-plan.md"), "utf8"), updatedPlan);
+		assert.equal(await readFile(join(draftRoot, "versions", "0002.md"), "utf8"), updatedPlan);
+		assert.deepEqual((await readdir(join(draftRoot, "versions"))).sort(), ["0001.md", "0002.md"]);
+	},
+});
 
 await scenario({
 	editorResult: "Start once",

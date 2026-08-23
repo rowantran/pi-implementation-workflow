@@ -42,7 +42,11 @@ export function planSlugUserMessage(plan: string): string {
 	return render(PLAN_SLUG_USER_TEMPLATE, { plan });
 }
 
-export function planningSystemPrompt(values: { planPath: string; updatePlanTool: string }): string {
+export function planningSystemPrompt(values: {
+	planPath: string;
+	workingPlanPath: string;
+	updatePlanTool: string;
+}): string {
 	return render(PLANNING_SYSTEM_TEMPLATE, values);
 }
 

@@ -1,6 +1,5 @@
-import { watch, type FSWatcher } from "node:fs";
 import { appendFile, mkdir, readFile, writeFile } from "node:fs/promises";
-import { basename, dirname, join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { type Message, uuidv7 } from "@earendil-works/pi-ai";
 import {
@@ -98,26 +97,23 @@ export default function implementationWorkflow(pi: ExtensionAPI): void {
 	let activeFiles: WorkflowFiles | undefined;
 	let planDescription = "";
 	let baseTools: string[] = [];
-	let trackedPlan = "";
-	let watcher: FSWatcher | undefined;
-	let watcherTimer: NodeJS.Timeout | undefined;
 	let dashboardOpened = false;
 	let completionInFlight = false;
 	let lastAutomaticFailure: string | undefined;
 	let phaseReminderVisible = false;
 
-	registerWorkflowPlanTool(pi, async (plan, rawDescription) => {
+	registerWorkflowPlanTool(pi, async (rawDescription) => {
 		if (phase !== "planning" || !activeFiles) {
 			throw new Error("The implementation plan can only be updated during workflow planning.");
 		}
 		const files = activeFiles;
-		return withFileMutationQueue(files.plan, async () => {
+		return withFileMutationQueue(files.workingPlan, async () => {
 			if (!draftMetadata) throw new Error("The workflow draft has no metadata.");
+			const plan = await readText(files.workingPlan);
 			const description = normalizePlanDescription(rawDescription);
 			const version = await savePlanVersion(files, plan);
 			draftMetadata = { ...draftMetadata, description };
 			await writeDraftWorkflowMetadata(files, draftMetadata);
-			trackedPlan = plan;
 			planDescription = description;
 			pi.setSessionName(workflowSessionName("Planning", undefined, description));
 			await writeWorkflowDashboard(files);
@@ -184,8 +180,7 @@ export default function implementationWorkflow(pi: ExtensionAPI): void {
 			(name) => name !== WORKFLOW_QUESTION_TOOL && name !== WORKFLOW_UPDATE_PLAN_TOOL,
 		);
 		if (phase === "planning") {
-			const readOnlyTools = withoutWorkflowTools.filter((name) => !REVIEW_DISABLED_TOOLS.has(name));
-			pi.setActiveTools([...new Set([...readOnlyTools, WORKFLOW_UPDATE_PLAN_TOOL])]);
+			pi.setActiveTools([...new Set([...withoutWorkflowTools, WORKFLOW_UPDATE_PLAN_TOOL])]);
 			return;
 		}
 		if (phase === "implementation" && metadata?.status === "implementing") {
@@ -218,37 +213,6 @@ export default function implementationWorkflow(pi: ExtensionAPI): void {
 				return clarification;
 			}),
 		);
-	}
-
-	async function recordExternalRevision(): Promise<void> {
-		if (!activeFiles || phase !== "planning") return;
-		const files = activeFiles;
-		await withFileMutationQueue(files.plan, async () => {
-			const current = await readText(files.plan);
-			if (current === trackedPlan) return;
-			await savePlanVersion(files, current);
-			trackedPlan = current;
-			await writeWorkflowDashboard(files);
-		});
-	}
-
-	function startPlanWatcher(): void {
-		watcher?.close();
-		watcher = undefined;
-		if (!activeFiles || phase !== "planning") return;
-		try {
-			watcher = watch(activeFiles.root, (_event, filename) => {
-				if (filename?.toString() !== basename(activeFiles!.plan)) return;
-				if (watcherTimer) clearTimeout(watcherTimer);
-				watcherTimer = setTimeout(() => void recordExternalRevision(), 120);
-			});
-			watcher.on("error", () => {
-				watcher?.close();
-				watcher = undefined;
-			});
-		} catch {
-			// The dashboard also refreshes when it opens or planning completes.
-		}
 	}
 
 	async function openDashboard(ctx: ExtensionContext, force = false): Promise<void> {
@@ -333,7 +297,6 @@ export default function implementationWorkflow(pi: ExtensionAPI): void {
 	async function prepareActivePlan(files: WorkflowFiles): Promise<void> {
 		const workflowMetadata = await ensureWorkflowFiles(files);
 		activeFiles = files;
-		trackedPlan = await readText(files.plan);
 		planDescription = workflowMetadata.description?.trim() ?? "";
 		if (workflowMetadata.status === "planning") {
 			draftMetadata = workflowMetadata;
@@ -343,7 +306,6 @@ export default function implementationWorkflow(pi: ExtensionAPI): void {
 			draftMetadata = undefined;
 		}
 		await writeWorkflowDashboard(files);
-		startPlanWatcher();
 	}
 
 	pi.registerCommand("workflow-plan", {
@@ -542,9 +504,15 @@ export default function implementationWorkflow(pi: ExtensionAPI): void {
 			ctx.ui.notify("Planning cannot complete without the immutable original ask.", "error");
 			return;
 		}
-		await recordExternalRevision();
 		const draft = activeFiles;
-		const plan = await readText(draft.plan);
+		const [plan, workingPlan] = await Promise.all([readText(draft.plan), readText(draft.workingPlan)]);
+		if (workingPlan !== plan) {
+			ctx.ui.notify(
+				`The working plan has uncommitted changes. Call ${WORKFLOW_UPDATE_PLAN_TOOL} before advancing to implementation.`,
+				"error",
+			);
+			return;
+		}
 		const completionError = planningCompletionError(plan, planDescription);
 		if (completionError) {
 			ctx.ui.notify(completionError, "error");
@@ -989,7 +957,6 @@ export default function implementationWorkflow(pi: ExtensionAPI): void {
 	pi.registerCommand("workflow-dashboard", {
 		description: "Open the active workflow plan dashboard",
 		handler: async (_args, ctx) => {
-			if (phase === "planning") await recordExternalRevision();
 			await openDashboard(ctx, true);
 		},
 	});
@@ -997,7 +964,6 @@ export default function implementationWorkflow(pi: ExtensionAPI): void {
 	pi.registerShortcut(DASHBOARD_SHORTCUT, {
 		description: "Open the workflow plan dashboard",
 		handler: async (ctx) => {
-			if (phase === "planning") await recordExternalRevision();
 			await openDashboard(ctx, true);
 		},
 	});
@@ -1008,6 +974,7 @@ export default function implementationWorkflow(pi: ExtensionAPI): void {
 		if (phase === "planning") {
 			instructions = planningSystemPrompt({
 				planPath: activeFiles.plan,
+				workingPlanPath: activeFiles.workingPlan,
 				updatePlanTool: WORKFLOW_UPDATE_PLAN_TOOL,
 			});
 		}
@@ -1095,12 +1062,6 @@ export default function implementationWorkflow(pi: ExtensionAPI): void {
 		}
 		if (phase === "cleanup" && identifier) await finishReviewCleanup(ctx, identifier);
 	});
-
-	pi.on("session_shutdown", async () => {
-		if (watcherTimer) clearTimeout(watcherTimer);
-		watcher?.close();
-		watcher = undefined;
-	});
 }
 
 export function workflowWriteBlockReason(
@@ -1109,7 +1070,8 @@ export function workflowWriteBlockReason(
 	targetPath: string,
 ): string | undefined {
 	if (phase === "planning") {
-		return `Planning file changes must use ${WORKFLOW_UPDATE_PLAN_TOOL}; direct edit/write calls are disabled.`;
+		if (resolve(targetPath) === resolve(files.workingPlan)) return undefined;
+		return `Planning edit/write calls may only change ${files.workingPlan}. Commit it with ${WORKFLOW_UPDATE_PLAN_TOOL}.`;
 	}
 	if (resolve(targetPath) === resolve(files.metadata)) {
 		return "Workflow metadata, including the original ask, is managed by the workflow and read-only.";

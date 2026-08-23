@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { access, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { access, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createJiti } from "jiti/static";
@@ -21,6 +21,7 @@ function filesAt(root) {
 	return {
 		root,
 		plan: join(root, "plan.md"),
+		workingPlan: join(root, "working-plan.md"),
 		versions: join(root, "versions"),
 		clarifications: join(root, "clarifications.json"),
 		dashboard: join(root, "dashboard.html"),
@@ -54,8 +55,14 @@ try {
 	await createDraft(draftFiles, "# Implementation plan\n", draftMetadata);
 	assert.deepEqual(JSON.parse(await readFile(draftFiles.metadata, "utf8")), draftMetadata);
 	assert.equal(await readFile(draftFiles.plan, "utf8"), "# Implementation plan\n");
+	assert.equal(await readFile(draftFiles.workingPlan, "utf8"), "# Implementation plan\n");
 	assert.ok(!(await readFile(draftFiles.plan, "utf8")).includes(ask));
 	assert.equal(await exists(draftFiles.legacyDescription), false);
+
+	await writeFile(draftFiles.plan, "# Uncommitted direct change\n", "utf8");
+	await ensureWorkflowFiles(draftFiles);
+	assert.equal(await readFile(draftFiles.plan, "utf8"), "# Implementation plan\n");
+	assert.deepEqual(await readdir(draftFiles.versions), ["0001.md"]);
 
 	const missingAskFiles = filesAt(join(temporaryRoot, ".drafts", "missing-ask"));
 	await assert.rejects(
@@ -96,6 +103,7 @@ try {
 	await writeWorkflowMetadata(draftFiles, completedMetadata);
 	await promoteDraft(draftFiles, completedFiles);
 	assert.equal((await readWorkflowMetadata(completedFiles)).ask, ask);
+	assert.equal(await exists(completedFiles.workingPlan), false);
 
 	const implementing = {
 		...completedMetadata,
@@ -138,6 +146,7 @@ try {
 	await writeFile(legacyDraftFiles.legacyDescription, "Migrated draft description\n", "utf8");
 	const migratedDraft = await ensureWorkflowFiles(legacyDraftFiles);
 	assert.equal(migratedDraft.status, "planning");
+	assert.equal(await readFile(legacyDraftFiles.workingPlan, "utf8"), "# Legacy draft\n");
 	assert.equal(migratedDraft.description, "Migrated draft description");
 	assert.equal(migratedDraft.ask, null);
 	assert.equal(JSON.parse(await readFile(legacyDraftFiles.metadata, "utf8")).ask, null);
