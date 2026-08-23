@@ -16,4 +16,7 @@ Feel free to delegate to subagents to more effectively branch out and explore th
 Present your report roughly in the following format, making sure to keep your wording concise (see the /concise-output skill once you start writing the report, if I have it installed):
 1. Your overall findings re: necessity & sufficiency
 2. Key contracts, protocols, and data types added in the PR
+    - Ground each one in the actual code, with short examples of usage.
+        - For types: show the fields and how they're constructed
+        - For contracts and protocols: show the type signatures and which components they bridge.
 3. Any concerns or things that you believe should change, ordered from highest to lowest priority
