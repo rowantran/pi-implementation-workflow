@@ -1,6 +1,8 @@
 <!-- Usage: Injected as a user message when /workflow-plan starts a new planning phase with the submitted original ask. -->
-Develop the persistent implementation plan for this original ask:
+Develop a fleshed-out implementation plan for this ask:
 
 {{{ask}}}
 
-Inspect the code as needed, discuss ambiguities with me normally, and keep the plan document current as our decisions change.
+Inspect existing code as needed, surface & discuss ambiguities with me, and keep the plan updated as our decisions change.
+Remember that the plan should simply state WHAT changes and WHY.
+Use the /concise-output skill if I have it installed.

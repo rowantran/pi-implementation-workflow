@@ -1,2 +1,8 @@
 <!-- Usage: Sent as the initial user message after /workflow-next switches to the implementation phase session. -->
-Implement the approved workflow. First inspect the immutable original ask in {{{metadataPath}}}, the frozen plan in {{{planPath}}}, the structured clarifications in {{{clarificationsPath}}}, and the repository. Use the plan for planned scope, the ask for initial intent, and later explicit clarifications for resolved ambiguity. Work only in {{{worktreePath}}} on {{{workflowBranch}}}. Resolve remaining material ambiguity through the implementation questionnaire before changing code. Then implement and verify the change, commit it, push it, and open a pull request targeting {{{baseBranch}}}. Completion runs automatically after the agent settles if the worktree is clean and the expected pull request is open. After completion, enter review with /workflow-next.
+Implement the plan.
+
+First inspect the immutable original ask in {{{metadataPath}}}, the frozen plan in {{{planPath}}}, and relevant existing code from the repository.
+
+Before changing code, aggressively surface any remaining ambiguity by using the implementation questionnaire. Don't be shy to ask me questions.
+
+Once done clarifying, proceed with the implementation.
