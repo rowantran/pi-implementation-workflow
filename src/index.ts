@@ -22,21 +22,23 @@ import {
 import {
 	appendClarifications,
 	assertIdentifier,
-	atomicWrite,
 	createDraft,
 	draftFiles,
-	ensureDraft,
+	ensureWorkflowFiles,
 	pathExists,
 	promoteDraft,
-	readMetadata,
+	readCompletedWorkflowMetadata,
 	readText,
 	savePlanVersion,
 	WORKFLOW_STATE_VERSION,
+	type CompletedWorkflowMetadata,
+	type DraftWorkflowMetadata,
 	type WorkflowClarification,
 	type WorkflowFiles,
-	type WorkflowMetadata,
 	workflowFiles,
-	writeMetadata,
+	writeCompletedWorkflowMetadata,
+	writeDraftWorkflowMetadata,
+	writeWorkflowMetadata,
 } from "./storage.ts";
 import {
 	registerWorkflowCompletionRenderer,
@@ -80,7 +82,8 @@ export default function implementationWorkflow(pi: ExtensionAPI): void {
 	let phase: WorkflowPhase | undefined;
 	let draftId: string | undefined;
 	let identifier: string | undefined;
-	let metadata: WorkflowMetadata | undefined;
+	let metadata: CompletedWorkflowMetadata | undefined;
+	let draftMetadata: DraftWorkflowMetadata | undefined;
 	let activeFiles: WorkflowFiles | undefined;
 	let planDescription = "";
 	let baseTools: string[] = [];
@@ -97,9 +100,11 @@ export default function implementationWorkflow(pi: ExtensionAPI): void {
 		}
 		const files = activeFiles;
 		return withFileMutationQueue(files.plan, async () => {
+			if (!draftMetadata) throw new Error("The workflow draft has no metadata.");
 			const description = normalizePlanDescription(rawDescription);
 			const version = await savePlanVersion(files, plan);
-			await atomicWrite(files.description, `${description}\n`);
+			draftMetadata = { ...draftMetadata, description };
+			await writeDraftWorkflowMetadata(files, draftMetadata);
 			trackedPlan = plan;
 			planDescription = description;
 			pi.setSessionName(workflowSessionName("Planning", undefined, description));
@@ -256,7 +261,7 @@ export default function implementationWorkflow(pi: ExtensionAPI): void {
 		return output || undefined;
 	}
 
-	async function requireLaunchRepository(ctx: ExtensionContext, workflow: WorkflowMetadata): Promise<boolean> {
+	async function requireLaunchRepository(ctx: ExtensionContext, workflow: CompletedWorkflowMetadata): Promise<boolean> {
 		const current = await repositoryIdentity(ctx.cwd);
 		const allowedLaunchRoots = new Set([resolve(workflow.repositoryRoot), resolve(workflow.worktreePath)]);
 		if (
@@ -285,13 +290,16 @@ export default function implementationWorkflow(pi: ExtensionAPI): void {
 	}
 
 	async function prepareActivePlan(files: WorkflowFiles): Promise<void> {
-		await ensureDraft(files);
+		const workflowMetadata = await ensureWorkflowFiles(files);
 		activeFiles = files;
 		trackedPlan = await readText(files.plan);
-		planDescription = (await readText(files.description)).trim();
-		if (!planDescription && metadata?.description) {
-			planDescription = metadata.description.trim();
-			await atomicWrite(files.description, `${planDescription}\n`);
+		planDescription = workflowMetadata.description?.trim() ?? "";
+		if (workflowMetadata.status === "planning") {
+			draftMetadata = workflowMetadata;
+			metadata = undefined;
+		} else {
+			metadata = workflowMetadata;
+			draftMetadata = undefined;
 		}
 		await writeWorkflowDashboard(files);
 		startPlanWatcher();
@@ -322,14 +330,22 @@ export default function implementationWorkflow(pi: ExtensionAPI): void {
 			}
 			const nextDraftId = ctx.sessionManager.getSessionId().replaceAll(/[^a-zA-Z0-9-]/g, "-");
 			const files = draftFiles(nextDraftId);
-			if (await pathExists(files.root)) await ensureDraft(files);
+			if (await pathExists(files.root)) await ensureWorkflowFiles(files);
 			else {
 				const initial = issue ? `${PLAN_TITLE}\n\n## Issue\n\n${issue}\n` : `${PLAN_TITLE}\n`;
-				await createDraft(files, initial);
+				const initialMetadata: DraftWorkflowMetadata = {
+					version: WORKFLOW_STATE_VERSION,
+					status: "planning",
+					draftId: nextDraftId,
+					description: "",
+					createdAt: new Date().toISOString(),
+				};
+				await createDraft(files, initial, initialMetadata);
 			}
 
 			appendPhase({ phase: "planning", draftId: nextDraftId });
 			metadata = undefined;
+			draftMetadata = undefined;
 			baseTools = pi
 				.getActiveTools()
 				.filter((name) => name !== WORKFLOW_QUESTION_TOOL && name !== WORKFLOW_UPDATE_PLAN_TOOL);
@@ -362,9 +378,9 @@ export default function implementationWorkflow(pi: ExtensionAPI): void {
 				return;
 			}
 
-			let workflow: WorkflowMetadata;
+			let workflow: CompletedWorkflowMetadata;
 			try {
-				workflow = await readMetadata(requestedIdentifier);
+				workflow = await readCompletedWorkflowMetadata(requestedIdentifier);
 			} catch (error) {
 				ctx.ui.notify(errorMessage(error), "error");
 				return;
@@ -386,7 +402,7 @@ export default function implementationWorkflow(pi: ExtensionAPI): void {
 			});
 			workflow.status = "implementing";
 			workflow.implementationStartedAt ??= new Date().toISOString();
-			await writeMetadata(workflow);
+			await writeCompletedWorkflowMetadata(workflow);
 			await ctx.switchSession(sessionFile, {
 				withSession: async (replacementCtx) => {
 					await replacementCtx.sendUserMessage(
@@ -413,9 +429,9 @@ export default function implementationWorkflow(pi: ExtensionAPI): void {
 				return;
 			}
 
-			let workflow: WorkflowMetadata;
+			let workflow: CompletedWorkflowMetadata;
 			try {
-				workflow = await readMetadata(requestedIdentifier);
+				workflow = await readCompletedWorkflowMetadata(requestedIdentifier);
 			} catch (error) {
 				ctx.ui.notify(errorMessage(error), "error");
 				return;
@@ -441,7 +457,7 @@ export default function implementationWorkflow(pi: ExtensionAPI): void {
 			});
 			workflow.status = "reviewing";
 			workflow.reviewStartedAt ??= new Date().toISOString();
-			await writeMetadata(workflow);
+			await writeCompletedWorkflowMetadata(workflow);
 			await ctx.switchSession(sessionFile, {
 				withSession: async (replacementCtx) => {
 					await replacementCtx.sendUserMessage(
@@ -478,10 +494,11 @@ export default function implementationWorkflow(pi: ExtensionAPI): void {
 	});
 
 	async function completePlanning(ctx: ExtensionCommandContext): Promise<void> {
-		if (!draftId || !activeFiles) {
-			ctx.ui.notify("This planning session has no workflow draft.", "error");
+		if (!draftId || !activeFiles || !draftMetadata) {
+			ctx.ui.notify("This planning session has no workflow draft metadata.", "error");
 			return;
 		}
+		let currentDraftMetadata = draftMetadata;
 		await recordExternalRevision();
 		const draft = activeFiles;
 		const plan = await readText(draft.plan);
@@ -522,7 +539,7 @@ export default function implementationWorkflow(pi: ExtensionAPI): void {
 		let result: {
 			nextIdentifier: string;
 			destination: WorkflowFiles;
-			nextMetadata: WorkflowMetadata;
+			nextMetadata: CompletedWorkflowMetadata;
 			dashboardWarnings: string[];
 		};
 		try {
@@ -544,7 +561,9 @@ export default function implementationWorkflow(pi: ExtensionAPI): void {
 					if (!description) {
 						try {
 							description = await generatePlanDescription(plan, ctx);
-							await atomicWrite(draft.description, `${description}\n`);
+							currentDraftMetadata = { ...currentDraftMetadata, description };
+							draftMetadata = currentDraftMetadata;
+							await writeDraftWorkflowMetadata(draft, currentDraftMetadata);
 							planDescription = description;
 						} catch (error) {
 							progress.fail("Could not finalize plan description");
@@ -556,7 +575,7 @@ export default function implementationWorkflow(pi: ExtensionAPI): void {
 					const destination = workflowFiles(nextIdentifier);
 					const worktreePath = join(repository.root, ".worktrees", nextIdentifier);
 					const workflowBranch = `${WORKFLOW_BRANCH_PREFIX}${nextIdentifier}`;
-					const nextMetadata: WorkflowMetadata = {
+					const nextMetadata: CompletedWorkflowMetadata = {
 						version: WORKFLOW_STATE_VERSION,
 						identifier: nextIdentifier,
 						description,
@@ -567,12 +586,11 @@ export default function implementationWorkflow(pi: ExtensionAPI): void {
 						baseCommit,
 						workflowBranch,
 						worktreePath,
-						createdAt: new Date().toISOString(),
+						createdAt: currentDraftMetadata.createdAt,
 					};
 
 					await installWorktreeExclude(repository.commonDir);
 					await mkdir(dirname(worktreePath), { recursive: true });
-					await atomicWrite(draft.metadata, `${JSON.stringify(nextMetadata, null, 2)}\n`);
 					const addResult = await pi.exec("git", [
 						"-C",
 						repository.root,
@@ -590,12 +608,24 @@ export default function implementationWorkflow(pi: ExtensionAPI): void {
 						throw new Error(`Could not create worktree:\n${addResult.stderr || addResult.stdout}`);
 					}
 					try {
+						await writeWorkflowMetadata(draft, nextMetadata);
 						await promoteDraft(draft, destination);
 					} catch (error) {
+						let restoreError: unknown;
+						if (await pathExists(draft.root)) {
+							try {
+								await writeDraftWorkflowMetadata(draft, currentDraftMetadata);
+							} catch (candidate) {
+								restoreError = candidate;
+							}
+						}
 						await pi.exec("git", ["-C", repository.root, "worktree", "remove", "--force", worktreePath]);
 						await pi.exec("git", ["-C", repository.root, "branch", "-D", workflowBranch]);
 						progress.fail("Could not save completed plan");
-						throw new Error(`Could not save completed plan: ${errorMessage(error)}`);
+						const restoreDetail = restoreError
+							? `; could not restore draft metadata: ${errorMessage(restoreError)}`
+							: "";
+						throw new Error(`Could not save completed plan: ${errorMessage(error)}${restoreDetail}`);
 					}
 
 					const dashboardWarnings: string[] = [];
@@ -621,6 +651,7 @@ export default function implementationWorkflow(pi: ExtensionAPI): void {
 		const { nextIdentifier, destination, nextMetadata, dashboardWarnings } = result;
 		appendPhase({ phase: "complete", identifier: nextIdentifier });
 		metadata = nextMetadata;
+		draftMetadata = undefined;
 		activeFiles = destination;
 		pi.setSessionName(workflowSessionName("Planning", nextIdentifier, nextMetadata.description));
 		if (dashboardWarnings.length > 0) ctx.ui.notify(dashboardWarnings.join("\n"), "warning");
@@ -652,7 +683,7 @@ export default function implementationWorkflow(pi: ExtensionAPI): void {
 		if (completionInFlight) return;
 		completionInFlight = true;
 		try {
-			const workflow = await readMetadata(identifier);
+			const workflow = await readCompletedWorkflowMetadata(identifier);
 			metadata = workflow;
 			if (workflow.status === "implementation_complete") {
 				if (!automatic) await copyReviewCommand(ctx, workflow);
@@ -701,7 +732,7 @@ export default function implementationWorkflow(pi: ExtensionAPI): void {
 			workflow.implementationCompletedAt = new Date().toISOString();
 			workflow.pullRequestUrl = pullRequest.url;
 			workflow.pullRequestNumber = pullRequest.number;
-			await writeMetadata(workflow);
+			await writeCompletedWorkflowMetadata(workflow);
 			metadata = workflow;
 			lastAutomaticFailure = undefined;
 			applyPhaseTools();
@@ -713,7 +744,7 @@ export default function implementationWorkflow(pi: ExtensionAPI): void {
 		}
 	}
 
-	async function copyReviewCommand(ctx: ExtensionContext, workflow: WorkflowMetadata): Promise<void> {
+	async function copyReviewCommand(ctx: ExtensionContext, workflow: CompletedWorkflowMetadata): Promise<void> {
 		const command = `/workflow-review ${workflow.identifier}`;
 		let clipboardError: unknown;
 		try {
@@ -732,7 +763,7 @@ export default function implementationWorkflow(pi: ExtensionAPI): void {
 		});
 	}
 
-	async function implementationCompletionFailure(workflow: WorkflowMetadata): Promise<CompletionFailure | undefined> {
+	async function implementationCompletionFailure(workflow: CompletedWorkflowMetadata): Promise<CompletionFailure | undefined> {
 		const validation = await validateWorktree(workflow);
 		if (validation) return validation;
 		const status = await gitOutput(workflow.worktreePath, ["status", "--porcelain"]);
@@ -741,7 +772,7 @@ export default function implementationWorkflow(pi: ExtensionAPI): void {
 		return undefined;
 	}
 
-	async function findPullRequest(workflow: WorkflowMetadata): Promise<PullRequestInfo | undefined> {
+	async function findPullRequest(workflow: CompletedWorkflowMetadata): Promise<PullRequestInfo | undefined> {
 		const result = await pi.exec(
 			"gh",
 			[
@@ -771,10 +802,10 @@ export default function implementationWorkflow(pi: ExtensionAPI): void {
 	async function beginReviewCleanup(ctx: ExtensionCommandContext): Promise<void> {
 		if (!identifier) return;
 		let preparation:
-			| { workflow: WorkflowMetadata; sessionFile: string }
+			| { workflow: CompletedWorkflowMetadata; sessionFile: string }
 			| { failure: CompletionFailure };
 		try {
-			const workflow = await readMetadata(identifier);
+			const workflow = await readCompletedWorkflowMetadata(identifier);
 			preparation = await runWorkflowProgress(
 				ctx,
 				"Completing review",
@@ -799,7 +830,7 @@ export default function implementationWorkflow(pi: ExtensionAPI): void {
 					progress.complete("Checked clean review worktree");
 
 					workflow.status = "cleanup_pending";
-					await writeMetadata(workflow);
+					await writeCompletedWorkflowMetadata(workflow);
 					const sessionFile = await createPhaseSession(workflow.repositoryRoot, {
 						phase: "cleanup",
 						identifier: workflow.identifier,
@@ -820,7 +851,7 @@ export default function implementationWorkflow(pi: ExtensionAPI): void {
 	}
 
 	async function finishReviewCleanup(ctx: ExtensionContext, workflowIdentifier: string): Promise<void> {
-		const workflow = await readMetadata(workflowIdentifier);
+		const workflow = await readCompletedWorkflowMetadata(workflowIdentifier);
 		if (workflow.status !== "cleanup_pending") return;
 		let removeFailure: string | undefined;
 		try {
@@ -855,7 +886,7 @@ export default function implementationWorkflow(pi: ExtensionAPI): void {
 
 		workflow.status = "review_complete";
 		workflow.reviewCompletedAt = new Date().toISOString();
-		await writeMetadata(workflow);
+		await writeCompletedWorkflowMetadata(workflow);
 		metadata = workflow;
 		appendPhase({ phase: "complete", identifier: workflowIdentifier });
 		showWorkflowCompletion(pi, ctx, {
@@ -868,7 +899,7 @@ export default function implementationWorkflow(pi: ExtensionAPI): void {
 		});
 	}
 
-	async function validateWorktree(workflow: WorkflowMetadata): Promise<CompletionFailure | undefined> {
+	async function validateWorktree(workflow: CompletedWorkflowMetadata): Promise<CompletionFailure | undefined> {
 		if (!(await pathExists(workflow.worktreePath))) return { message: `worktree is missing: ${workflow.worktreePath}` };
 		const [branch, commonDir] = await Promise.all([
 			gitValue(workflow.worktreePath, ["branch", "--show-current"]),
@@ -1022,18 +1053,19 @@ export default function implementationWorkflow(pi: ExtensionAPI): void {
 		draftId = saved?.draftId;
 		identifier = saved?.identifier;
 		metadata = undefined;
+		draftMetadata = undefined;
 		activeFiles = undefined;
 		planDescription = "";
 
 		if (phase === "planning" && draftId) {
 			const files = draftFiles(draftId);
-			await ensureDraft(files);
+			await ensureWorkflowFiles(files);
 			await prepareActivePlan(files);
 			pi.setSessionName(planDescription ? workflowSessionName("Planning", undefined, planDescription) : "");
 		}
 		if ((phase === "implementation" || phase === "review" || phase === "cleanup" || phase === "complete") && identifier) {
 			try {
-				metadata = await readMetadata(identifier);
+				metadata = await readCompletedWorkflowMetadata(identifier);
 				await prepareActivePlan(workflowFiles(identifier));
 			} catch (error) {
 				ctx.ui.notify(errorMessage(error), "error");

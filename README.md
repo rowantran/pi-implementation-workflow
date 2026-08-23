@@ -117,14 +117,18 @@ Planning drafts are session-specific:
 
 ```text
 ~/.pi/agent/workflows/.drafts/<session-id>/
+├── plan.md
+├── versions/
+├── clarifications.json
+├── dashboard.html
+└── metadata.json
 ```
 
-Completed plans use:
+Completed plans use the same files under their final identifier:
 
 ```text
 ~/.pi/agent/workflows/<identifier>/
 ├── plan.md
-├── description.txt
 ├── versions/
 │   ├── 0001.md
 │   ├── 0002.md
@@ -134,7 +138,7 @@ Completed plans use:
 └── metadata.json
 ```
 
-The generated description is stored in `description.txt` and copied separately from the identifier into `metadata.json` when planning completes. The identifier remains the source of the plan-directory, branch, and worktree names.
+`metadata.json` exists from the start of planning. It contains `DraftWorkflowMetadata` while planning and is replaced by `CompletedWorkflowMetadata` when planning completes. Both types store the plain-English description. The completed type also stores the final identifier and workflow lifecycle state. Existing `description.txt` files are migrated into metadata and removed when the workflow next loads. The identifier remains the source of the plan-directory, branch, and worktree names.
 
 On first load, old workflow directories that contain `plan.previous.md` are migrated into the numbered history. The legacy file is left in place but is no longer updated.
 
