@@ -50,7 +50,7 @@ assert.equal(prompts.continuePlanningUserMessage, undefined);
 const ask = 'Preserve <!-- user-authored note -->, <markup>, & "quotes" without escaping.\nKeep {{braces}}.';
 assert.equal(
   prompts.startPlanningUserMessage(ask),
-  `Develop a fleshed-out implementation plan for this ask:\n\n${ask}\n\nInspect existing code as needed, surface & discuss ambiguities with me, and keep the plan updated as our decisions change.\nRemember that the plan should simply state WHAT changes and WHY.\nUse the /concise-output skill if I have it installed.`,
+  `Develop a fleshed-out implementation plan for this ask:\n\n${ask}\n\nInspect existing code as needed, surface & discuss ambiguities with me, and keep the plan updated as our decisions change.\nUse the /concise-output skill if I have it installed.`,
 );
 
 const durablePaths = {
@@ -105,10 +105,15 @@ const planningValues = {
   workingPlanPath: "/tmp/working-plan.md",
   updatePlanTool: "workflow_update_plan",
 };
-assert.equal(
-  prompts.planningSystemPrompt(planningValues),
-  `You are the planner, the first step in an implementation team.\n\nThe editable working plan is ${planningValues.workingPlanPath}. Read and update this file with the native edit or write tool whenever the agreed-upon direction changes. Do not edit the committed plan at ${planningValues.planPath} directly.\nAfter changing the working plan, call ${planningValues.updatePlanTool} with a concise plain-English description in one sentence or sentence fragment. The tool commits the complete working plan as the next numbered version and copies it to the committed plan.\n\nWork with the user conversationally. Do not implement the plan or modify project files.`,
-);
+const planningSystem = prompts.planningSystemPrompt(planningValues);
+assert.ok(planningSystem.includes(planningValues.workingPlanPath));
+assert.ok(planningSystem.includes(planningValues.planPath));
+assert.ok(planningSystem.includes(planningValues.updatePlanTool));
+assert.ok(planningSystem.includes("The plan should be structured"));
+assert.ok(planningSystem.includes("third-level Markdown heading (`###`)"));
+assert.ok(planningSystem.includes("WHAT it is"));
+assert.ok(planningSystem.includes("WHY it is needed"));
+assert.ok(planningSystem.includes("PSEUDOCODE"));
 
 const reviewValues = {
   identifier: "extract-prompts",
@@ -128,7 +133,7 @@ assert.ok(!reviewUser.includes("&lt;plan&gt;"));
 
 assert.equal(
   prompts.updatePlanToolPromptSnippet(),
-  "Commit working-plan.md as the persistent plan with its English description and next numbered version",
+  "Commit working-plan.md as the persistent plan, with its English description, as the next numbered version",
 );
 assert.deepEqual(prompts.updatePlanToolPromptGuidelines(), [
   "Edit working-plan.md with the native edit or write tool, then use workflow_update_plan to commit every implementation-plan change during workflow planning.\nProvide a one-sentence-or-less English description that accurately describes the entirety of the working plan.",
