@@ -7,10 +7,12 @@ import {
 	listPlanVersions,
 	readClarifications,
 	readWorkflowMetadata,
+	readWorkflowReview,
 	type PlanVersion,
 	type WorkflowClarification,
 	type WorkflowFiles,
 } from "./storage.ts";
+import type { WorkflowReviewReport } from "./review-report.ts";
 
 const DASHBOARD_TEMPLATE = readFileSync(new URL("./dashboard.html", import.meta.url), "utf8");
 
@@ -21,13 +23,16 @@ export interface WorkflowDashboardData {
 	generatedAt: string;
 	versions: Array<Pick<PlanVersion, "number" | "createdAt" | "content">>;
 	clarifications: WorkflowClarification[];
+	review?: WorkflowReviewReport;
+	reviewStale?: boolean;
 }
 
-export async function writeWorkflowDashboard(files: WorkflowFiles): Promise<void> {
-	const [versions, clarifications, metadata] = await Promise.all([
+export async function writeWorkflowDashboard(files: WorkflowFiles, currentHeadCommit?: string): Promise<void> {
+	const [versions, clarifications, metadata, review] = await Promise.all([
 		listPlanVersions(files),
 		readClarifications(files),
 		readWorkflowMetadata(files),
+		readWorkflowReview(files),
 	]);
 	const data: WorkflowDashboardData = {
 		slug: basename(dirname(files.root)) === ".drafts" ? undefined : basename(files.root),
@@ -36,6 +41,8 @@ export async function writeWorkflowDashboard(files: WorkflowFiles): Promise<void
 		generatedAt: new Date().toISOString(),
 		versions: versions.map(({ number, createdAt, content }) => ({ number, createdAt, content })),
 		clarifications: clarifications.entries,
+		review,
+		reviewStale: Boolean(review && currentHeadCommit && review.headCommit !== currentHeadCommit),
 	};
 	await atomicWrite(files.dashboard, renderWorkflowDashboard(data));
 }

@@ -109,27 +109,28 @@ const planningSystem = prompts.planningSystemPrompt(planningValues);
 assert.ok(planningSystem.includes(planningValues.workingPlanPath));
 assert.ok(planningSystem.includes(planningValues.planPath));
 assert.ok(planningSystem.includes(planningValues.updatePlanTool));
-assert.ok(planningSystem.includes("The plan should be structured"));
+assert.ok(planningSystem.includes("three second-level sections"));
 assert.ok(planningSystem.includes("third-level Markdown heading (`###`)"));
-assert.ok(planningSystem.includes("WHAT it is"));
-assert.ok(planningSystem.includes("WHY it is needed"));
-assert.ok(planningSystem.includes("PSEUDOCODE"));
+assert.ok(planningSystem.includes("### PC-01: Short descriptive title"));
+assert.ok(planningSystem.includes("**What**"));
+assert.ok(planningSystem.includes("**Why**"));
+assert.ok(planningSystem.includes("**Pseudocode**"));
 
 const reviewValues = {
   identifier: "extract-prompts",
   pullRequestUrl: "https://example.test/pull/1?a=1&b=2",
   ...durablePaths,
+  reviewPath: "/tmp/a & b/review.json",
+  reviewMarkdownPath: "/tmp/a & b/review.md",
 };
 const reviewSystem = prompts.reviewSystemPrompt(reviewValues);
 for (const path of Object.values(durablePaths)) assert.ok(reviewSystem.includes(path));
 assert.ok(reviewSystem.includes(reviewValues.pullRequestUrl));
-assert.ok(reviewSystem.includes("sources of truth, from highest to lowest priority"));
+assert.ok(reviewSystem.includes(reviewValues.reviewPath));
+assert.ok(reviewSystem.includes(reviewValues.reviewMarkdownPath));
+assert.ok(reviewSystem.includes("deterministic multi-agent review"));
+assert.ok(reviewSystem.includes("sources, from highest to lowest priority"));
 assert.ok(!reviewSystem.includes("&amp;"));
-
-const reviewUser = prompts.reviewUserMessage(reviewValues);
-for (const path of Object.values(durablePaths)) assert.ok(reviewUser.includes(path));
-assert.ok(reviewUser.includes(reviewValues.pullRequestUrl));
-assert.ok(!reviewUser.includes("&lt;plan&gt;"));
 
 assert.equal(
   prompts.updatePlanToolPromptSnippet(),

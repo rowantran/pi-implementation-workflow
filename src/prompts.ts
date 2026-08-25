@@ -8,7 +8,6 @@ const PLAN_SLUG_USER_TEMPLATE = loadTemplate("injected-user-messages/plan-slug.m
 const PLANNING_SYSTEM_TEMPLATE = loadTemplate("system/planning.md");
 const START_PLANNING_USER_TEMPLATE = loadTemplate("injected-user-messages/start-planning.md");
 const REVIEW_SYSTEM_TEMPLATE = loadTemplate("system/review.md");
-const REVIEW_USER_TEMPLATE = loadTemplate("injected-user-messages/review.md");
 const UPDATE_PLAN_TOOL_GUIDELINE = loadTemplate("system/update-plan-tool-guideline.md");
 const UPDATE_PLAN_TOOL_SNIPPET = loadTemplate("system/update-plan-tool-snippet.md");
 
@@ -60,17 +59,10 @@ export function reviewSystemPrompt(values: {
 	metadataPath: string;
 	planPath: string;
 	clarificationsPath: string;
+	reviewPath: string;
+	reviewMarkdownPath: string;
 }): string {
 	return render(REVIEW_SYSTEM_TEMPLATE, stringifyUndefined(values));
-}
-
-export function reviewUserMessage(values: {
-	pullRequestUrl: string;
-	metadataPath: string;
-	planPath: string;
-	clarificationsPath: string;
-}): string {
-	return render(REVIEW_USER_TEMPLATE, values);
 }
 
 export function updatePlanToolPromptGuidelines(): string[] {

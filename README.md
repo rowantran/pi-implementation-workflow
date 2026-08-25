@@ -55,6 +55,8 @@ The extension saves the submitted ask verbatim as immutable workflow metadata, s
 
 Press `Ctrl+Alt+D` or run `/workflow-dashboard` to open the dashboard again.
 
+The plan has **Goal**, **Planned Changes**, and **Testing** sections. Every planned change uses a stable consecutive identifier (`PC-01`, `PC-02`, and so on) with explicit **What**, **Why**, and **Pseudocode** fields. The Testing section contains explicit verification criteria. Planned changes and testing criteria become separate units of the final implementation review. Planning cannot advance if this structure is missing, empty, or ambiguous.
+
 During planning, the agent uses native `edit` or `write` calls only on `working-plan.md`. It then calls `workflow_update_plan` with a one-sentence-or-less English description. The tool is the only way to commit a plan change: it stores the complete working plan as the next numbered Markdown file under `versions/`, copies the same content to `plan.md`, and updates the description. Calls whose working-plan content matches the prior version still create a new version. `/workflow-next` refuses to advance while `working-plan.md` differs from the committed `plan.md`.
 
 Advance from planning to implementation explicitly:
@@ -86,7 +88,16 @@ After the agent settles, the extension automatically completes implementation wh
 
 The extension shows progress while checking the worktree and finding the pull request. When the gates pass, it records the pull request, copies `/workflow-next` to the clipboard, and shows a high-contrast completion card.
 
-Paste `/workflow-next` directly into the implementation session. It creates and switches to a separate review session in the same worktree, so the implementation conversation remains saved and does not enter review context. If automatic completion checks fail, `/workflow-next` retries them and enters review immediately when they pass. If another extension cancels the review session switch, run `/workflow-next` again. Review opens the frozen-plan dashboard and compares the recorded pull request with the same three durable sources: `metadata.json`, `plan.md`, and `clarifications.json`. Advance from review to cleanup explicitly:
+Paste `/workflow-next` directly into the implementation session. If automatic completion checks fail, `/workflow-next` retries them. When the implementation is ready, the workflow deterministically generates the final review before entering a separate review session:
+
+1. one isolated, read-only agent reviews each `PC-*` planned change and maps its pseudocode to the implemented core types, protocols, construction sites, and consumers;
+2. one read-only plan auditor checks cross-cutting architecture, missing behavior, and implementation outside the plan;
+3. one read-only testing-criteria reviewer verifies every material requirement in the approved Testing section with repository and execution evidence;
+4. one synthesizer receives all three forms of analysis and produces only the overall result and deduplicated overall concerns.
+
+The workflow validates that every planned change has exactly one result, stores the structured report in `review.json`, exports it as `review.md`, and renders it as the default **Review** tab in the browser dashboard. Review uses the same Guided view and Full document modes as Plan. Guided view shares the one-section-at-a-time outline, previous/next controls, and `P`/`N` shortcuts. Each planned-change section has separate necessary and sufficient verdicts and its own concerns. A dedicated Testing criteria section shows the original criteria, the testing review's verdict, and source evidence for each criterion. Repeating `/workflow-next` after a cancelled session switch reuses the report when the plan and head commit still match. If the branch changes during review, the dashboard marks the report stale; the next `/workflow-next` regenerates it and postpones cleanup until the reviewer advances again.
+
+The review session keeps the implementation conversation out of review context and opens the completed report. If another extension cancels the review session switch, run `/workflow-next` again. Advance from review to cleanup explicitly:
 
 ```text
 /workflow-next
@@ -118,7 +129,7 @@ Planning: <description>
 
 Workflows created before descriptions were introduced keep the shorter title without the description.
 
-After the first agent turn settles in a phase, the footer shows `/workflow-next when ready`. The session title already identifies whether the active phase is planning, implementation, or review.
+After the first planning or implementation agent turn settles, the footer shows `/workflow-next when ready`. The review session shows the reminder immediately because its report is already generated. The session title identifies the active phase.
 
 The reminder stays visible if the session resumes. Implementation completion checks run after each settled turn, and `/workflow-next` enters review after completion or retries failed checks. Cleanup and completion do not add session names or footer status because they are short, non-agentic transitions.
 
@@ -147,14 +158,18 @@ Completed plans use the same files under their final identifier:
 │   └── ...
 ├── clarifications.json
 ├── dashboard.html
+├── review.json
+├── review.md
 └── metadata.json
 ```
+
+`review.json` and `review.md` are created when implementation advances to review; they do not exist in planning drafts.
 
 `metadata.json` exists from the start of planning. It contains `DraftWorkflowMetadata` while planning and is replaced by `CompletedWorkflowMetadata` when planning completes. Both types store the verbatim, write-once original ask and the plain-English description. The completed type also stores the final identifier and workflow lifecycle state. Workflows created before original-ask capture migrate with `ask: null`; new workflows require a non-empty ask. Existing `description.txt` files are migrated into metadata and removed when the workflow next loads. The identifier remains the source of the plan-directory, branch, and worktree names.
 
 On first load, old workflow directories that contain `plan.previous.md` are migrated into the numbered history. The legacy file is left in place but is no longer updated.
 
-Only planning activates `workflow_update_plan`. Only implementation activates `workflow_questions`. The plan is referenced by path rather than injected into every model request.
+Only planning activates `workflow_update_plan`. Only implementation activates `workflow_questions`. The plan is referenced by path rather than injected into every model request. Review generation launches isolated read-only Pi processes with a maximum concurrency of four.
 
 ## Isara sandbox requirement
 
