@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { createJiti } from "jiti/static";
 
 const jiti = createJiti(import.meta.url, { moduleCache: false });
-const { workflowPhaseStatusText } = await jiti.import(
+const { WorkflowProgressComponent, workflowPhaseStatusText } = await jiti.import(
 	new URL("../src/ui.ts", import.meta.url).pathname,
 );
 
@@ -14,4 +14,30 @@ assert.equal(workflowPhaseStatusText("cleanup"), undefined);
 assert.equal(workflowPhaseStatusText("complete"), undefined);
 assert.equal(workflowPhaseStatusText(undefined), undefined);
 
-console.log("UI test passed: active phases show the correct footer guidance.");
+const renderRequests = [];
+const component = new WorkflowProgressComponent(
+	{ requestRender: () => renderRequests.push("render") },
+	{
+		fg: (_color, text) => text,
+		bold: (text) => text,
+	},
+	"Generating implementation review",
+	["Reviewing agents", "Synthesizing overall findings"],
+);
+component.updateSubstep("planned-change:PC-01", "PC-01: Store the report", "queued");
+component.updateSubstep("holistic-review", "Holistic reviewer", "running");
+let lines = component.render(80);
+assert.ok(lines.includes("   ○ PC-01: Store the report"));
+assert.ok(lines.some((line) => /^   ⠋ Holistic reviewer$/.test(line)), "a running agent renders its own spinner");
+component.updateSubstep("planned-change:PC-01", "PC-01: Store the report", "complete");
+component.updateSubstep("holistic-review", "Holistic reviewer", "reused");
+component.complete("Reviewed agents");
+component.updateSubstep("synthesizer", "Synthesis agent", "running");
+lines = component.render(80);
+assert.ok(lines.includes("   ✓ PC-01: Store the report"));
+assert.ok(lines.includes("   ↻ Holistic reviewer"));
+assert.ok(lines.some((line) => /^   ⠋ Synthesis agent$/.test(line)), "new substeps attach to the next active stage");
+assert.ok(renderRequests.length >= 6, "substep changes request live renders");
+component.stop();
+
+console.log("UI test passed: active phases and nested agent progress render correctly.");
