@@ -186,6 +186,105 @@ const reusedReport = await generateWorkflowReview(
 assert.deepEqual(reusedReport, report);
 assert.deepEqual(reuseStages, ["analysis-complete", "synthesis-complete"]);
 
+const incrementalInput = {
+  ...input,
+  headCommit: "head789",
+  previousReview: report,
+  previousReviewPath: "/workflow/review.json",
+  generatedAt: "2026-01-03T03:04:05.000Z",
+};
+const incrementalRequests = [];
+const incrementalStages = [];
+const incrementalReport = await generateWorkflowReview(
+  { ...incrementalInput, onStage: (stage) => incrementalStages.push(stage) },
+  async (request) => {
+    incrementalRequests.push(request);
+    if (request.role === "incremental-scope") {
+      assert.match(request.prompt, /head456\.\.head789/);
+      assert.match(request.prompt, /Previous structured review: \/workflow\/review\.json/);
+      return {
+        summary: "Only rendering behavior changed.",
+        relevantPlannedChanges: [{ id: "PC-02", explanation: "The revision changes report rendering." }],
+      };
+    }
+    return runner(request);
+  },
+);
+assert.deepEqual(incrementalRequests.map(({ role }) => role).sort(), [
+  "incremental-scope",
+  "planned-change",
+  "holistic-review",
+  "testing-criteria",
+  "synthesizer",
+].sort());
+assert.equal(
+  incrementalRequests.filter(({ role, prompt }) => role === "planned-change" && prompt.includes("PC-01:")).length,
+  0,
+  "an unaffected planned change must not be re-reviewed",
+);
+assert.equal(
+  incrementalRequests.filter(({ role, prompt }) => role === "planned-change" && prompt.includes("PC-02:")).length,
+  1,
+  "an affected planned change must be re-reviewed",
+);
+assert.deepEqual(incrementalReport.plannedChanges[0].review, report.plannedChanges[0].review);
+assert.deepEqual(incrementalStages, ["scope-complete", "analysis-complete", "synthesis-complete"]);
+const incrementalRoundPath = join(
+  input.reviewRunsPath,
+  `${input.baseCommit}..${incrementalInput.headCommit}`,
+  input.sourceFingerprint,
+);
+assert.deepEqual(
+  JSON.parse(await readFile(join(incrementalRoundPath, "incremental-review-scope.json"), "utf8"))
+    .relevantPlannedChanges.map(({ id }) => id),
+  ["PC-02"],
+);
+assert.deepEqual(
+  JSON.parse(await readFile(join(incrementalRoundPath, "manifest.json"), "utf8")).relevantPlannedChangeIds,
+  ["PC-02"],
+);
+await generateWorkflowReview(incrementalInput, async () => {
+  throw new Error("A completed incremental review must reuse its scope and all completed results.");
+});
+
+const noPlannedChangeRequests = [];
+const noPlannedChangeReport = await generateWorkflowReview(
+  { ...incrementalInput, headCommit: "head-no-planned-change" },
+  async (request) => {
+    noPlannedChangeRequests.push(request);
+    if (request.role === "incremental-scope") {
+      return { summary: "The revision does not affect an individual planned change.", relevantPlannedChanges: [] };
+    }
+    return runner(request);
+  },
+);
+assert.deepEqual(noPlannedChangeRequests.map(({ role }) => role).sort(), [
+  "incremental-scope",
+  "holistic-review",
+  "testing-criteria",
+  "synthesizer",
+].sort());
+assert.deepEqual(
+  noPlannedChangeReport.plannedChanges.map(({ review }) => review),
+  report.plannedChanges.map(({ review }) => review),
+);
+
+await assert.rejects(
+  generateWorkflowReview(
+    { ...incrementalInput, headCommit: "head-invalid-scope" },
+    async (request) => {
+      if (request.role === "incremental-scope") {
+        return {
+          summary: "Invalid selection.",
+          relevantPlannedChanges: [{ id: "PC-99", explanation: "Not in the plan." }],
+        };
+      }
+      return runner(request);
+    },
+  ),
+  /incremental review scope agent returned an invalid result/,
+);
+
 const resumableInput = { ...input, sourceFingerprint: "resume-after-synthesis-failure" };
 const firstAttemptRoles = [];
 await assert.rejects(
@@ -228,4 +327,4 @@ await assert.rejects(
 );
 
 await rm(temporaryRoot, { recursive: true, force: true });
-console.log("Review test passed: durable planned-change, holistic, testing, and synthesis results are reusable by review round.");
+console.log("Review test passed: full and incremental review rounds persist and reuse scoped reviewer results.");

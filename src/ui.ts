@@ -13,7 +13,7 @@ const COMPLETION_DELAY_MS = 300;
 const FAILURE_DELAY_MS = 600;
 
 type ProgressStatus = "pending" | "active" | "complete" | "failed";
-export type WorkflowStatusPhase = "planning" | "implementation" | "review" | "cleanup" | "complete";
+export type WorkflowStatusPhase = "planning" | "implementation" | "revision" | "review" | "cleanup" | "complete";
 
 interface ProgressStep {
 	label: string;
@@ -125,7 +125,7 @@ const NOOP_PROGRESS: WorkflowProgress = {
 };
 
 export function workflowPhaseStatusText(phase: WorkflowStatusPhase | undefined): string | undefined {
-	if (phase === "planning" || phase === "implementation" || phase === "review") {
+	if (phase === "planning" || phase === "implementation" || phase === "revision" || phase === "review") {
 		return "/workflow-next when ready";
 	}
 	return undefined;

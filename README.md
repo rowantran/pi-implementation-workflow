@@ -84,22 +84,39 @@ After the agent settles, the extension automatically completes implementation wh
 
 - the expected worktree and branch exist;
 - the worktree is clean;
-- an open pull request exists from the workflow branch to the recorded base branch.
+- an open pull request exists from the workflow branch to the recorded base branch;
+- the pull request branch contains the local `HEAD` commit.
 
 The extension shows progress while checking the worktree and finding the pull request. When the gates pass, it records the pull request, copies `/workflow-next` to the clipboard, and shows a high-contrast completion card.
 
-Paste `/workflow-next` directly into the implementation session. If automatic completion checks fail, `/workflow-next` retries them. When the implementation is ready, the workflow deterministically generates the final review before entering a separate review session:
+Paste `/workflow-next` directly into the implementation session. If automatic completion checks fail, `/workflow-next` retries them. When the implementation is ready, the workflow deterministically generates the initial review before entering a separate review session:
 
 1. one isolated, read-only agent reviews each `PC-*` planned change and maps its pseudocode to the implemented core types, protocols, construction sites, and consumers;
 2. one read-only holistic reviewer checks cross-cutting architecture, missing behavior, and implementation outside the plan;
 3. one read-only testing-criteria reviewer verifies every material requirement in the approved Testing section with repository and execution evidence;
 4. one synthesizer receives paths to all three forms of analysis and produces only the overall result and deduplicated overall concerns.
 
-Each review round stores its manifest and agent results under `review-runs/`, keyed by commit range and a fingerprint of the original ask, approved plan, and clarifications. A retry reuses every valid completed result, so a synthesis failure does not repeat the earlier reviews. A new source fingerprint or commit range starts a separate round and preserves earlier results.
+Each generated review stores its manifest and agent results under `review-runs/`, keyed by commit range and a fingerprint of the original ask, approved plan, and clarifications. A retry reuses every valid completed result, so a synthesis failure does not repeat the earlier reviews. A new source fingerprint or commit range starts a separate run and preserves earlier results.
 
-The workflow validates that every planned change has exactly one result, stores the combined structured report in `review.json`, exports it as `review.md`, and renders it as the default **Review** tab in the browser dashboard. Review uses the same Guided view and Full document modes as Plan. Guided view shares the one-section-at-a-time outline, previous/next controls, and `P`/`N` shortcuts. Each planned-change section has separate necessary and sufficient verdicts and its own concerns. A dedicated Testing criteria section shows the original criteria, the testing review's verdict, and source evidence for each criterion. Repeating `/workflow-next` after a cancelled session switch reuses the report when the plan and head commit still match. If the branch changes during review, the dashboard marks the report stale; the next `/workflow-next` regenerates it and postpones cleanup until the reviewer advances again.
+The workflow validates that every planned change has exactly one result, stores the combined structured report in `review.json`, exports it as `review.md`, and renders it as the default **Review** tab in the browser dashboard. Review uses the same Guided view and Full document modes as Plan. Guided view shares the one-section-at-a-time outline, previous/next controls, and `P`/`N` shortcuts. Each planned-change section has separate necessary and sufficient verdicts and its own concerns. A dedicated Testing criteria section shows the original criteria, the testing review's verdict, and source evidence for each criterion. Repeating `/workflow-next` after a cancelled session switch reuses the report when the plan and head commit still match.
 
-The review session keeps the implementation conversation out of review context and opens the completed report. If another extension cancels the review session switch, run `/workflow-next` again. Advance from review to cleanup explicitly:
+The review session keeps the implementation conversation out of review context and opens the completed report. If another extension cancels the review session switch, run `/workflow-next` again.
+
+To revise the implementation after review, run:
+
+```text
+/workflow-revise describe the changes to make
+```
+
+When `/workflow-revise` detects that `HEAD` changed since the current review, it first asks whether those commits are an already-completed revision. If confirmed, the workflow requires a clean worktree and verifies that the pull request contains the new `HEAD`; it then records the revision transition and immediately generates the next review without starting a revision agent session.
+
+Otherwise, the command opens a required multiline editor and creates a separate revision session in the same worktree. The worktree can already contain manual, uncommitted changes. The revision agent receives the original ask, frozen plan, clarifications, current review, and submitted change request. After the agent commits and pushes at least one new commit and leaves the worktree clean, `/workflow-next` generates the next review round in a new review session.
+
+Each re-review is incremental. First, a read-only scope agent compares the previous reviewed commit with the revised commit and identifies the `PC-*` planned changes whose prior reviews could be affected. The workflow reruns only those planned-change reviewers and carries the unaffected planned-change results forward. It always reruns the holistic reviewer, testing-criteria reviewer, and synthesizer against the revised pull request. A retry reuses any valid scope and reviewer results already completed for that re-review.
+
+An older review session cannot clean up or advance a newer revision round. If the branch changes outside the revision flow, the dashboard marks the review stale and cleanup directs the user to `/workflow-revise`.
+
+Advance from an accepted review to cleanup explicitly:
 
 ```text
 /workflow-next
@@ -110,16 +127,18 @@ Review completion shows progress while checking and removing the worktree. It sw
 ## Commands
 
 - `/workflow-plan [ask]` — open the required multiline ask editor, optionally prefilled with the argument, then start planning and open the dashboard.
-- `/workflow-next` — advance planning, implementation, or review to the next phase.
+- `/workflow-revise [request]` — open the required multiline revision editor, optionally prefilled with the argument, then start a separate revision session from review.
+- `/workflow-next` — advance planning, implementation, revision, or review to the next phase.
 - `/workflow-dashboard` — regenerate and open the active workflow dashboard.
 
 ## Session names
 
-Planning, implementation, and review session names put the English description next to the stable slug:
+Planning, implementation, revision, and review session names put the English description next to the stable slug:
 
 ```text
 Planning: <identifier> · <description>
 Implement: <identifier> · <description>
+Revise: <identifier> · <description>
 Review: <identifier> · <description>
 ```
 
@@ -131,9 +150,9 @@ Planning: <description>
 
 Workflows created before descriptions were introduced keep the shorter title without the description.
 
-After the first planning or implementation agent turn settles, the footer shows `/workflow-next when ready`. The review session shows the reminder immediately because its report is already generated. The session title identifies the active phase.
+After the first planning, implementation, or revision agent turn settles, the footer shows `/workflow-next when ready`. The review session shows the reminder immediately because its report is already generated. The session title identifies the active phase.
 
-The reminder stays visible if the session resumes. Implementation completion checks run after each settled turn, and `/workflow-next` enters review after completion or retries failed checks. Cleanup and completion do not add session names or footer status because they are short, non-agentic transitions.
+The reminder stays visible if the session resumes. Implementation and revision completion checks run after each settled turn, and `/workflow-next` enters review after completion or retries failed checks. Cleanup and completion do not add session names or footer status because they are short, non-agentic transitions.
 
 ## State
 
@@ -162,9 +181,14 @@ Completed plans use the same files under their final identifier:
 ├── dashboard.html
 ├── review.json
 ├── review.md
+├── reviews/
+│   ├── 0001.json
+│   ├── 0001.md
+│   └── ...
 ├── review-runs/
 │   └── <base>..<head>/<source-fingerprint>/
 │       ├── manifest.json
+│       ├── incremental-review-scope.json  # re-reviews only
 │       ├── planned-changes/
 │       │   ├── PC-01.json
 │       │   └── ...
@@ -174,13 +198,21 @@ Completed plans use the same files under their final identifier:
 └── metadata.json
 ```
 
-`review.json`, `review.md`, and `review-runs/` are created when implementation advances to review; they do not exist in planning drafts.
+`review.json` and `review.md` contain the latest review. Numbered JSON and Markdown reports under `reviews/` preserve every review round. `review-runs/` preserves the reusable agent outputs for each generated review, including the incremental scope for a re-review. Review files do not exist in planning drafts.
 
-`metadata.json` exists from the start of planning. It contains `DraftWorkflowMetadata` while planning and is replaced by `CompletedWorkflowMetadata` when planning completes. Both types store the verbatim, write-once original ask and the plain-English description. The completed type also stores the final identifier and workflow lifecycle state. Workflows created before original-ask capture migrate with `ask: null`; new workflows require a non-empty ask. Existing `description.txt` files are migrated into metadata and removed when the workflow next loads. The identifier remains the source of the plan-directory, branch, and worktree names.
+`metadata.json` exists from the start of planning. It contains `DraftWorkflowMetadata` while planning and is replaced by `CompletedWorkflowMetadata` when planning completes. Both types store the verbatim, write-once original ask, the plain-English description, and a typed `state` object. `state.phase` is one of `planning`, `implementing`, `reviewing`, `revising`, or `complete`. A step records retry-safe progress inside a phase. Review and revision states also record the review round; revision states record the commit that was reviewed. The declared phase transitions are:
+
+```text
+planning → implementing → reviewing → complete
+                              ↓     ↑
+                           revising
+```
+
+The transition API rejects every phase or step change that is not in this state machine. Workflow metadata must contain the typed state directly; legacy lifecycle statuses are not converted. Workflows created before original-ask capture can still load with `ask: null`; new workflows require a non-empty ask. Existing `description.txt` files are migrated into metadata and removed when the workflow next loads. The identifier remains the source of the plan-directory, branch, and worktree names.
 
 On first load, old workflow directories that contain `plan.previous.md` are migrated into the numbered history. The legacy file is left in place but is no longer updated.
 
-Only planning activates `workflow_update_plan`. Only implementation activates `workflow_questions`. The plan is referenced by path rather than injected into every model request. Review generation launches isolated read-only Pi processes with a maximum concurrency of four.
+Only planning activates `workflow_update_plan`. Implementation and revision activate `workflow_questions`. The plan is referenced by path rather than injected into every model request. Review generation launches isolated read-only Pi processes with a maximum concurrency of four.
 
 ## Isara sandbox requirement
 

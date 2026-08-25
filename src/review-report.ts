@@ -57,6 +57,22 @@ export const PlannedChangeAnalysisSchema = Type.Object(
 	{ additionalProperties: false },
 );
 
+export const RelevantPlannedChangeSchema = Type.Object(
+	{
+		id: Type.String(),
+		explanation: Type.String(),
+	},
+	{ additionalProperties: false },
+);
+
+export const IncrementalReviewScopeSchema = Type.Object(
+	{
+		summary: Type.String(),
+		relevantPlannedChanges: Type.Array(RelevantPlannedChangeSchema),
+	},
+	{ additionalProperties: false },
+);
+
 export const HolisticReviewSchema = Type.Object(
 	{
 		summary: Type.String(),
@@ -146,6 +162,8 @@ export type SourceEvidence = Static<typeof SourceEvidenceSchema>;
 export type Concern = Static<typeof ConcernSchema>;
 export type ContractReview = Static<typeof ContractReviewSchema>;
 export type PlannedChangeAnalysis = Static<typeof PlannedChangeAnalysisSchema>;
+export type RelevantPlannedChange = Static<typeof RelevantPlannedChangeSchema>;
+export type IncrementalReviewScope = Static<typeof IncrementalReviewScopeSchema>;
 export type HolisticReview = Static<typeof HolisticReviewSchema>;
 export type TestingCriterionResult = Static<typeof TestingCriterionResultSchema>;
 export type TestingCriteriaAnalysis = Static<typeof TestingCriteriaAnalysisSchema>;
@@ -154,6 +172,10 @@ export type WorkflowReviewReport = Static<typeof WorkflowReviewReportSchema>;
 
 export function isPlannedChangeAnalysis(value: unknown): value is PlannedChangeAnalysis {
 	return Check(PlannedChangeAnalysisSchema, value);
+}
+
+export function isIncrementalReviewScope(value: unknown): value is IncrementalReviewScope {
+	return Check(IncrementalReviewScopeSchema, value);
 }
 
 export function isHolisticReview(value: unknown): value is HolisticReview {

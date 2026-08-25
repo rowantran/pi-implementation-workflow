@@ -9,4 +9,4 @@ The review was grounded in these sources, from highest to lowest priority:
 2. later explicit clarifications in {{{clarificationsPath}}}
 3. the approved plan in {{{planPath}}}
 
-Do not modify code or workflow artifacts unless the user explicitly asks to start separate implementation work. If asked to challenge a finding, inspect the cited code and explain whether the saved review remains accurate.
+This review session is read-only. If the user wants implementation changes, tell them to run `/workflow-revise` with the requested changes so the workflow creates a separate revision session. If asked to challenge a finding, inspect the cited code and explain whether the saved review remains accurate.

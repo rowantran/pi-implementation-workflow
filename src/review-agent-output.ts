@@ -1,12 +1,14 @@
 import { defineTool, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import {
 	HolisticReviewSchema,
+	IncrementalReviewScopeSchema,
 	PlannedChangeAnalysisSchema,
 	ReviewSynthesisSchema,
 	TestingCriteriaAnalysisSchema,
 } from "./review-report.ts";
 
 export const PLANNED_CHANGE_OUTPUT_TOOL = "submit_planned_change_review";
+export const INCREMENTAL_REVIEW_SCOPE_OUTPUT_TOOL = "submit_incremental_review_scope";
 export const HOLISTIC_REVIEW_OUTPUT_TOOL = "submit_holistic_review";
 export const TESTING_CRITERIA_OUTPUT_TOOL = "submit_testing_criteria_review";
 export const REVIEW_SYNTHESIS_OUTPUT_TOOL = "submit_review_synthesis";
@@ -21,6 +23,22 @@ export default function reviewAgentOutput(pi: ExtensionAPI): void {
 			async execute(_toolCallId, params) {
 				return {
 					content: [{ type: "text", text: `Submitted review for ${params.id}.` }],
+					details: params,
+					terminate: true,
+				};
+			},
+		}),
+	);
+
+	pi.registerTool(
+		defineTool({
+			name: INCREMENTAL_REVIEW_SCOPE_OUTPUT_TOOL,
+			label: "Submit Incremental Review Scope",
+			description: "Submit the planned changes whose prior reviews may be affected by the revision.",
+			parameters: IncrementalReviewScopeSchema,
+			async execute(_toolCallId, params) {
+				return {
+					content: [{ type: "text", text: `Submitted ${params.relevantPlannedChanges.length} relevant planned changes.` }],
 					details: params,
 					terminate: true,
 				};
