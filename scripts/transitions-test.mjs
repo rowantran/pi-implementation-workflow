@@ -12,6 +12,7 @@ const implementationWorkflow = await jiti.import(new URL("../src/index.ts", impo
 	default: true,
 });
 const storage = await jiti.import(new URL("../src/storage.ts", import.meta.url).pathname);
+const dashboardServer = await jiti.import(new URL("../src/dashboard-server.ts", import.meta.url).pathname);
 
 const validPlan = `# Implementation plan
 
@@ -705,6 +706,7 @@ try {
 		);
 	}
 } finally {
+	await dashboardServer.closeOwnedDashboardServer();
 	await rm(temporaryRoot, { recursive: true, force: true });
 }
 

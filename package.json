@@ -58,6 +58,8 @@
     "smoke": "node ./scripts/smoke.mjs",
     "test:command-flow": "node ./scripts/command-flow-test.mjs",
     "test:dashboard": "node ./scripts/dashboard-test.mjs",
+    "test:dashboard-server": "node ./scripts/dashboard-server-test.mjs",
+    "test:dashboard-notification": "node ./scripts/dashboard-notification-test.mjs",
     "test:planning": "node ./scripts/planning-test.mjs",
     "test:prompts": "node ./scripts/prompts-test.mjs",
     "test:review": "node ./scripts/review-test.mjs",
@@ -66,7 +68,7 @@
     "test:transitions": "node ./scripts/transitions-test.mjs",
     "test:ui": "node ./scripts/ui-test.mjs",
     "typecheck": "tsc --noEmit",
-    "test": "npm run typecheck && npm run smoke && npm run test:command-flow && npm run test:dashboard && npm run test:planning && npm run test:prompts && npm run test:review && npm run test:storage && npm run test:state && npm run test:transitions && npm run test:ui"
+    "test": "npm run typecheck && npm run smoke && npm run test:command-flow && npm run test:dashboard && npm run test:dashboard-server && npm run test:dashboard-notification && npm run test:planning && npm run test:prompts && npm run test:review && npm run test:storage && npm run test:state && npm run test:transitions && npm run test:ui"
   },
   "devDependencies": {
     "@earendil-works/pi-ai": "0.84.2",

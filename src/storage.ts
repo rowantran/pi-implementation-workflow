@@ -11,6 +11,7 @@ import { assertWorkflowState, type WorkflowState } from "./workflow-state.ts";
 export const WORKFLOW_STATE_VERSION = 2;
 const LEGACY_WORKFLOW_STATE_VERSION = 1;
 export const CLARIFICATIONS_STATE_VERSION = 1;
+export const DRAFT_IDENTIFIER_PATTERN = /^[a-zA-Z0-9-]+$/;
 export const IDENTIFIER_PATTERN = /^[a-z0-9][a-z0-9-]{0,79}$/;
 
 export interface DraftWorkflowMetadata {
@@ -94,7 +95,7 @@ export function workflowsRoot(): string {
 }
 
 export function draftFiles(draftId: string): WorkflowFiles {
-	if (!/^[a-zA-Z0-9-]+$/.test(draftId)) throw new Error(`Invalid workflow draft id: ${draftId}`);
+	if (!DRAFT_IDENTIFIER_PATTERN.test(draftId)) throw new Error(`Invalid workflow draft id: ${draftId}`);
 	return filesAt(join(workflowsRoot(), ".drafts", draftId));
 }
 
@@ -523,7 +524,7 @@ function isStoredDraftWorkflowMetadata(value: unknown): value is StoredDraftWork
 		isValidWorkflowState(item.state) &&
 		isDraftState(item.state) &&
 		typeof item.draftId === "string" &&
-		/^[a-zA-Z0-9-]+$/.test(item.draftId) &&
+		DRAFT_IDENTIFIER_PATTERN.test(item.draftId) &&
 		typeof item.description === "string" &&
 		isStoredAskValid(item.version, item.ask) &&
 		typeof item.createdAt === "string"
