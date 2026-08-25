@@ -147,12 +147,27 @@ const runner = async (request) => {
   };
 };
 
+function agentStatuses(events, id) {
+  return events.filter((event) => event.id === id).map(({ status }) => status);
+}
+
 const stages = [];
-const report = await generateWorkflowReview({ ...input, onStage: (stage) => stages.push(stage) }, runner);
+const agentProgress = [];
+const report = await generateWorkflowReview(
+  {
+    ...input,
+    onStage: (stage) => stages.push(stage),
+    onAgentProgress: (progress) => agentProgress.push(progress),
+  },
+  runner,
+);
 assert.deepEqual(requests.map(({ role }) => role).sort(), ["holistic-review", "planned-change", "planned-change", "testing-criteria", "synthesizer"].sort());
 assert.equal(synthesisStartedAfterAnalysis, true);
 assert.equal(synthesisResultPaths.length, 3);
 assert.deepEqual(stages, ["analysis-complete", "synthesis-complete"]);
+for (const id of ["planned-change:PC-01", "planned-change:PC-02", "holistic-review", "testing-criteria", "synthesizer"]) {
+  assert.deepEqual(agentStatuses(agentProgress, id), ["queued", "running", "complete"], `${id} reports its full lifecycle`);
+}
 assert.deepEqual(report.plannedChanges.map(({ id }) => id), ["PC-01", "PC-02"]);
 assert.equal(report.plannedChanges[1].review.sufficient.status, "partial");
 assert.equal(report.overallConcerns.length, 1);
@@ -177,14 +192,22 @@ const reviewRoundPath = join(input.reviewRunsPath, `${input.baseCommit}..${input
 assert.equal(JSON.parse(await readFile(join(reviewRoundPath, "manifest.json"), "utf8")).status, "complete");
 assert.ok(JSON.parse(await readFile(join(reviewRoundPath, "synthesis.json"), "utf8")).overallResult);
 const reuseStages = [];
+const reuseAgentProgress = [];
 const reusedReport = await generateWorkflowReview(
-  { ...input, onStage: (stage) => reuseStages.push(stage) },
+  {
+    ...input,
+    onStage: (stage) => reuseStages.push(stage),
+    onAgentProgress: (progress) => reuseAgentProgress.push(progress),
+  },
   async () => {
     throw new Error("A complete review round should not rerun agents.");
   },
 );
 assert.deepEqual(reusedReport, report);
 assert.deepEqual(reuseStages, ["analysis-complete", "synthesis-complete"]);
+for (const id of ["planned-change:PC-01", "planned-change:PC-02", "holistic-review", "testing-criteria", "synthesizer"]) {
+  assert.deepEqual(agentStatuses(reuseAgentProgress, id), ["queued", "reused"], `${id} reports cached reuse`);
+}
 
 const incrementalInput = {
   ...input,
@@ -195,8 +218,13 @@ const incrementalInput = {
 };
 const incrementalRequests = [];
 const incrementalStages = [];
+const incrementalAgentProgress = [];
 const incrementalReport = await generateWorkflowReview(
-  { ...incrementalInput, onStage: (stage) => incrementalStages.push(stage) },
+  {
+    ...incrementalInput,
+    onStage: (stage) => incrementalStages.push(stage),
+    onAgentProgress: (progress) => incrementalAgentProgress.push(progress),
+  },
   async (request) => {
     incrementalRequests.push(request);
     if (request.role === "incremental-scope") {
@@ -229,6 +257,10 @@ assert.equal(
 );
 assert.deepEqual(incrementalReport.plannedChanges[0].review, report.plannedChanges[0].review);
 assert.deepEqual(incrementalStages, ["scope-complete", "analysis-complete", "synthesis-complete"]);
+for (const id of ["incremental-scope", "planned-change:PC-02", "holistic-review", "testing-criteria", "synthesizer"]) {
+  assert.deepEqual(agentStatuses(incrementalAgentProgress, id), ["queued", "running", "complete"], `${id} reports re-review progress`);
+}
+assert.deepEqual(agentStatuses(incrementalAgentProgress, "planned-change:PC-01"), [], "unaffected changes do not show a rerun agent");
 const incrementalRoundPath = join(
   input.reviewRunsPath,
   `${input.baseCommit}..${incrementalInput.headCommit}`,
@@ -243,9 +275,17 @@ assert.deepEqual(
   JSON.parse(await readFile(join(incrementalRoundPath, "manifest.json"), "utf8")).relevantPlannedChangeIds,
   ["PC-02"],
 );
-await generateWorkflowReview(incrementalInput, async () => {
-  throw new Error("A completed incremental review must reuse its scope and all completed results.");
-});
+const incrementalReuseAgentProgress = [];
+await generateWorkflowReview(
+  { ...incrementalInput, onAgentProgress: (progress) => incrementalReuseAgentProgress.push(progress) },
+  async () => {
+    throw new Error("A completed incremental review must reuse its scope and all completed results.");
+  },
+);
+for (const id of ["incremental-scope", "planned-change:PC-02", "holistic-review", "testing-criteria", "synthesizer"]) {
+  assert.deepEqual(agentStatuses(incrementalReuseAgentProgress, id), ["queued", "reused"], `${id} reports re-review cache reuse`);
+}
+assert.deepEqual(agentStatuses(incrementalReuseAgentProgress, "planned-change:PC-01"), []);
 
 const noPlannedChangeRequests = [];
 const noPlannedChangeReport = await generateWorkflowReview(
@@ -304,13 +344,22 @@ await generateWorkflowReview(resumableInput, async (request) => {
 });
 assert.deepEqual(retryRoles, ["synthesizer"], "a synthesis retry must reuse every completed analysis result");
 
+const failedAgentProgress = [];
 await assert.rejects(
-  generateWorkflowReview({ ...input, sourceFingerprint: "wrong-identity" }, async (request) => {
-    if (request.role === "planned-change") return analysis("PC-99", "Wrong change");
-    return runner(request);
-  }),
+  generateWorkflowReview(
+    {
+      ...input,
+      sourceFingerprint: "wrong-identity",
+      onAgentProgress: (progress) => failedAgentProgress.push(progress),
+    },
+    async (request) => {
+      if (request.role === "planned-change") return analysis("PC-99", "Wrong change");
+      return runner(request);
+    },
+  ),
   /wrong planned-change identity/,
 );
+assert.deepEqual(agentStatuses(failedAgentProgress, "planned-change:PC-01"), ["queued", "running", "failed"]);
 await assert.rejects(
   generateWorkflowReview({ ...input, sourceFingerprint: "invalid-testing" }, async (request) => {
     if (request.role === "testing-criteria") {
