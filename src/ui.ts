@@ -14,16 +14,25 @@ const COMPLETION_DELAY_MS = 300;
 const FAILURE_DELAY_MS = 600;
 
 type ProgressStatus = "pending" | "active" | "complete" | "failed";
+export type WorkflowSubstepStatus = "queued" | "running" | "complete" | "failed" | "reused";
 export type WorkflowStatusPhase = "planning" | "implementation" | "revision" | "review" | "cleanup" | "complete";
+
+interface ProgressSubstep {
+	id: string;
+	label: string;
+	status: WorkflowSubstepStatus;
+}
 
 interface ProgressStep {
 	label: string;
 	status: ProgressStatus;
+	substeps: ProgressSubstep[];
 }
 
 export interface WorkflowProgress {
 	complete(label?: string): void;
 	fail(label?: string): void;
+	updateSubstep(id: string, label: string, status: WorkflowSubstepStatus): void;
 }
 
 export interface WorkflowCompletionData {
@@ -35,7 +44,7 @@ export interface WorkflowCompletionData {
 
 type ProgressResult<T> = { ok: true; value: T } | { ok: false; error: unknown };
 
-class WorkflowProgressComponent implements Component, WorkflowProgress {
+export class WorkflowProgressComponent implements Component, WorkflowProgress {
 	private frame = 0;
 	private timer: NodeJS.Timeout | undefined;
 	private readonly steps: ProgressStep[];
@@ -49,6 +58,7 @@ class WorkflowProgressComponent implements Component, WorkflowProgress {
 		this.steps = labels.map((label, index) => ({
 			label,
 			status: index === 0 ? "active" : "pending",
+			substeps: [],
 		}));
 		this.timer = setInterval(() => {
 			this.frame = (this.frame + 1) % SPINNER_FRAMES.length;
@@ -76,6 +86,19 @@ class WorkflowProgressComponent implements Component, WorkflowProgress {
 			if (label) step.label = label;
 		}
 		this.stop();
+		this.tui.requestRender();
+	}
+
+	updateSubstep(id: string, label: string, status: WorkflowSubstepStatus): void {
+		const existing = this.steps.flatMap((step) => step.substeps).find((substep) => substep.id === id);
+		if (existing) {
+			existing.label = label;
+			existing.status = status;
+		} else {
+			const activeStep = this.steps.find((step) => step.status === "active");
+			if (!activeStep) return;
+			activeStep.substeps.push({ id, label, status });
+		}
 		this.tui.requestRender();
 	}
 
@@ -113,6 +136,27 @@ class WorkflowProgressComponent implements Component, WorkflowProgress {
 				label = this.theme.fg("error", step.label);
 			}
 			lines.push(` ${marker} ${label}`);
+			for (const substep of step.substeps) {
+				let substepMarker = this.theme.fg("dim", "○");
+				let substepLabel = this.theme.fg("dim", substep.label);
+				if (substep.status === "running") {
+					substepMarker = this.theme.fg("accent", SPINNER_FRAMES[this.frame] ?? "⠋");
+					substepLabel = this.theme.fg("text", substep.label);
+				}
+				if (substep.status === "complete") {
+					substepMarker = this.theme.fg("success", "✓");
+					substepLabel = this.theme.fg("success", substep.label);
+				}
+				if (substep.status === "reused") {
+					substepMarker = this.theme.fg("muted", "↻");
+					substepLabel = this.theme.fg("muted", substep.label);
+				}
+				if (substep.status === "failed") {
+					substepMarker = this.theme.fg("error", "✗");
+					substepLabel = this.theme.fg("error", substep.label);
+				}
+				lines.push(`   ${substepMarker} ${substepLabel}`);
+			}
 		}
 		lines.push("", this.theme.fg("borderAccent", "─".repeat(renderWidth)));
 		return lines.map((line) => truncateToWidth(line, renderWidth, ""));
@@ -122,6 +166,7 @@ class WorkflowProgressComponent implements Component, WorkflowProgress {
 const NOOP_PROGRESS: WorkflowProgress = {
 	complete: () => {},
 	fail: () => {},
+	updateSubstep: () => {},
 };
 
 export function workflowPhaseStatusText(phase: WorkflowStatusPhase | undefined): string | undefined {

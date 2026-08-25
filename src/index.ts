@@ -619,6 +619,9 @@ export default function implementationWorkflow(
 							}
 							if (stage === "synthesis-complete") progress.complete("Synthesized overall findings");
 						},
+						onAgentProgress: ({ id, label, status }) => {
+							progress.updateSubstep(id, label, status);
+						},
 					},
 					dependencies.reviewAgentRunner ??
 						createSpawnReviewAgent({
