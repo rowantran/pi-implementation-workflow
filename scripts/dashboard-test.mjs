@@ -55,6 +55,7 @@ assert.ok(html.includes("function parsePlanStructure(markdown)"));
 assert.ok(html.includes('id="guided-mode-button"'));
 assert.ok(html.includes('id="full-mode-button"'));
 assert.ok(html.includes('aria-label="Plan outline"'));
+assert.ok(!html.includes('data-plan-destination="overview"'));
 assert.ok(html.includes("heading.focus({preventScroll:true})"));
 assert.ok(html.includes('heading.scrollIntoView({block:"start"})'));
 assert.ok(html.includes('class="markdown diff-document"'));
