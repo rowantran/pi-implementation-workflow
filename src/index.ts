@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { appendFile, mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -529,19 +530,24 @@ export default function implementationWorkflow(
 		files: WorkflowFiles,
 		reviewRound: number,
 	): Promise<void> {
-		const [plan, headCommit, existing] = await Promise.all([
+		const [plan, clarifications, headCommit, existing] = await Promise.all([
 			readText(files.plan),
+			readText(files.clarifications),
 			gitValue(workflow.worktreePath, ["rev-parse", "HEAD"]),
 			readWorkflowReview(files),
 		]);
 		if (!headCommit) throw new Error("Could not identify the pull request head commit.");
 		const plannedChanges = parsePlannedChanges(plan);
 		const testingCriteria = parseTestingCriteria(plan);
+		const sourceFingerprint = createHash("sha256")
+			.update(JSON.stringify([workflow.ask, plan, clarifications]))
+			.digest("hex");
 		if (
 			existing !== undefined &&
 			existing.pullRequestUrl === workflow.pullRequestUrl &&
 			existing.baseCommit === workflow.baseCommit &&
 			existing.headCommit === headCommit &&
+			existing.sourceFingerprint === sourceFingerprint &&
 			existing.testingCriteria.originalCriteria === testingCriteria &&
 			existing.plannedChanges.length === plannedChanges.length &&
 			existing.plannedChanges.every((change, index) => change.id === plannedChanges[index]?.id)
@@ -561,10 +567,12 @@ export default function implementationWorkflow(
 						pullRequestUrl: workflow.pullRequestUrl!,
 						baseCommit: workflow.baseCommit,
 						headCommit,
+						sourceFingerprint,
 						worktreePath: workflow.worktreePath,
 						metadataPath: files.metadata,
 						planPath: files.plan,
 						clarificationsPath: files.clarifications,
+						reviewRunsPath: files.reviewRuns,
 						plannedChanges,
 						testingCriteria,
 						onStage: (stage) => {

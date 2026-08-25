@@ -92,11 +92,13 @@ The extension shows progress while checking the worktree and finding the pull re
 Paste `/workflow-next` directly into the implementation session. If automatic completion checks fail, `/workflow-next` retries them. When the implementation is ready, the workflow deterministically generates the final review before entering a separate review session:
 
 1. one isolated, read-only agent reviews each `PC-*` planned change and maps its pseudocode to the implemented core types, protocols, construction sites, and consumers;
-2. one read-only plan auditor checks cross-cutting architecture, missing behavior, and implementation outside the plan;
+2. one read-only holistic reviewer checks cross-cutting architecture, missing behavior, and implementation outside the plan;
 3. one read-only testing-criteria reviewer verifies every material requirement in the approved Testing section with repository and execution evidence;
-4. one synthesizer receives all three forms of analysis and produces only the overall result and deduplicated overall concerns.
+4. one synthesizer receives paths to all three forms of analysis and produces only the overall result and deduplicated overall concerns.
 
-The workflow validates that every planned change has exactly one result, stores the structured report in `review.json`, exports it as `review.md`, and renders it as the default **Review** tab in the browser dashboard. Review uses the same Guided view and Full document modes as Plan. Guided view shares the one-section-at-a-time outline, previous/next controls, and `P`/`N` shortcuts. Each planned-change section has separate necessary and sufficient verdicts and its own concerns. A dedicated Testing criteria section shows the original criteria, the testing review's verdict, and source evidence for each criterion. Repeating `/workflow-next` after a cancelled session switch reuses the report when the plan and head commit still match.
+Each generated review stores its manifest and agent results under `review-runs/`, keyed by commit range and a fingerprint of the original ask, approved plan, and clarifications. A retry reuses every valid completed result, so a synthesis failure does not repeat the earlier reviews. A new source fingerprint or commit range starts a separate run and preserves earlier results.
+
+The workflow validates that every planned change has exactly one result, stores the combined structured report in `review.json`, exports it as `review.md`, and renders it as the default **Review** tab in the browser dashboard. Review uses the same Guided view and Full document modes as Plan. Guided view shares the one-section-at-a-time outline, previous/next controls, and `P`/`N` shortcuts. Each planned-change section has separate necessary and sufficient verdicts and its own concerns. A dedicated Testing criteria section shows the original criteria, the testing review's verdict, and source evidence for each criterion. Repeating `/workflow-next` after a cancelled session switch reuses the report when the plan and head commit still match.
 
 The review session keeps the implementation conversation out of review context and opens the completed report. If another extension cancels the review session switch, run `/workflow-next` again.
 
@@ -179,10 +181,19 @@ Completed plans use the same files under their final identifier:
 │   ├── 0001.json
 │   ├── 0001.md
 │   └── ...
+├── review-runs/
+│   └── <base>..<head>/<source-fingerprint>/
+│       ├── manifest.json
+│       ├── planned-changes/
+│       │   ├── PC-01.json
+│       │   └── ...
+│       ├── holistic-review.json
+│       ├── testing-criteria-review.json
+│       └── synthesis.json
 └── metadata.json
 ```
 
-`review.json` and `review.md` contain the latest review. Numbered JSON and Markdown reports under `reviews/` preserve every review round. Review files do not exist in planning drafts.
+`review.json` and `review.md` contain the latest review. Numbered JSON and Markdown reports under `reviews/` preserve every review round. `review-runs/` preserves the reusable agent outputs for each generated review. Review files do not exist in planning drafts.
 
 `metadata.json` exists from the start of planning. It contains `DraftWorkflowMetadata` while planning and is replaced by `CompletedWorkflowMetadata` when planning completes. Both types store the verbatim, write-once original ask, the plain-English description, and a typed `state` object. `state.phase` is one of `planning`, `implementing`, `reviewing`, `revising`, or `complete`. A step records retry-safe progress inside a phase. Review and revision states also record the review round; revision states record the commit that was reviewed. The declared phase transitions are:
 

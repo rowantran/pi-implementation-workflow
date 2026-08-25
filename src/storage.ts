@@ -82,6 +82,7 @@ export interface WorkflowFiles {
 	review: string;
 	reviewMarkdown: string;
 	reviews: string;
+	reviewRuns: string;
 	/** Legacy standalone description storage. Read only during migration. */
 	legacyDescription: string;
 	/** Legacy two-version storage. Read only during migration. */
@@ -114,6 +115,7 @@ function filesAt(root: string): WorkflowFiles {
 		review: join(root, "review.json"),
 		reviewMarkdown: join(root, "review.md"),
 		reviews: join(root, "reviews"),
+		reviewRuns: join(root, "review-runs"),
 		legacyDescription: join(root, "description.txt"),
 		previousPlan: join(root, "plan.previous.md"),
 	};

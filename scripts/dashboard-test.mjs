@@ -25,6 +25,7 @@ const data = {
     pullRequestUrl: "https://example.test/pull/1",
     baseCommit: "abc123",
     headCommit: "def456",
+    sourceFingerprint: "source789",
     generatedAt: "2026-01-03T00:00:00.000Z",
     overallResult: {
       summary: 'Necessary and sufficient <script>alert("review")</script>.',
@@ -32,6 +33,12 @@ const data = {
       sufficient: { status: "yes", explanation: "Complete." },
     },
     overallConcerns: [],
+    holisticReview: {
+      summary: "The complete change is coherent.",
+      necessary: { status: "yes", explanation: "Within scope." },
+      sufficient: { status: "yes", explanation: "Complete." },
+      concerns: [],
+    },
     plannedChanges: [{
       id: "PC-01",
       title: "Render the review",

@@ -51,7 +51,7 @@ async function reviewAgentRunner(request) {
 			concerns: [],
 		};
 	}
-	if (request.role === "plan-auditor") {
+	if (request.role === "holistic-review") {
 		return {
 			summary: "The pull request matches the plan.",
 			necessary: { status: "yes", explanation: "No extra work." },
@@ -597,6 +597,7 @@ try {
 			pullRequestUrl: "https://example.test/pull/21",
 			baseCommit: "abc123",
 			headCommit: "old123",
+			sourceFingerprint: "old-source",
 			generatedAt: "2026-01-02T00:00:00.000Z",
 			overallResult: {
 				summary: "Old review.",
@@ -604,6 +605,7 @@ try {
 				sufficient: { status: "yes", explanation: "Old result." },
 			},
 			overallConcerns: [],
+			holisticReview: await reviewAgentRunner({ role: "holistic-review" }),
 			plannedChanges: [{
 				id: "PC-01",
 				title: "Complete the transition",

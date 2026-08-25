@@ -30,6 +30,7 @@ function filesAt(root) {
 		metadata: join(root, "metadata.json"),
 		review: join(root, "review.json"),
 		reviewMarkdown: join(root, "review.md"),
+		reviewRuns: join(root, "review-runs"),
 		legacyDescription: join(root, "description.txt"),
 		previousPlan: join(root, "plan.previous.md"),
 	};
@@ -137,6 +138,7 @@ try {
 		pullRequestUrl: "https://example.test/pull/1",
 		baseCommit: "abc123",
 		headCommit: "def456",
+		sourceFingerprint: "source789",
 		generatedAt: "2026-01-03T00:00:00.000Z",
 		overallResult: {
 			summary: "The implementation matches the plan.",
@@ -144,6 +146,12 @@ try {
 			sufficient: { status: "yes", explanation: "All planned behavior exists." },
 		},
 		overallConcerns: [],
+		holisticReview: {
+			summary: "The pull request is coherent as a whole.",
+			necessary: { status: "yes", explanation: "No unrelated work." },
+			sufficient: { status: "yes", explanation: "All planned behavior exists." },
+			concerns: [],
+		},
 		plannedChanges: [{
 			id: "PC-01",
 			title: "Store the report",

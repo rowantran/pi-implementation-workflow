@@ -1,13 +1,13 @@
 import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { basename, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { PlannedChange } from "./planned-changes.ts";
 import {
-	planAuditReviewPrompt,
+	holisticReviewPrompt,
 	plannedChangeReviewPrompt,
 	reviewAgentSystemPrompt,
 	reviewAgentUserMessage,
@@ -15,18 +15,18 @@ import {
 	testingCriteriaReviewPrompt,
 } from "./prompts.ts";
 import {
-	PLAN_AUDIT_OUTPUT_TOOL,
+	HOLISTIC_REVIEW_OUTPUT_TOOL,
 	PLANNED_CHANGE_OUTPUT_TOOL,
 	REVIEW_SYNTHESIS_OUTPUT_TOOL,
 	TESTING_CRITERIA_OUTPUT_TOOL,
 } from "./review-agent-output.ts";
 import {
-	isPlanAudit,
+	isHolisticReview,
 	isPlannedChangeAnalysis,
 	isReviewSynthesis,
 	isTestingCriteriaAnalysis,
 	REVIEW_REPORT_VERSION,
-	type PlanAudit,
+	type HolisticReview,
 	type PlannedChangeAnalysis,
 	type ReviewSynthesis,
 	type TestingCriteriaAnalysis,
@@ -35,8 +35,9 @@ import {
 
 const REVIEW_AGENT_EXTENSION = fileURLToPath(new URL("./review-agent-output.ts", import.meta.url));
 const MAX_REVIEW_CONCURRENCY = 4;
+const REVIEW_ROUND_VERSION = 1;
 
-export type ReviewAgentRole = "planned-change" | "plan-auditor" | "testing-criteria" | "synthesizer";
+export type ReviewAgentRole = "planned-change" | "holistic-review" | "testing-criteria" | "synthesizer";
 
 export interface ReviewAgentRequest {
 	role: ReviewAgentRole;
@@ -52,10 +53,12 @@ export interface ReviewGenerationInput {
 	pullRequestUrl: string;
 	baseCommit: string;
 	headCommit: string;
+	sourceFingerprint: string;
 	worktreePath: string;
 	metadataPath: string;
 	planPath: string;
 	clarificationsPath: string;
+	reviewRunsPath: string;
 	plannedChanges: PlannedChange[];
 	testingCriteria: string;
 	generatedAt?: string;
@@ -68,21 +71,69 @@ export interface SpawnReviewAgentOptions {
 	signal?: AbortSignal;
 }
 
+interface ReviewRoundManifest {
+	version: typeof REVIEW_ROUND_VERSION;
+	status: "in-progress" | "analysis-complete" | "complete";
+	pullRequestUrl: string;
+	baseCommit: string;
+	headCommit: string;
+	sourceFingerprint: string;
+	generatedAt: string;
+	plannedChanges: Array<{ id: string; title: string }>;
+}
+
+interface ReviewRoundPaths {
+	root: string;
+	manifest: string;
+	plannedChanges: string;
+	holisticReview: string;
+	testingCriteriaReview: string;
+	synthesis: string;
+}
+
 export async function generateWorkflowReview(
 	input: ReviewGenerationInput,
 	runAgent: ReviewAgentRunner,
 ): Promise<WorkflowReviewReport> {
 	if (input.plannedChanges.length === 0) throw new Error("The plan has no planned changes to review.");
 
+	const paths = reviewRoundPaths(input);
+	const existingManifest = await readJson(paths.manifest, isReviewRoundManifest);
+	const canReuse = existingManifest !== undefined && manifestMatches(existingManifest, input);
+	if (!canReuse) await rm(paths.root, { recursive: true, force: true });
+	await mkdir(paths.plannedChanges, { recursive: true });
+	const manifest: ReviewRoundManifest = canReuse
+		? existingManifest
+		: {
+				version: REVIEW_ROUND_VERSION,
+				status: "in-progress",
+				pullRequestUrl: input.pullRequestUrl,
+				baseCommit: input.baseCommit,
+				headCommit: input.headCommit,
+				sourceFingerprint: input.sourceFingerprint,
+				generatedAt: input.generatedAt ?? new Date().toISOString(),
+				plannedChanges: input.plannedChanges.map(({ id, title }) => ({ id, title })),
+			};
+	if (!canReuse) await writeJson(paths.manifest, manifest);
+
 	const generationAbort = new AbortController();
+	let analysisChanged = false;
 	const jobs: Array<
 		() => Promise<
 			| { type: "change"; value: PlannedChangeAnalysis }
-			| { type: "audit"; value: PlanAudit }
+			| { type: "holistic"; value: HolisticReview }
 			| { type: "testing"; value: TestingCriteriaAnalysis }
 		>
 	> = [
 		...input.plannedChanges.map((change) => async () => {
+			const resultPath = join(paths.plannedChanges, `${safePathSegment(change.id, "planned-change id")}.json`);
+			if (canReuse) {
+				const existing = await readJson(resultPath, isPlannedChangeAnalysis);
+				if (existing?.id === change.id && existing.title === change.title) {
+					return { type: "change" as const, value: existing };
+				}
+			}
+			analysisChanged = true;
 			const value = await runAgent({
 				role: "planned-change",
 				outputTool: PLANNED_CHANGE_OUTPUT_TOOL,
@@ -104,30 +155,39 @@ export async function generateWorkflowReview(
 			if (value.id !== change.id || value.title !== change.title) {
 				throw new Error(`${change.id} reviewer returned the wrong planned-change identity.`);
 			}
+			await writeJson(resultPath, value);
 			return { type: "change" as const, value };
 		}),
 		async () => {
+			if (canReuse) {
+				const existing = await readJson(paths.holisticReview, isHolisticReview);
+				if (existing) return { type: "holistic" as const, value: existing };
+			}
+			analysisChanged = true;
 			const value = await runAgent({
-				role: "plan-auditor",
-				outputTool: PLAN_AUDIT_OUTPUT_TOOL,
+				role: "holistic-review",
+				outputTool: HOLISTIC_REVIEW_OUTPUT_TOOL,
 				cwd: input.worktreePath,
-				prompt: planAuditReviewPrompt({
+				prompt: holisticReviewPrompt({
 					metadataPath: input.metadataPath,
 					clarificationsPath: input.clarificationsPath,
 					planPath: input.planPath,
 					baseCommit: input.baseCommit,
 					headCommit: input.headCommit,
 					pullRequestUrl: input.pullRequestUrl,
-					plannedChanges: input.plannedChanges
-						.map((change) => `${change.id}: ${change.title}`)
-						.join(", "),
 				}),
 				signal: generationAbort.signal,
 			});
-			if (!isPlanAudit(value)) throw new Error("The holistic plan auditor returned an invalid result.");
-			return { type: "audit" as const, value };
+			if (!isHolisticReview(value)) throw new Error("The holistic reviewer returned an invalid result.");
+			await writeJson(paths.holisticReview, value);
+			return { type: "holistic" as const, value };
 		},
 		async () => {
+			if (canReuse) {
+				const existing = await readJson(paths.testingCriteriaReview, isTestingCriteriaAnalysis);
+				if (existing) return { type: "testing" as const, value: existing };
+			}
+			analysisChanged = true;
 			const value = await runAgent({
 				role: "testing-criteria",
 				outputTool: TESTING_CRITERIA_OUTPUT_TOOL,
@@ -146,17 +206,19 @@ export async function generateWorkflowReview(
 			if (!isTestingCriteriaAnalysis(value)) {
 				throw new Error("The testing criteria reviewer returned an invalid result.");
 			}
+			await writeJson(paths.testingCriteriaReview, value);
 			return { type: "testing" as const, value };
 		},
 	];
 
 	const results = await runWithConcurrency(jobs, MAX_REVIEW_CONCURRENCY, () => generationAbort.abort());
 	const analyses = results.filter((result) => result.type === "change").map((result) => result.value);
-	const audit = results.find((result) => result.type === "audit")?.value;
+	const holisticReview = results.find((result) => result.type === "holistic")?.value;
 	const testingCriteriaReview = results.find((result) => result.type === "testing")?.value;
-	if (!audit) throw new Error("The holistic plan audit did not complete.");
+	if (!holisticReview) throw new Error("The holistic review did not complete.");
 	if (!testingCriteriaReview) throw new Error("The testing criteria review did not complete.");
 	if (analyses.length !== input.plannedChanges.length) throw new Error("One or more planned-change reviews are missing.");
+	await writeJson(paths.manifest, { ...manifest, status: "analysis-complete" });
 	input.onStage?.("analysis-complete");
 
 	const orderedAnalyses = input.plannedChanges.map((change) => {
@@ -164,23 +226,31 @@ export async function generateWorkflowReview(
 		if (!analysis) throw new Error(`The review for ${change.id} is missing.`);
 		return analysis;
 	});
-	const synthesisValue = await runAgent({
-		role: "synthesizer",
-		outputTool: REVIEW_SYNTHESIS_OUTPUT_TOOL,
-		cwd: input.worktreePath,
-		prompt: reviewSynthesisPrompt({
-			pullRequestUrl: input.pullRequestUrl,
-			baseCommit: input.baseCommit,
-			headCommit: input.headCommit,
-			plannedChangeReviews: JSON.stringify(orderedAnalyses, null, 2),
-			planAudit: JSON.stringify(audit, null, 2),
-			testingCriteriaReview: JSON.stringify(testingCriteriaReview, null, 2),
+	let synthesis = !analysisChanged && canReuse ? await readJson(paths.synthesis, isReviewSynthesis) : undefined;
+	if (!synthesis) {
+		const synthesisValue = await runAgent({
+			role: "synthesizer",
 			outputTool: REVIEW_SYNTHESIS_OUTPUT_TOOL,
-		}),
-		signal: generationAbort.signal,
-	});
-	if (!isReviewSynthesis(synthesisValue)) throw new Error("The review synthesizer returned an invalid result.");
-	const synthesis: ReviewSynthesis = synthesisValue;
+			cwd: input.worktreePath,
+			prompt: reviewSynthesisPrompt({
+				metadataPath: input.metadataPath,
+				clarificationsPath: input.clarificationsPath,
+				planPath: input.planPath,
+				pullRequestUrl: input.pullRequestUrl,
+				baseCommit: input.baseCommit,
+				headCommit: input.headCommit,
+				plannedChangeReviewsDirectory: paths.plannedChanges,
+				holisticReviewPath: paths.holisticReview,
+				testingCriteriaReviewPath: paths.testingCriteriaReview,
+				outputTool: REVIEW_SYNTHESIS_OUTPUT_TOOL,
+			}),
+			signal: generationAbort.signal,
+		});
+		if (!isReviewSynthesis(synthesisValue)) throw new Error("The review synthesizer returned an invalid result.");
+		synthesis = synthesisValue;
+		await writeJson(paths.synthesis, synthesis);
+	}
+	await writeJson(paths.manifest, { ...manifest, status: "complete" });
 	input.onStage?.("synthesis-complete");
 
 	return {
@@ -188,9 +258,11 @@ export async function generateWorkflowReview(
 		pullRequestUrl: input.pullRequestUrl,
 		baseCommit: input.baseCommit,
 		headCommit: input.headCommit,
-		generatedAt: input.generatedAt ?? new Date().toISOString(),
+		sourceFingerprint: input.sourceFingerprint,
+		generatedAt: manifest.generatedAt,
 		overallResult: synthesis.overallResult,
 		overallConcerns: synthesis.overallConcerns,
+		holisticReview,
 		plannedChanges: input.plannedChanges.map((change, index) => ({
 			id: change.id,
 			title: change.title,
@@ -204,6 +276,89 @@ export async function generateWorkflowReview(
 			review: testingCriteriaReview,
 		},
 	};
+}
+
+function reviewRoundPaths(input: ReviewGenerationInput): ReviewRoundPaths {
+	const range = `${safePathSegment(input.baseCommit, "base commit")}..${safePathSegment(input.headCommit, "head commit")}`;
+	const root = join(input.reviewRunsPath, range, safePathSegment(input.sourceFingerprint, "source fingerprint"));
+	return {
+		root,
+		manifest: join(root, "manifest.json"),
+		plannedChanges: join(root, "planned-changes"),
+		holisticReview: join(root, "holistic-review.json"),
+		testingCriteriaReview: join(root, "testing-criteria-review.json"),
+		synthesis: join(root, "synthesis.json"),
+	};
+}
+
+function safePathSegment(value: string, label: string): string {
+	if (value === "." || value === ".." || !/^[a-zA-Z0-9._-]+$/.test(value)) {
+		throw new Error(`Invalid ${label} for review artifact path.`);
+	}
+	return value;
+}
+
+function manifestMatches(manifest: ReviewRoundManifest, input: ReviewGenerationInput): boolean {
+	return (
+		manifest.pullRequestUrl === input.pullRequestUrl &&
+		manifest.baseCommit === input.baseCommit &&
+		manifest.headCommit === input.headCommit &&
+		manifest.sourceFingerprint === input.sourceFingerprint &&
+		manifest.plannedChanges.length === input.plannedChanges.length &&
+		manifest.plannedChanges.every((change, index) => {
+			const expected = input.plannedChanges[index];
+			return change.id === expected?.id && change.title === expected.title;
+		})
+	);
+}
+
+function isReviewRoundManifest(value: unknown): value is ReviewRoundManifest {
+	if (!value || typeof value !== "object") return false;
+	const candidate = value as Partial<ReviewRoundManifest>;
+	return (
+		candidate.version === REVIEW_ROUND_VERSION &&
+		(candidate.status === "in-progress" || candidate.status === "analysis-complete" || candidate.status === "complete") &&
+		typeof candidate.pullRequestUrl === "string" &&
+		typeof candidate.baseCommit === "string" &&
+		typeof candidate.headCommit === "string" &&
+		typeof candidate.sourceFingerprint === "string" &&
+		typeof candidate.generatedAt === "string" &&
+		Array.isArray(candidate.plannedChanges) &&
+		candidate.plannedChanges.every(
+			(change) =>
+				change !== null &&
+				typeof change === "object" &&
+				typeof (change as { id?: unknown }).id === "string" &&
+				typeof (change as { title?: unknown }).title === "string",
+		)
+	);
+}
+
+async function readJson<T>(path: string, validate: (value: unknown) => value is T): Promise<T | undefined> {
+	let text: string;
+	try {
+		text = await readFile(path, "utf8");
+	} catch (error) {
+		if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+		throw error;
+	}
+	try {
+		const value: unknown = JSON.parse(text);
+		return validate(value) ? value : undefined;
+	} catch {
+		return undefined;
+	}
+}
+
+async function writeJson(path: string, value: unknown): Promise<void> {
+	await mkdir(dirname(path), { recursive: true });
+	const temporaryPath = `${path}.${process.pid}.${Date.now()}.tmp`;
+	try {
+		await writeFile(temporaryPath, `${JSON.stringify(value, null, 2)}\n`, { encoding: "utf8", mode: 0o600 });
+		await rename(temporaryPath, path);
+	} finally {
+		await rm(temporaryPath, { force: true });
+	}
 }
 
 export function createSpawnReviewAgent(options: SpawnReviewAgentOptions): ReviewAgentRunner {
