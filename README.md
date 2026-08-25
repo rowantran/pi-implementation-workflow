@@ -150,9 +150,9 @@ Planning: <description>
 
 Workflows created before descriptions were introduced keep the shorter title without the description.
 
-After the first planning, implementation, or revision agent turn settles, the footer shows `/workflow-next when ready`. The review session shows the reminder immediately because its report is already generated. The session title identifies the active phase.
+After the first planning, implementation, or revision agent turn settles, the footer shows `/workflow-next when ready`. The review session shows the footer reminder immediately because its report is already generated. It also adds a durable transcript card that identifies the session as read-only and explains how to ask about findings, request changes with `/workflow-revise`, or accept the review with `/workflow-next`. The session title identifies the active phase.
 
-The reminder stays visible if the session resumes. Implementation and revision completion checks run after each settled turn, and `/workflow-next` enters review after completion or retries failed checks. Cleanup and completion do not add session names or footer status because they are short, non-agentic transitions.
+The reminder and review card stay visible if the session resumes. Implementation and revision completion checks run after each settled turn, and `/workflow-next` enters review after completion or retries failed checks. Cleanup and completion do not add session names or footer status because they are short, non-agentic transitions.
 
 ## State
 
