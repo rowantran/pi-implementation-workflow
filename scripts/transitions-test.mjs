@@ -40,6 +40,15 @@ Verify each transition.
 `;
 
 async function reviewAgentRunner(request) {
+	if (request.role === "incremental-scope") {
+		return {
+			summary: "The revision affects the transition planned change.",
+			relevantPlannedChanges: [{
+				id: "PC-01",
+				explanation: "The revision changes the workflow transition implementation.",
+			}],
+		};
+	}
 	if (request.role === "planned-change") {
 		return {
 			id: "PC-01",

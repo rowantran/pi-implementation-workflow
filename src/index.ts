@@ -557,10 +557,27 @@ export default function implementationWorkflow(
 			return;
 		}
 
+		const previousReviewedHeadCommit =
+			workflow.state.phase === "revising" ? workflow.state.reviewedHeadCommit : undefined;
+		const previousReview = previousReviewedHeadCommit ? existing : undefined;
+		if (
+			reviewRound > 1 &&
+			(!previousReview || previousReview.headCommit !== previousReviewedHeadCommit)
+		) {
+			throw new Error("Could not identify the previous review for this revision.");
+		}
+		const progressSteps = previousReview
+			? [
+					"Identifying planned changes affected by the revision",
+					"Reviewing affected planned changes, full plan, and testing criteria",
+					"Synthesizing overall findings",
+					"Saving review report",
+				]
+			: ["Reviewing planned changes, full plan, and testing criteria", "Synthesizing overall findings", "Saving review report"];
 		await runWorkflowProgress(
 			ctx,
-			"Generating implementation review",
-			["Reviewing planned changes, full plan, and testing criteria", "Synthesizing overall findings", "Saving review report"],
+			previousReview ? "Generating incremental implementation re-review" : "Generating implementation review",
+			progressSteps,
 			async (progress) => {
 				const report = await generateWorkflowReview(
 					{
@@ -575,9 +592,18 @@ export default function implementationWorkflow(
 						reviewRunsPath: files.reviewRuns,
 						plannedChanges,
 						testingCriteria,
+						previousReview,
+						previousReviewPath: previousReview ? files.review : undefined,
 						onStage: (stage) => {
+							if (stage === "scope-complete") {
+								progress.complete("Identified planned changes affected by the revision");
+							}
 							if (stage === "analysis-complete") {
-								progress.complete("Reviewed planned changes, full plan, and testing criteria");
+								progress.complete(
+									previousReview
+										? "Reviewed affected planned changes, full plan, and testing criteria"
+										: "Reviewed planned changes, full plan, and testing criteria",
+								);
 							}
 							if (stage === "synthesis-complete") progress.complete("Synthesized overall findings");
 						},

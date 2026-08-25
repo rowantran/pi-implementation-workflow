@@ -89,7 +89,7 @@ After the agent settles, the extension automatically completes implementation wh
 
 The extension shows progress while checking the worktree and finding the pull request. When the gates pass, it records the pull request, copies `/workflow-next` to the clipboard, and shows a high-contrast completion card.
 
-Paste `/workflow-next` directly into the implementation session. If automatic completion checks fail, `/workflow-next` retries them. When the implementation is ready, the workflow deterministically generates the final review before entering a separate review session:
+Paste `/workflow-next` directly into the implementation session. If automatic completion checks fail, `/workflow-next` retries them. When the implementation is ready, the workflow deterministically generates the initial review before entering a separate review session:
 
 1. one isolated, read-only agent reviews each `PC-*` planned change and maps its pseudocode to the implemented core types, protocols, construction sites, and consumers;
 2. one read-only holistic reviewer checks cross-cutting architecture, missing behavior, and implementation outside the plan;
@@ -110,7 +110,11 @@ To revise the implementation after review, run:
 
 When `/workflow-revise` detects that `HEAD` changed since the current review, it first asks whether those commits are an already-completed revision. If confirmed, the workflow requires a clean worktree and verifies that the pull request contains the new `HEAD`; it then records the revision transition and immediately generates the next review without starting a revision agent session.
 
-Otherwise, the command opens a required multiline editor and creates a separate revision session in the same worktree. The worktree can already contain manual, uncommitted changes. The revision agent receives the original ask, frozen plan, clarifications, current review, and submitted change request. After the agent commits and pushes at least one new commit and leaves the worktree clean, `/workflow-next` generates the next review round in a new review session. An older review session cannot clean up or advance a newer revision round. If the branch changes outside the revision flow, the dashboard marks the review stale and cleanup directs the user to `/workflow-revise`.
+Otherwise, the command opens a required multiline editor and creates a separate revision session in the same worktree. The worktree can already contain manual, uncommitted changes. The revision agent receives the original ask, frozen plan, clarifications, current review, and submitted change request. After the agent commits and pushes at least one new commit and leaves the worktree clean, `/workflow-next` generates the next review round in a new review session.
+
+Each re-review is incremental. First, a read-only scope agent compares the previous reviewed commit with the revised commit and identifies the `PC-*` planned changes whose prior reviews could be affected. The workflow reruns only those planned-change reviewers and carries the unaffected planned-change results forward. It always reruns the holistic reviewer, testing-criteria reviewer, and synthesizer against the revised pull request. A retry reuses any valid scope and reviewer results already completed for that re-review.
+
+An older review session cannot clean up or advance a newer revision round. If the branch changes outside the revision flow, the dashboard marks the review stale and cleanup directs the user to `/workflow-revise`.
 
 Advance from an accepted review to cleanup explicitly:
 
@@ -184,6 +188,7 @@ Completed plans use the same files under their final identifier:
 ├── review-runs/
 │   └── <base>..<head>/<source-fingerprint>/
 │       ├── manifest.json
+│       ├── incremental-review-scope.json  # re-reviews only
 │       ├── planned-changes/
 │       │   ├── PC-01.json
 │       │   └── ...
@@ -193,7 +198,7 @@ Completed plans use the same files under their final identifier:
 └── metadata.json
 ```
 
-`review.json` and `review.md` contain the latest review. Numbered JSON and Markdown reports under `reviews/` preserve every review round. `review-runs/` preserves the reusable agent outputs for each generated review. Review files do not exist in planning drafts.
+`review.json` and `review.md` contain the latest review. Numbered JSON and Markdown reports under `reviews/` preserve every review round. `review-runs/` preserves the reusable agent outputs for each generated review, including the incremental scope for a re-review. Review files do not exist in planning drafts.
 
 `metadata.json` exists from the start of planning. It contains `DraftWorkflowMetadata` while planning and is replaced by `CompletedWorkflowMetadata` when planning completes. Both types store the verbatim, write-once original ask, the plain-English description, and a typed `state` object. `state.phase` is one of `planning`, `implementing`, `reviewing`, `revising`, or `complete`. A step records retry-safe progress inside a phase. Review and revision states also record the review round; revision states record the commit that was reviewed. The declared phase transitions are:
 

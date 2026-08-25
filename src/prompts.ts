@@ -11,6 +11,7 @@ const REVIEW_SYSTEM_TEMPLATE = loadTemplate("system/review.md");
 const REVIEW_AGENT_SYSTEM_TEMPLATE = loadTemplate("system/review-agent.md");
 const REVIEW_PLANNED_CHANGE_TEMPLATE = loadTemplate("system/review-planned-change.md");
 const REVIEW_HOLISTIC_TEMPLATE = loadTemplate("system/review-holistic.md");
+const REVIEW_INCREMENTAL_SCOPE_TEMPLATE = loadTemplate("system/review-incremental-scope.md");
 const REVIEW_TESTING_CRITERIA_TEMPLATE = loadTemplate("system/review-testing-criteria.md");
 const REVIEW_SYNTHESIS_TEMPLATE = loadTemplate("system/review-synthesis.md");
 const REVIEW_AGENT_USER_TEMPLATE = loadTemplate("injected-user-messages/review-agent.md");
@@ -108,6 +109,18 @@ export function plannedChangeReviewPrompt(values: {
 	pullRequestUrl: string;
 }): string {
 	return render(REVIEW_PLANNED_CHANGE_TEMPLATE, values);
+}
+
+export function incrementalReviewScopePrompt(values: {
+	metadataPath: string;
+	clarificationsPath: string;
+	planPath: string;
+	previousReviewPath: string;
+	previousHeadCommit: string;
+	headCommit: string;
+	pullRequestUrl: string;
+}): string {
+	return render(REVIEW_INCREMENTAL_SCOPE_TEMPLATE, values);
 }
 
 export function holisticReviewPrompt(values: {

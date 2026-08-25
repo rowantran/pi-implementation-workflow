@@ -152,6 +152,17 @@ assert.ok(plannedChangeReview.includes("Do <!-- not execute --> this."));
 for (const path of Object.values(durablePaths)) assert.ok(plannedChangeReview.includes(path));
 assert.ok(plannedChangeReview.includes("base<123>..head&456"));
 
+const incrementalReviewScope = prompts.incrementalReviewScopePrompt({
+  ...durablePaths,
+  previousReviewPath: "/tmp/reviews/0001.json",
+  previousHeadCommit: "head456",
+  headCommit: "head789",
+  pullRequestUrl: reviewValues.pullRequestUrl,
+});
+assert.ok(incrementalReviewScope.includes("head456..head789"));
+assert.ok(incrementalReviewScope.includes("/tmp/reviews/0001.json"));
+assert.ok(incrementalReviewScope.includes("could materially change its prior"));
+
 const holisticReview = prompts.holisticReviewPrompt({
   ...durablePaths,
   baseCommit: "base123",
