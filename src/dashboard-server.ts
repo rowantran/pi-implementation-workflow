@@ -339,16 +339,17 @@ function requirePublicBaseUrl(value: unknown, configPath: string): string {
 	if (typeof value !== "string" || !value.trim()) {
 		throw new Error(`Remote dashboard mode requires dashboard.publicBaseUrl: ${configPath}`);
 	}
+	const rawUrl = value.trim();
 	let url: URL;
 	try {
-		url = new URL(value);
+		url = new URL(rawUrl);
 	} catch {
 		throw new Error(`dashboard.publicBaseUrl must be an absolute HTTP or HTTPS URL: ${configPath}`);
 	}
 	if ((url.protocol !== "http:" && url.protocol !== "https:") || !url.hostname) {
 		throw new Error(`dashboard.publicBaseUrl must be an absolute HTTP or HTTPS URL: ${configPath}`);
 	}
-	if (url.username || url.password || url.search || url.hash) {
+	if (url.username || url.password || rawUrl.includes("?") || rawUrl.includes("#")) {
 		throw new Error(`dashboard.publicBaseUrl cannot contain credentials, a query, or a fragment: ${configPath}`);
 	}
 	return url.href.replace(/\/$/, "");

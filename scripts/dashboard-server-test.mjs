@@ -129,6 +129,8 @@ try {
 		{ dashboard: { mode: "remote", listenPort: 45678 } },
 		{ dashboard: { mode: "remote", publicBaseUrl: "file:///tmp/dashboard", listenPort: 45678 } },
 		{ dashboard: { mode: "remote", publicBaseUrl: "http://devbox:45678/path?query=yes", listenPort: 45678 } },
+		{ dashboard: { mode: "remote", publicBaseUrl: "http://devbox:45678/?", listenPort: 45678 } },
+		{ dashboard: { mode: "remote", publicBaseUrl: "http://devbox:45678/#", listenPort: 45678 } },
 		{ dashboard: { mode: "remote", publicBaseUrl: "http://devbox:45678", listenPort: 45678, listenHost: " " } },
 		{ dashboard: { mode: "local", listenPort: 0 } },
 	]) {
