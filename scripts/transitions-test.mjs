@@ -133,6 +133,7 @@ function createHarness(repositoryRoot, worktreePath, workflowBranch) {
 	const entries = [];
 	const notifications = [];
 	const confirmations = [];
+	const widgets = new Map();
 	const switches = [];
 	const userMessages = [];
 	let activeTools = ["read", "bash", "edit", "write"];
@@ -241,6 +242,10 @@ function createHarness(repositoryRoot, worktreePath, workflowBranch) {
 				editor: async (_title, prefill) => prefill || "Address the review findings.",
 				notify: (message, level) => notifications.push({ message, level }),
 				setStatus() {},
+				setWidget: (id, content, options) => {
+					if (content === undefined) widgets.delete(id);
+					else widgets.set(id, { content, options });
+				},
 				theme: { fg: (_color, text) => text },
 			},
 			waitForIdle: async () => {},
@@ -258,6 +263,7 @@ function createHarness(repositoryRoot, worktreePath, workflowBranch) {
 		entries,
 		notifications,
 		confirmations,
+		widgets,
 		switches,
 		userMessages,
 		getActiveTools: () => [...activeTools],
@@ -385,6 +391,10 @@ try {
 		);
 		assert.equal(completion.data.command, "/workflow-next");
 		assert.deepEqual(completion.data.details, ["Pull request: https://example.test/pull/17"]);
+		assert.match(completion.data.instruction, /^Send \/workflow-next/);
+		assert.equal("clipboard" in completion.data, false, "completion does not report or attempt clipboard use");
+		assert.equal(harness.widgets.size, 1, "completion keeps workflow-next visible below the editor");
+		assert.equal([...harness.widgets.values()][0].options.placement, "belowEditor");
 		await harness.commands.get("workflow-next")("", ctx);
 		assert.deepEqual((await readMetadata(workflow.metadata.identifier)).state, { phase: "reviewing", step: "active", round: 1 });
 		assert.equal(harness.userMessages.length, 0, "review generation does not start another conversational agent");
@@ -439,6 +449,7 @@ try {
 		]);
 		await resumedHarness.emit("session_start", resumedCtx);
 		assert.equal(resumedHarness.getActiveTools().includes("workflow_questions"), false);
+		assert.equal(resumedHarness.widgets.size, 1, "a cancelled review switch restores the persistent reminder");
 		const beforeAgentStart = resumedHarness.getEventHandlers("before_agent_start")[0];
 		assert.equal(
 			await beforeAgentStart({ systemPrompt: "base prompt" }, resumedCtx),
@@ -511,6 +522,8 @@ try {
 			round: 1,
 			reviewedHeadCommit: "abc123",
 		});
+		assert.equal(revisionHarness.widgets.size, 1, "revision completion keeps workflow-next visible");
+		revisionHarness.setSwitchCancelled(true);
 		await revisionHarness.commands.get("workflow-next")("", revisionCtx);
 		assert.deepEqual((await readMetadata(workflow.metadata.identifier)).state, {
 			phase: "reviewing",
@@ -520,7 +533,17 @@ try {
 		assert.equal((await storage.readWorkflowReview(workflow.files)).headCommit, "new123");
 		assert.equal(await storage.pathExists(join(workflow.files.reviews, "0001.json")), true);
 		assert.equal(await storage.pathExists(join(workflow.files.reviews, "0002.json")), true);
-		const secondReviewSession = (await readFile(revisionHarness.switches.at(-1), "utf8"))
+
+		const resumedRevisionHarness = createHarness(workflow.repositoryRoot, workflow.worktreePath, workflow.workflowBranch);
+		resumedRevisionHarness.setHeadCommit("new123");
+		const resumedRevisionCtx = resumedRevisionHarness.context(workflow.worktreePath, [
+			phaseEntry("revision", { identifier: workflow.metadata.identifier, reviewRound: 1 }),
+		]);
+		await resumedRevisionHarness.emit("session_start", resumedRevisionCtx);
+		assert.equal(resumedRevisionHarness.widgets.size, 1, "a cancelled revision review switch restores the reminder");
+		await resumedRevisionHarness.commands.get("workflow-next")("", resumedRevisionCtx);
+		assert.equal(resumedRevisionHarness.switches.length, 1, "the revision review switch can be retried after resume");
+		const secondReviewSession = (await readFile(resumedRevisionHarness.switches.at(-1), "utf8"))
 			.trim()
 			.split("\n")
 			.map((line) => JSON.parse(line));
