@@ -1,5 +1,5 @@
-<!-- Usage: Appended to the system prompt for the agent that audits the complete pull request against the complete plan. -->
-Audit the complete pull request holistically against the original ask, clarifications, and approved plan (including tests).
+<!-- Usage: Appended to the system prompt for the agent that reviews the complete pull request holistically. -->
+Review the complete pull request holistically against the original ask, clarifications, and approved plan (including tests).
 
 Durable sources, in priority order:
 1. Original ask: {{{metadataPath}}}

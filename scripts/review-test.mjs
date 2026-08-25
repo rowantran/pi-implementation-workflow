@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
+import { mkdtemp, readFile, readdir, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { createJiti } from "jiti/static";
 
 const jiti = createJiti(import.meta.url, { moduleCache: false });
@@ -27,14 +29,17 @@ const plannedChanges = [
   },
 ];
 
+const temporaryRoot = await mkdtemp(join(tmpdir(), "pi-workflow-review-test-"));
 const input = {
   pullRequestUrl: "https://example.test/pull/42",
   baseCommit: "base123",
   headCommit: "head456",
+  sourceFingerprint: "source789",
   worktreePath: "/repository/.worktrees/review",
   metadataPath: "/workflow/metadata.json",
   planPath: "/workflow/plan.md",
   clarificationsPath: "/workflow/clarifications.json",
+  reviewRunsPath: join(temporaryRoot, "review-runs"),
   plannedChanges,
   testingCriteria: "Run the full test suite and verify the dashboard report.",
   generatedAt: "2026-01-02T03:04:05.000Z",
@@ -77,7 +82,7 @@ const runner = async (request) => {
     assert.ok(change);
     return analysis(change.id, change.title);
   }
-  if (request.role === "plan-auditor") {
+  if (request.role === "holistic-review") {
     return {
       summary: "The changes compose cleanly, with one dashboard gap.",
       necessary: { status: "yes", explanation: "No unrelated implementation was found." },
@@ -108,22 +113,28 @@ const runner = async (request) => {
     };
   }
   synthesisStartedAfterAnalysis = requests.filter((candidate) => candidate.role !== "synthesizer").length === 4;
-  const plannedChangesPath = /Planned-change review results: (.+)$/m.exec(request.prompt)?.[1];
-  const planAuditPath = /Holistic plan audit result: (.+)$/m.exec(request.prompt)?.[1];
+  const plannedChangesDirectory = /Planned-change review directory: (.+)$/m.exec(request.prompt)?.[1];
+  const holisticReviewPath = /Holistic review result: (.+)$/m.exec(request.prompt)?.[1];
   const testingCriteriaPath = /Testing criteria review result: (.+)$/m.exec(request.prompt)?.[1];
-  assert.ok(plannedChangesPath);
-  assert.ok(planAuditPath);
+  assert.ok(plannedChangesDirectory);
+  assert.ok(holisticReviewPath);
   assert.ok(testingCriteriaPath);
-  synthesisResultPaths = [plannedChangesPath, planAuditPath, testingCriteriaPath];
+  synthesisResultPaths = [plannedChangesDirectory, holisticReviewPath, testingCriteriaPath];
   assert.doesNotMatch(request.prompt, /PC-01 is implemented by one durable contract/);
   assert.doesNotMatch(request.prompt, /The changes compose cleanly, with one dashboard gap/);
   assert.doesNotMatch(request.prompt, /The automated suite passes, but the dashboard still needs visual confirmation/);
 
-  const [savedPlannedChanges, savedPlanAudit, savedTestingCriteria] = await Promise.all(
-    synthesisResultPaths.map(async (path) => JSON.parse(await readFile(path, "utf8"))),
+  const plannedChangeFiles = (await readdir(plannedChangesDirectory)).sort();
+  const savedPlannedChanges = await Promise.all(
+    plannedChangeFiles.map(async (name) => JSON.parse(await readFile(join(plannedChangesDirectory, name), "utf8"))),
   );
+  const [savedHolisticReview, savedTestingCriteria] = await Promise.all([
+    readFile(holisticReviewPath, "utf8").then(JSON.parse),
+    readFile(testingCriteriaPath, "utf8").then(JSON.parse),
+  ]);
+  assert.deepEqual(plannedChangeFiles, ["PC-01.json", "PC-02.json"]);
   assert.deepEqual(savedPlannedChanges, plannedChanges.map((change) => analysis(change.id, change.title)));
-  assert.equal(savedPlanAudit.summary, "The changes compose cleanly, with one dashboard gap.");
+  assert.equal(savedHolisticReview.summary, "The changes compose cleanly, with one dashboard gap.");
   assert.equal(savedTestingCriteria.criteria.length, 2);
 
   return {
@@ -138,14 +149,15 @@ const runner = async (request) => {
 
 const stages = [];
 const report = await generateWorkflowReview({ ...input, onStage: (stage) => stages.push(stage) }, runner);
-assert.deepEqual(requests.map(({ role }) => role).sort(), ["plan-auditor", "planned-change", "planned-change", "testing-criteria", "synthesizer"].sort());
+assert.deepEqual(requests.map(({ role }) => role).sort(), ["holistic-review", "planned-change", "planned-change", "testing-criteria", "synthesizer"].sort());
 assert.equal(synthesisStartedAfterAnalysis, true);
 assert.equal(synthesisResultPaths.length, 3);
-for (const path of synthesisResultPaths) await assert.rejects(readFile(path), { code: "ENOENT" });
 assert.deepEqual(stages, ["analysis-complete", "synthesis-complete"]);
 assert.deepEqual(report.plannedChanges.map(({ id }) => id), ["PC-01", "PC-02"]);
 assert.equal(report.plannedChanges[1].review.sufficient.status, "partial");
 assert.equal(report.overallConcerns.length, 1);
+assert.equal(report.sourceFingerprint, input.sourceFingerprint);
+assert.equal(report.holisticReview.summary, "The changes compose cleanly, with one dashboard gap.");
 assert.equal(report.testingCriteria.originalCriteria, input.testingCriteria);
 assert.equal(report.testingCriteria.review.satisfied.status, "partial");
 assert.equal(report.testingCriteria.review.criteria.length, 2);
@@ -161,15 +173,47 @@ assert.match(markdown, /## Testing criteria/);
 assert.match(markdown, /Run the full test suite/);
 assert.match(markdown, /Satisfied: \*\*Partial\*\*/);
 
+const reviewRoundPath = join(input.reviewRunsPath, `${input.baseCommit}..${input.headCommit}`, input.sourceFingerprint);
+assert.equal(JSON.parse(await readFile(join(reviewRoundPath, "manifest.json"), "utf8")).status, "complete");
+assert.ok(JSON.parse(await readFile(join(reviewRoundPath, "synthesis.json"), "utf8")).overallResult);
+const reuseStages = [];
+const reusedReport = await generateWorkflowReview(
+  { ...input, onStage: (stage) => reuseStages.push(stage) },
+  async () => {
+    throw new Error("A complete review round should not rerun agents.");
+  },
+);
+assert.deepEqual(reusedReport, report);
+assert.deepEqual(reuseStages, ["analysis-complete", "synthesis-complete"]);
+
+const resumableInput = { ...input, sourceFingerprint: "resume-after-synthesis-failure" };
+const firstAttemptRoles = [];
 await assert.rejects(
-  generateWorkflowReview(input, async (request) => {
+  generateWorkflowReview(resumableInput, async (request) => {
+    firstAttemptRoles.push(request.role);
+    if (request.role === "synthesizer") throw new Error("Synthetic synthesis failure");
+    return runner(request);
+  }),
+  /Synthetic synthesis failure/,
+);
+assert.deepEqual(firstAttemptRoles.sort(), ["holistic-review", "planned-change", "planned-change", "testing-criteria", "synthesizer"].sort());
+const retryRoles = [];
+await generateWorkflowReview(resumableInput, async (request) => {
+  retryRoles.push(request.role);
+  assert.equal(request.role, "synthesizer");
+  return runner(request);
+});
+assert.deepEqual(retryRoles, ["synthesizer"], "a synthesis retry must reuse every completed analysis result");
+
+await assert.rejects(
+  generateWorkflowReview({ ...input, sourceFingerprint: "wrong-identity" }, async (request) => {
     if (request.role === "planned-change") return analysis("PC-99", "Wrong change");
     return runner(request);
   }),
   /wrong planned-change identity/,
 );
 await assert.rejects(
-  generateWorkflowReview(input, async (request) => {
+  generateWorkflowReview({ ...input, sourceFingerprint: "invalid-testing" }, async (request) => {
     if (request.role === "testing-criteria") {
       return {
         summary: "No criteria checked.",
@@ -183,4 +227,5 @@ await assert.rejects(
   /testing criteria reviewer returned an invalid result/,
 );
 
-console.log("Review test passed: planned-change, plan, and testing-criteria reviewers feed a final synthesizer and durable report.");
+await rm(temporaryRoot, { recursive: true, force: true });
+console.log("Review test passed: durable planned-change, holistic, testing, and synthesis results are reusable by review round.");

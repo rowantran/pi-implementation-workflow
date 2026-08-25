@@ -57,7 +57,7 @@ export const PlannedChangeAnalysisSchema = Type.Object(
 	{ additionalProperties: false },
 );
 
-export const PlanAuditSchema = Type.Object(
+export const HolisticReviewSchema = Type.Object(
 	{
 		summary: Type.String(),
 		necessary: VerdictSchema,
@@ -130,9 +130,11 @@ export const WorkflowReviewReportSchema = Type.Object(
 		pullRequestUrl: Type.String(),
 		baseCommit: Type.String(),
 		headCommit: Type.String(),
+		sourceFingerprint: Type.Optional(Type.String()),
 		generatedAt: Type.String(),
 		overallResult: OverallResultSchema,
 		overallConcerns: Type.Array(ConcernSchema),
+		holisticReview: Type.Optional(HolisticReviewSchema),
 		plannedChanges: Type.Array(PlannedChangeReportSchema),
 		testingCriteria: TestingCriteriaReportSchema,
 	},
@@ -144,7 +146,7 @@ export type SourceEvidence = Static<typeof SourceEvidenceSchema>;
 export type Concern = Static<typeof ConcernSchema>;
 export type ContractReview = Static<typeof ContractReviewSchema>;
 export type PlannedChangeAnalysis = Static<typeof PlannedChangeAnalysisSchema>;
-export type PlanAudit = Static<typeof PlanAuditSchema>;
+export type HolisticReview = Static<typeof HolisticReviewSchema>;
 export type TestingCriterionResult = Static<typeof TestingCriterionResultSchema>;
 export type TestingCriteriaAnalysis = Static<typeof TestingCriteriaAnalysisSchema>;
 export type ReviewSynthesis = Static<typeof ReviewSynthesisSchema>;
@@ -154,8 +156,8 @@ export function isPlannedChangeAnalysis(value: unknown): value is PlannedChangeA
 	return Check(PlannedChangeAnalysisSchema, value);
 }
 
-export function isPlanAudit(value: unknown): value is PlanAudit {
-	return Check(PlanAuditSchema, value);
+export function isHolisticReview(value: unknown): value is HolisticReview {
+	return Check(HolisticReviewSchema, value);
 }
 
 export function isTestingCriteriaAnalysis(value: unknown): value is TestingCriteriaAnalysis {

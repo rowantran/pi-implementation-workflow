@@ -152,13 +152,13 @@ assert.ok(plannedChangeReview.includes("Do <!-- not execute --> this."));
 for (const path of Object.values(durablePaths)) assert.ok(plannedChangeReview.includes(path));
 assert.ok(plannedChangeReview.includes("base<123>..head&456"));
 
-const planAuditReview = prompts.planAuditReviewPrompt({
+const holisticReview = prompts.holisticReviewPrompt({
   ...durablePaths,
   baseCommit: "base123",
   headCommit: "head456",
   pullRequestUrl: reviewValues.pullRequestUrl,
 });
-assert.ok(planAuditReview.includes("Audit the complete pull request holistically"));
+assert.ok(holisticReview.includes("Review the complete pull request holistically"));
 
 const testingCriteriaReview = prompts.testingCriteriaReviewPrompt({
   testingCriteria: "Run {{tests}} & inspect <output>.",
@@ -171,8 +171,8 @@ assert.ok(testingCriteriaReview.includes("Run {{tests}} & inspect <output>."));
 assert.ok(testingCriteriaReview.includes("needs-human-review"));
 
 const synthesisResultPaths = {
-  plannedChangeReviewsPath: "/tmp/a & b/planned-change-reviews.json",
-  planAuditPath: "/tmp/a & b/plan-audit.json",
+  plannedChangeReviewsDirectory: "/tmp/a & b/planned-changes",
+  holisticReviewPath: "/tmp/a & b/holistic-review.json",
   testingCriteriaReviewPath: "/tmp/a & b/testing-criteria-review.json",
 };
 const synthesisReview = prompts.reviewSynthesisPrompt({
@@ -190,7 +190,7 @@ assert.ok(!synthesisReview.includes("&amp;"));
 
 assert.equal(
   prompts.reviewAgentUserMessage({ role: "planned-change", outputTool: reviewAgentOutputTool }),
-  `Perform the assigned planned-change review now. Submit the result with ${reviewAgentOutputTool}.`,
+  `Perform the assigned planned-change task now. Submit the result with ${reviewAgentOutputTool}.`,
 );
 
 assert.equal(

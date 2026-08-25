@@ -1,13 +1,13 @@
 import { defineTool, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import {
-	PlanAuditSchema,
+	HolisticReviewSchema,
 	PlannedChangeAnalysisSchema,
 	ReviewSynthesisSchema,
 	TestingCriteriaAnalysisSchema,
 } from "./review-report.ts";
 
 export const PLANNED_CHANGE_OUTPUT_TOOL = "submit_planned_change_review";
-export const PLAN_AUDIT_OUTPUT_TOOL = "submit_plan_audit";
+export const HOLISTIC_REVIEW_OUTPUT_TOOL = "submit_holistic_review";
 export const TESTING_CRITERIA_OUTPUT_TOOL = "submit_testing_criteria_review";
 export const REVIEW_SYNTHESIS_OUTPUT_TOOL = "submit_review_synthesis";
 
@@ -30,13 +30,13 @@ export default function reviewAgentOutput(pi: ExtensionAPI): void {
 
 	pi.registerTool(
 		defineTool({
-			name: PLAN_AUDIT_OUTPUT_TOOL,
-			label: "Submit Plan Audit",
-			description: "Submit the final structured holistic audit of the pull request against the complete plan.",
-			parameters: PlanAuditSchema,
+			name: HOLISTIC_REVIEW_OUTPUT_TOOL,
+			label: "Submit Holistic Review",
+			description: "Submit the final structured holistic review of the pull request against the complete plan.",
+			parameters: HolisticReviewSchema,
 			async execute(_toolCallId, params) {
 				return {
-					content: [{ type: "text", text: "Submitted holistic plan audit." }],
+					content: [{ type: "text", text: "Submitted holistic review." }],
 					details: params,
 					terminate: true,
 				};

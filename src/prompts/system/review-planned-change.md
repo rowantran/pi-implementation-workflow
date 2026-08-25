@@ -20,5 +20,5 @@ Map the planned pseudocode to the actual core types, protocols, interfaces, and 
 Your review should include a judgment of the implementation against the planned change based on:
 - Necessary: its implementation stays within this planned change or uses only clearly justified supporting work.
 - Sufficient: it fully realizes the planned behavior and design.
-Put concerns specific to this planned change in its concerns list. Do not perform the holistic audit assigned to another agent.
+Put concerns specific to this planned change in its concerns list. Do not perform the holistic review assigned to another agent.
 Return id exactly {{{id}}} and title exactly {{{title}}}.

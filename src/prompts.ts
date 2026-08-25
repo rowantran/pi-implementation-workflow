@@ -10,7 +10,7 @@ const START_PLANNING_USER_TEMPLATE = loadTemplate("injected-user-messages/start-
 const REVIEW_SYSTEM_TEMPLATE = loadTemplate("system/review.md");
 const REVIEW_AGENT_SYSTEM_TEMPLATE = loadTemplate("system/review-agent.md");
 const REVIEW_PLANNED_CHANGE_TEMPLATE = loadTemplate("system/review-planned-change.md");
-const REVIEW_PLAN_AUDIT_TEMPLATE = loadTemplate("system/review-plan-audit.md");
+const REVIEW_HOLISTIC_TEMPLATE = loadTemplate("system/review-holistic.md");
 const REVIEW_TESTING_CRITERIA_TEMPLATE = loadTemplate("system/review-testing-criteria.md");
 const REVIEW_SYNTHESIS_TEMPLATE = loadTemplate("system/review-synthesis.md");
 const REVIEW_AGENT_USER_TEMPLATE = loadTemplate("injected-user-messages/review-agent.md");
@@ -89,7 +89,7 @@ export function plannedChangeReviewPrompt(values: {
 	return render(REVIEW_PLANNED_CHANGE_TEMPLATE, values);
 }
 
-export function planAuditReviewPrompt(values: {
+export function holisticReviewPrompt(values: {
 	metadataPath: string;
 	clarificationsPath: string;
 	planPath: string;
@@ -97,7 +97,7 @@ export function planAuditReviewPrompt(values: {
 	headCommit: string;
 	pullRequestUrl: string;
 }): string {
-	return render(REVIEW_PLAN_AUDIT_TEMPLATE, values);
+	return render(REVIEW_HOLISTIC_TEMPLATE, values);
 }
 
 export function testingCriteriaReviewPrompt(values: {
@@ -119,8 +119,8 @@ export function reviewSynthesisPrompt(values: {
 	pullRequestUrl: string;
 	baseCommit: string;
 	headCommit: string;
-	plannedChangeReviewsPath: string;
-	planAuditPath: string;
+	plannedChangeReviewsDirectory: string;
+	holisticReviewPath: string;
 	testingCriteriaReviewPath: string;
 	outputTool: string;
 }): string {
