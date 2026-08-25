@@ -80,6 +80,7 @@ async function scenario({ args = "", editorResult, afterFirstStart } = {}) {
 			},
 			notify: (message, level) => notifications.push({ message, level }),
 			setStatus: () => {},
+			setWidget: () => {},
 			theme: { fg: (_color, text) => text },
 		},
 		waitForIdle: async () => {},

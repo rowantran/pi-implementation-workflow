@@ -8,6 +8,7 @@ import { Box, type Component, Text, truncateToWidth, type TUI } from "@earendil-
 
 const COMPLETION_ENTRY = "implementation-workflow-completion";
 const PHASE_STATUS_ID = "implementation-workflow-phase";
+const WORKFLOW_NEXT_NOTICE_ID = "implementation-workflow-next-notice";
 const SPINNER_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 const COMPLETION_DELAY_MS = 300;
 const FAILURE_DELAY_MS = 600;
@@ -29,7 +30,6 @@ export interface WorkflowCompletionData {
 	title: string;
 	details?: string[];
 	command?: string;
-	clipboard: "copied" | "failed" | "none";
 	instruction?: string;
 }
 
@@ -136,6 +136,22 @@ export function showWorkflowPhaseStatus(ctx: ExtensionContext, phase: WorkflowSt
 	ctx.ui.setStatus(PHASE_STATUS_ID, status ? ctx.ui.theme.fg("dim", status) : undefined);
 }
 
+export function workflowNextNoticeText(): string {
+	return "Send /workflow-next here to start a separate review session.";
+}
+
+export function showWorkflowNextNotice(ctx: ExtensionContext, visible: boolean): void {
+	if (!visible) {
+		ctx.ui.setWidget(WORKFLOW_NEXT_NOTICE_ID, undefined);
+		return;
+	}
+	ctx.ui.setWidget(
+		WORKFLOW_NEXT_NOTICE_ID,
+		["/workflow-next — send here to start a separate review session"],
+		{ placement: "belowEditor" },
+	);
+}
+
 export async function runWorkflowProgress<T>(
 	ctx: ExtensionContext,
 	title: string,
@@ -170,7 +186,6 @@ export function registerWorkflowCompletionRenderer(pi: ExtensionAPI): void {
 	pi.registerEntryRenderer<WorkflowCompletionData>(COMPLETION_ENTRY, (entry, _options, theme) => {
 		const data = entry.data ?? {
 			title: "Workflow phase complete",
-			clipboard: "none" as const,
 		};
 		const box = new Box(1, 1, (text) => theme.bg("toolSuccessBg", text));
 		const borderColor = (text: string) => theme.fg("success", text);
@@ -182,11 +197,7 @@ export function registerWorkflowCompletionRenderer(pi: ExtensionAPI): void {
 		if (data.command) {
 			box.addChild(new Text(theme.fg("accent", theme.bold(data.command)), 0, 1));
 		}
-		if (data.clipboard === "copied") {
-			box.addChild(new Text(theme.fg("success", data.instruction ?? "Copied to the clipboard."), 0, 0));
-		} else if (data.clipboard === "failed") {
-			box.addChild(new Text(theme.fg("warning", data.instruction ?? "Could not copy the command."), 0, 0));
-		} else if (data.instruction) {
+		if (data.instruction) {
 			box.addChild(new Text(data.instruction, 0, 0));
 		}
 		box.addChild(new DynamicBorder(borderColor));
@@ -204,5 +215,5 @@ export function showWorkflowCompletion(
 	const lines = [data.title, ...(data.details ?? [])];
 	if (data.command) lines.push(data.command);
 	if (data.instruction) lines.push(data.instruction);
-	ctx.ui.notify(lines.join("\n"), data.clipboard === "failed" ? "error" : "info");
+	ctx.ui.notify(lines.join("\n"), "info");
 }

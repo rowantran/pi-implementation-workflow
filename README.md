@@ -87,9 +87,9 @@ After the agent settles, the extension automatically completes implementation wh
 - an open pull request exists from the workflow branch to the recorded base branch;
 - the pull request branch contains the local `HEAD` commit.
 
-The extension shows progress while checking the worktree and finding the pull request. When the gates pass, it records the pull request, copies `/workflow-next` to the clipboard, and shows a high-contrast completion card.
+The extension shows progress while checking the worktree and finding the pull request. When the gates pass, it records the pull request and shows a high-contrast completion card. It does not modify the clipboard.
 
-Paste `/workflow-next` directly into the implementation session. If automatic completion checks fail, `/workflow-next` retries them. When the implementation is ready, the workflow deterministically generates the initial review before entering a separate review session:
+Send `/workflow-next` in the implementation session. A persistent reminder below the editor keeps the command visible until the workflow advances, even if later background output pushes the completion card out of view. If automatic completion checks fail, `/workflow-next` retries them. When the implementation is ready, the workflow deterministically generates the initial review before entering a separate review session:
 
 1. one isolated, read-only agent reviews each `PC-*` planned change and maps its pseudocode to the implemented core types, protocols, construction sites, and consumers;
 2. one read-only holistic reviewer checks cross-cutting architecture, missing behavior, and implementation outside the plan;
@@ -152,7 +152,7 @@ Workflows created before descriptions were introduced keep the shorter title wit
 
 After the first planning, implementation, or revision agent turn settles, the footer shows `/workflow-next when ready`. The review session shows the reminder immediately because its report is already generated. The session title identifies the active phase.
 
-The reminder stays visible if the session resumes. Implementation and revision completion checks run after each settled turn, and `/workflow-next` enters review after completion or retries failed checks. Cleanup and completion do not add session names or footer status because they are short, non-agentic transitions.
+The footer reminder stays visible if the session resumes. Implementation and revision completion checks run after each settled turn. After either phase completes, a persistent below-editor reminder tells the user to send `/workflow-next`; it stays visible until the workflow enters review. `/workflow-next` enters review after completion or retries failed checks. Cleanup and final completion do not add session names, footer status, or reminders because they are short, non-agentic transitions.
 
 ## State
 
