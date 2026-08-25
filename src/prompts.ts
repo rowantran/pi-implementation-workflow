@@ -14,6 +14,8 @@ const REVIEW_PLAN_AUDIT_TEMPLATE = loadTemplate("system/review-plan-audit.md");
 const REVIEW_TESTING_CRITERIA_TEMPLATE = loadTemplate("system/review-testing-criteria.md");
 const REVIEW_SYNTHESIS_TEMPLATE = loadTemplate("system/review-synthesis.md");
 const REVIEW_AGENT_USER_TEMPLATE = loadTemplate("injected-user-messages/review-agent.md");
+const REVISION_SYSTEM_TEMPLATE = loadTemplate("system/revision.md");
+const REVISION_USER_TEMPLATE = loadTemplate("injected-user-messages/revision.md");
 const UPDATE_PLAN_TOOL_GUIDELINE = loadTemplate("system/update-plan-tool-guideline.md");
 const UPDATE_PLAN_TOOL_SNIPPET = loadTemplate("system/update-plan-tool-snippet.md");
 
@@ -69,6 +71,25 @@ export function reviewSystemPrompt(values: {
 	reviewMarkdownPath: string;
 }): string {
 	return render(REVIEW_SYSTEM_TEMPLATE, stringifyUndefined(values));
+}
+
+export function revisionSystemPrompt(values: {
+	identifier: string | undefined;
+	reviewRound: number | undefined;
+	metadataPath: string;
+	planPath: string;
+	clarificationsPath: string;
+	reviewPath: string;
+	questionTool: string;
+	worktreePath: string;
+	workflowBranch: string;
+	baseBranch: string;
+}): string {
+	return render(REVISION_SYSTEM_TEMPLATE, stringifyUndefined(values));
+}
+
+export function revisionUserMessage(values: { request: string; reviewPath: string }): string {
+	return render(REVISION_USER_TEMPLATE, values);
 }
 
 export function reviewAgentSystemPrompt(outputTool: string): string {

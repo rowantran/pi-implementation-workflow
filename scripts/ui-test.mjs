@@ -8,6 +8,7 @@ const { workflowPhaseStatusText } = await jiti.import(
 
 assert.equal(workflowPhaseStatusText("planning"), "/workflow-next when ready");
 assert.equal(workflowPhaseStatusText("implementation"), "/workflow-next when ready");
+assert.equal(workflowPhaseStatusText("revision"), "/workflow-next when ready");
 assert.equal(workflowPhaseStatusText("review"), "/workflow-next when ready");
 assert.equal(workflowPhaseStatusText("cleanup"), undefined);
 assert.equal(workflowPhaseStatusText("complete"), undefined);

@@ -6,13 +6,14 @@ import {
 	renderWorkflowReviewMarkdown,
 	type WorkflowReviewReport,
 } from "./review-report.ts";
+import { assertWorkflowState, type WorkflowState } from "./workflow-state.ts";
 
-export const WORKFLOW_STATE_VERSION = 2;
-const LEGACY_WORKFLOW_STATE_VERSION = 1;
+export const WORKFLOW_STATE_VERSION = 3;
+const LEGACY_WORKFLOW_STATE_VERSIONS = [1, 2] as const;
 export const CLARIFICATIONS_STATE_VERSION = 1;
 export const IDENTIFIER_PATTERN = /^[a-z0-9][a-z0-9-]{0,79}$/;
 
-export type CompletedWorkflowStatus =
+type LegacyCompletedWorkflowStatus =
 	| "ready_for_implementation"
 	| "implementing"
 	| "implementation_complete"
@@ -22,7 +23,7 @@ export type CompletedWorkflowStatus =
 
 export interface DraftWorkflowMetadata {
 	version: number;
-	status: "planning";
+	state: WorkflowState & { phase: "planning"; step: "draft" };
 	draftId: string;
 	description: string;
 	/** Verbatim original ask. Null only for workflows created before state version 2. */
@@ -36,7 +37,7 @@ export interface CompletedWorkflowMetadata {
 	description: string;
 	/** Verbatim original ask. Null only for workflows created before state version 2. */
 	ask: string | null;
-	status: CompletedWorkflowStatus;
+	state: WorkflowState;
 	repositoryRoot: string;
 	gitCommonDir: string;
 	baseBranch: string;
@@ -48,6 +49,8 @@ export interface CompletedWorkflowMetadata {
 	implementationCompletedAt?: string;
 	reviewStartedAt?: string;
 	reviewCompletedAt?: string;
+	revisionStartedAt?: string;
+	revisionCompletedAt?: string;
 	pullRequestUrl?: string;
 	pullRequestNumber?: number;
 }
@@ -86,6 +89,7 @@ export interface WorkflowFiles {
 	metadata: string;
 	review: string;
 	reviewMarkdown: string;
+	reviews: string;
 	/** Legacy standalone description storage. Read only during migration. */
 	legacyDescription: string;
 	/** Legacy two-version storage. Read only during migration. */
@@ -117,6 +121,7 @@ function filesAt(root: string): WorkflowFiles {
 		metadata: join(root, "metadata.json"),
 		review: join(root, "review.json"),
 		reviewMarkdown: join(root, "review.md"),
+		reviews: join(root, "reviews"),
 		legacyDescription: join(root, "description.txt"),
 		previousPlan: join(root, "plan.previous.md"),
 	};
@@ -153,7 +158,7 @@ export async function ensureWorkflowFiles(files: WorkflowFiles): Promise<Workflo
 	await migratePlanVersions(files);
 	await readClarifications(files);
 	const metadata = await readWorkflowMetadata(files);
-	if (metadata.status === "planning") await ensureFile(files.workingPlan, await readText(files.plan));
+	if (isDraftState(metadata.state)) await ensureFile(files.workingPlan, await readText(files.plan));
 	return metadata;
 }
 
@@ -240,12 +245,26 @@ export async function readWorkflowReview(files: WorkflowFiles): Promise<Workflow
 	return value;
 }
 
-export async function writeWorkflowReview(files: WorkflowFiles, report: WorkflowReviewReport): Promise<void> {
+export async function writeWorkflowReview(
+	files: WorkflowFiles,
+	report: WorkflowReviewReport,
+	reviewRound?: number,
+): Promise<void> {
 	if (!isWorkflowReviewReport(report)) throw new Error("Cannot save an invalid workflow review report.");
-	await Promise.all([
-		atomicWrite(files.review, `${JSON.stringify(report, null, 2)}\n`),
-		atomicWrite(files.reviewMarkdown, renderWorkflowReviewMarkdown(report)),
-	]);
+	if (reviewRound !== undefined && (!Number.isSafeInteger(reviewRound) || reviewRound < 1)) {
+		throw new Error("Review rounds must be positive integers.");
+	}
+	const json = `${JSON.stringify(report, null, 2)}\n`;
+	const markdown = renderWorkflowReviewMarkdown(report);
+	const writes = [atomicWrite(files.review, json), atomicWrite(files.reviewMarkdown, markdown)];
+	if (reviewRound !== undefined) {
+		const basename = String(reviewRound).padStart(4, "0");
+		writes.push(
+			atomicWrite(join(files.reviews, `${basename}.json`), json),
+			atomicWrite(join(files.reviews, `${basename}.md`), markdown),
+		);
+	}
+	await Promise.all(writes);
 }
 
 export async function promoteDraft(draft: WorkflowFiles, destination: WorkflowFiles): Promise<void> {
@@ -286,11 +305,11 @@ export async function atomicWrite(path: string, content: string): Promise<void> 
 
 export async function readDraftWorkflowMetadata(files: WorkflowFiles): Promise<DraftWorkflowMetadata> {
 	const metadata = await readWorkflowMetadata(files);
-	if (metadata.status !== "planning") {
+	if (!isDraftState(metadata.state)) {
 		throw new Error(`Workflow draft ${basename(files.root)} has completed metadata.`);
 	}
-	assertDraftMetadataForFiles(files, metadata);
-	return metadata;
+	assertDraftMetadataForFiles(files, metadata as DraftWorkflowMetadata);
+	return metadata as DraftWorkflowMetadata;
 }
 
 export async function writeDraftWorkflowMetadata(
@@ -306,9 +325,10 @@ export async function writeWorkflowMetadata(
 	metadata: WorkflowMetadata,
 ): Promise<void> {
 	assertSupportedMetadataVersion(metadata.version);
-	if (metadata.version === WORKFLOW_STATE_VERSION) assertCurrentMetadataHasAsk(metadata);
-	if (metadata.status === "planning") assertDraftMetadataForFiles(files, metadata);
-	else assertIdentifier(metadata.identifier);
+	if (metadata.version >= 2) assertCurrentMetadataHasAsk(metadata);
+	assertWorkflowState(metadata.state);
+	if (isDraftState(metadata.state)) assertDraftMetadataForFiles(files, metadata as DraftWorkflowMetadata);
+	else assertIdentifier((metadata as CompletedWorkflowMetadata).identifier);
 	await assertAskIsUnchanged(files, metadata.ask);
 	await atomicWrite(files.metadata, `${JSON.stringify(metadata, null, 2)}\n`);
 }
@@ -318,10 +338,10 @@ export async function readCompletedWorkflowMetadata(
 ): Promise<CompletedWorkflowMetadata> {
 	const files = workflowFiles(identifier);
 	const metadata = await readWorkflowMetadata(files);
-	if (metadata.status === "planning" || metadata.identifier !== identifier) {
+	if (isDraftState(metadata.state) || (metadata as CompletedWorkflowMetadata).identifier !== identifier) {
 		throw new Error(`Workflow ${identifier} has invalid completed metadata.`);
 	}
-	return metadata;
+	return metadata as CompletedWorkflowMetadata;
 }
 
 export async function writeCompletedWorkflowMetadata(
@@ -342,8 +362,8 @@ export async function readWorkflowMetadata(files: WorkflowFiles): Promise<Workfl
 			throw new Error(`Workflow ${basename(files.root)} has no metadata.`);
 		}
 		const metadata: DraftWorkflowMetadata = {
-			version: LEGACY_WORKFLOW_STATE_VERSION,
-			status: "planning",
+			version: 1,
+			state: { phase: "planning", step: "draft" },
 			draftId: basename(files.root),
 			description: legacyDescription,
 			ask: null,
@@ -363,15 +383,26 @@ export async function readWorkflowMetadata(files: WorkflowFiles): Promise<Workfl
 	let metadata: WorkflowMetadata;
 	let migrated = false;
 	if (isStoredDraftWorkflowMetadata(value)) {
-		metadata = { ...value, ask: value.ask ?? null };
-		migrated = value.ask === undefined;
-	} else if (isStoredCompletedWorkflowMetadata(value)) {
+		const { status: _legacyStatus, ...stored } = value;
 		metadata = {
-			...value,
+			...stored,
+			state: value.state ?? { phase: "planning", step: "draft" },
+			ask: value.ask ?? null,
+		};
+		migrated = value.ask === undefined || value.state === undefined || value.status !== undefined;
+	} else if (isStoredCompletedWorkflowMetadata(value)) {
+		const { status: _legacyStatus, ...stored } = value;
+		metadata = {
+			...stored,
+			state: value.state ?? stateFromLegacyStatus(value.status!),
 			description: value.description ?? legacyDescription,
 			ask: value.ask ?? null,
 		};
-		migrated = value.description === undefined || value.ask === undefined;
+		migrated =
+			value.description === undefined ||
+			value.ask === undefined ||
+			value.state === undefined ||
+			value.status !== undefined;
 	} else {
 		throw new Error(`Workflow ${basename(files.root)} has invalid metadata.`);
 	}
@@ -388,31 +419,37 @@ export async function readWorkflowMetadata(files: WorkflowFiles): Promise<Workfl
 
 function assertWorkflowMetadataForFiles(files: WorkflowFiles, metadata: WorkflowMetadata): void {
 	assertSupportedMetadataVersion(metadata.version);
-	if (metadata.version === WORKFLOW_STATE_VERSION) assertCurrentMetadataHasAsk(metadata);
+	if (metadata.version >= 2) assertCurrentMetadataHasAsk(metadata);
+	assertWorkflowState(metadata.state);
 	if (basename(dirname(files.root)) === ".drafts") {
-		if (metadata.status !== "planning") {
+		if (!isDraftState(metadata.state)) {
 			throw new Error(`Workflow draft ${basename(files.root)} has completed metadata.`);
 		}
-		assertDraftMetadataForFiles(files, metadata);
+		assertDraftMetadataForFiles(files, metadata as DraftWorkflowMetadata);
 		return;
 	}
-	if (metadata.status === "planning" || metadata.identifier !== basename(files.root)) {
+	if (isDraftState(metadata.state) || (metadata as CompletedWorkflowMetadata).identifier !== basename(files.root)) {
 		throw new Error(`Workflow ${basename(files.root)} has invalid completed metadata.`);
 	}
 }
 
 function assertDraftMetadataForFiles(files: WorkflowFiles, metadata: DraftWorkflowMetadata): void {
 	assertSupportedMetadataVersion(metadata.version);
-	if (metadata.version === WORKFLOW_STATE_VERSION) assertCurrentMetadataHasAsk(metadata);
+	if (metadata.version >= 2) assertCurrentMetadataHasAsk(metadata);
+	if (!isDraftState(metadata.state)) throw new Error(`Workflow draft ${metadata.draftId} has invalid state.`);
 	if (basename(dirname(files.root)) !== ".drafts" || metadata.draftId !== basename(files.root)) {
 		throw new Error(`Workflow draft ${metadata.draftId} does not match ${files.root}.`);
 	}
 }
 
 function assertSupportedMetadataVersion(version: number): void {
-	if (version !== LEGACY_WORKFLOW_STATE_VERSION && version !== WORKFLOW_STATE_VERSION) {
+	if (![...LEGACY_WORKFLOW_STATE_VERSIONS, WORKFLOW_STATE_VERSION].includes(version as 1 | 2 | 3)) {
 		throw new Error(`Unsupported workflow metadata version: ${version}.`);
 	}
+}
+
+function isDraftState(state: WorkflowState): state is WorkflowState & { phase: "planning"; step: "draft" } {
+	return state.phase === "planning" && state.step === "draft";
 }
 
 function assertCurrentMetadataHasAsk(metadata: WorkflowMetadata): void {
@@ -490,7 +527,9 @@ function isWorkflowClarifications(value: unknown): value is WorkflowClarificatio
 	});
 }
 
-type StoredDraftWorkflowMetadata = Omit<DraftWorkflowMetadata, "ask"> & {
+type StoredDraftWorkflowMetadata = Omit<DraftWorkflowMetadata, "state" | "ask"> & {
+	state?: DraftWorkflowMetadata["state"];
+	status?: "planning";
 	ask?: string | null;
 };
 
@@ -499,7 +538,8 @@ function isStoredDraftWorkflowMetadata(value: unknown): value is StoredDraftWork
 	const item = value as Partial<StoredDraftWorkflowMetadata>;
 	return (
 		isSupportedStoredVersion(item.version) &&
-		item.status === "planning" &&
+		((item.state !== undefined && isValidWorkflowState(item.state) && isDraftState(item.state)) ||
+			(item.state === undefined && item.status === "planning")) &&
 		typeof item.draftId === "string" &&
 		/^[a-zA-Z0-9-]+$/.test(item.draftId) &&
 		typeof item.description === "string" &&
@@ -508,30 +548,37 @@ function isStoredDraftWorkflowMetadata(value: unknown): value is StoredDraftWork
 	);
 }
 
-type StoredCompletedWorkflowMetadata = Omit<CompletedWorkflowMetadata, "description" | "ask"> & {
+type StoredCompletedWorkflowMetadata = Omit<CompletedWorkflowMetadata, "state" | "description" | "ask"> & {
+	state?: WorkflowState;
+	status?: LegacyCompletedWorkflowStatus;
 	description?: string;
 	ask?: string | null;
 };
 
+const LEGACY_COMPLETED_STATUSES: LegacyCompletedWorkflowStatus[] = [
+	"ready_for_implementation",
+	"implementing",
+	"implementation_complete",
+	"reviewing",
+	"cleanup_pending",
+	"review_complete",
+];
+
 function isStoredCompletedWorkflowMetadata(value: unknown): value is StoredCompletedWorkflowMetadata {
 	if (!value || typeof value !== "object") return false;
 	const item = value as Partial<StoredCompletedWorkflowMetadata>;
-	const statuses: CompletedWorkflowStatus[] = [
-		"ready_for_implementation",
-		"implementing",
-		"implementation_complete",
-		"reviewing",
-		"cleanup_pending",
-		"review_complete",
-	];
+	const hasValidState = item.state !== undefined && isValidWorkflowState(item.state) && !isDraftState(item.state);
+	const hasValidLegacyStatus =
+		item.state === undefined &&
+		typeof item.status === "string" &&
+		LEGACY_COMPLETED_STATUSES.includes(item.status as LegacyCompletedWorkflowStatus);
 	return (
 		isSupportedStoredVersion(item.version) &&
 		typeof item.identifier === "string" &&
 		IDENTIFIER_PATTERN.test(item.identifier) &&
 		(item.description === undefined || typeof item.description === "string") &&
 		isStoredAskValid(item.version, item.ask) &&
-		typeof item.status === "string" &&
-		statuses.includes(item.status as CompletedWorkflowStatus) &&
+		(hasValidState || hasValidLegacyStatus) &&
 		typeof item.repositoryRoot === "string" &&
 		typeof item.gitCommonDir === "string" &&
 		typeof item.baseBranch === "string" &&
@@ -542,11 +589,37 @@ function isStoredCompletedWorkflowMetadata(value: unknown): value is StoredCompl
 	);
 }
 
+function stateFromLegacyStatus(status: LegacyCompletedWorkflowStatus): WorkflowState {
+	switch (status) {
+		case "ready_for_implementation":
+			return { phase: "planning", step: "ready" };
+		case "implementing":
+			return { phase: "implementing", step: "active" };
+		case "implementation_complete":
+			return { phase: "implementing", step: "complete" };
+		case "reviewing":
+			return { phase: "reviewing", step: "active", round: 1 };
+		case "cleanup_pending":
+			return { phase: "complete", step: "cleanup_pending" };
+		case "review_complete":
+			return { phase: "complete", step: "complete" };
+	}
+}
+
+function isValidWorkflowState(value: unknown): value is WorkflowState {
+	try {
+		assertWorkflowState(value);
+		return true;
+	} catch {
+		return false;
+	}
+}
+
 function isSupportedStoredVersion(version: unknown): version is number {
-	return version === LEGACY_WORKFLOW_STATE_VERSION || version === WORKFLOW_STATE_VERSION;
+	return version === 1 || version === 2 || version === WORKFLOW_STATE_VERSION;
 }
 
 function isStoredAskValid(version: number | undefined, ask: unknown): boolean {
-	if (version === WORKFLOW_STATE_VERSION) return typeof ask === "string" && Boolean(ask.trim());
+	if (version !== undefined && version >= 2) return typeof ask === "string" && Boolean(ask.trim());
 	return ask === undefined || ask === null || typeof ask === "string";
 }

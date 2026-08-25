@@ -50,7 +50,7 @@ try {
 	const draftFiles = filesAt(join(temporaryRoot, ".drafts", draftId));
 	const draftMetadata = {
 		version: WORKFLOW_STATE_VERSION,
-		status: "planning",
+		state: { phase: "planning", step: "draft" },
 		draftId,
 		description: "",
 		ask,
@@ -95,7 +95,7 @@ try {
 		identifier,
 		description: describedDraft.description,
 		ask,
-		status: "ready_for_implementation",
+		state: { phase: "planning", step: "ready" },
 		repositoryRoot: "/repository",
 		gitCommonDir: "/repository/.git",
 		baseBranch: "main",
@@ -111,20 +111,24 @@ try {
 
 	const implementing = {
 		...completedMetadata,
-		status: "implementing",
+		state: { phase: "implementing", step: "active" },
 		implementationStartedAt: "2026-01-02T00:00:00.000Z",
 	};
 	await writeWorkflowMetadata(completedFiles, implementing);
 	const implementationComplete = {
 		...implementing,
-		status: "implementation_complete",
+		state: { phase: "implementing", step: "complete" },
 		pullRequestUrl: "https://example.test/pull/1",
 		pullRequestNumber: 1,
 	};
 	await writeWorkflowMetadata(completedFiles, implementationComplete);
 	let lifecycleMetadata = implementationComplete;
-	for (const status of ["reviewing", "cleanup_pending", "review_complete"]) {
-		lifecycleMetadata = { ...lifecycleMetadata, status };
+	for (const state of [
+		{ phase: "reviewing", step: "active", round: 1 },
+		{ phase: "complete", step: "cleanup_pending" },
+		{ phase: "complete", step: "complete" },
+	]) {
+		lifecycleMetadata = { ...lifecycleMetadata, state };
 		await writeWorkflowMetadata(completedFiles, lifecycleMetadata);
 		assert.equal((await readWorkflowMetadata(completedFiles)).ask, ask);
 	}
@@ -199,11 +203,14 @@ try {
 	await writeFile(legacyDraftFiles.plan, "# Legacy draft\n", "utf8");
 	await writeFile(legacyDraftFiles.legacyDescription, "Migrated draft description\n", "utf8");
 	const migratedDraft = await ensureWorkflowFiles(legacyDraftFiles);
-	assert.equal(migratedDraft.status, "planning");
+	assert.deepEqual(migratedDraft.state, { phase: "planning", step: "draft" });
 	assert.equal(await readFile(legacyDraftFiles.workingPlan, "utf8"), "# Legacy draft\n");
 	assert.equal(migratedDraft.description, "Migrated draft description");
 	assert.equal(migratedDraft.ask, null);
-	assert.equal(JSON.parse(await readFile(legacyDraftFiles.metadata, "utf8")).ask, null);
+	const migratedDraftJson = JSON.parse(await readFile(legacyDraftFiles.metadata, "utf8"));
+	assert.equal(migratedDraftJson.ask, null);
+	assert.deepEqual(migratedDraftJson.state, { phase: "planning", step: "draft" });
+	assert.equal("status" in migratedDraftJson, false);
 	assert.equal(await exists(legacyDraftFiles.legacyDescription), false);
 
 	const legacyIdentifier = "legacy-completed-workflow";
@@ -232,13 +239,15 @@ try {
 		"utf8",
 	);
 	const migratedCompleted = await ensureWorkflowFiles(legacyCompletedFiles);
-	assert.equal(migratedCompleted.status, "ready_for_implementation");
+	assert.deepEqual(migratedCompleted.state, { phase: "planning", step: "ready" });
 	assert.equal(migratedCompleted.description, "Migrated completed description");
 	assert.equal(migratedCompleted.ask, null);
 	assert.equal(await exists(legacyCompletedFiles.legacyDescription), false);
 	const migratedCompletedJson = JSON.parse(await readFile(legacyCompletedFiles.metadata, "utf8"));
 	assert.equal(migratedCompletedJson.description, "Migrated completed description");
 	assert.equal(migratedCompletedJson.ask, null);
+	assert.deepEqual(migratedCompletedJson.state, { phase: "planning", step: "ready" });
+	assert.equal("status" in migratedCompletedJson, false);
 
 	const descriptionlessIdentifier = "descriptionless-legacy-workflow";
 	const descriptionlessFiles = filesAt(join(temporaryRoot, descriptionlessIdentifier));
@@ -267,6 +276,7 @@ try {
 	const descriptionless = await ensureWorkflowFiles(descriptionlessFiles);
 	assert.equal(descriptionless.description, "");
 	assert.equal(descriptionless.ask, null);
+	assert.deepEqual(descriptionless.state, { phase: "complete", step: "complete" });
 	assert.equal((await readWorkflowMetadata(descriptionlessFiles)).description, "");
 } finally {
 	await rm(temporaryRoot, { recursive: true, force: true });

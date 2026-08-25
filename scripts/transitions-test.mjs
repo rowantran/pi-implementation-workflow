@@ -82,6 +82,34 @@ async function reviewAgentRunner(request) {
 	};
 }
 
+async function sampleReview(headCommit, pullRequestUrl = "https://example.test/pull/21") {
+	return {
+		version: 1,
+		pullRequestUrl,
+		baseCommit: "abc123",
+		headCommit,
+		generatedAt: "2026-01-02T00:00:00.000Z",
+		overallResult: {
+			summary: "Review result.",
+			necessary: { status: "yes", explanation: "Within scope." },
+			sufficient: { status: "yes", explanation: "Complete." },
+		},
+		overallConcerns: [],
+		plannedChanges: [{
+			id: "PC-01",
+			title: "Complete the transition",
+			what: "Advance the workflow to its next phase.",
+			why: "The workflow must progress deterministically.",
+			pseudocode: "procedure AdvanceWorkflow()",
+			review: await reviewAgentRunner({ role: "planned-change" }),
+		}],
+		testingCriteria: {
+			originalCriteria: "Verify each transition.",
+			review: await reviewAgentRunner({ role: "testing-criteria" }),
+		},
+	};
+}
+
 function phaseEntry(phase, values = {}) {
 	return {
 		type: "custom",
@@ -101,6 +129,7 @@ function createHarness(repositoryRoot, worktreePath, workflowBranch) {
 	let switchCancelled = false;
 	let pullRequest;
 	let headCommit = "abc123";
+	let worktreeStatus = "";
 
 	const pi = {
 		appendEntry(customType, data) {
@@ -129,7 +158,7 @@ function createHarness(repositoryRoot, worktreePath, workflowBranch) {
 			if (gitArgs[0] === "branch" && gitArgs[1] === "--show-current") {
 				return { code: 0, stdout: `${cwd === worktreePath ? workflowBranch : "main"}\n`, stderr: "" };
 			}
-			if (gitArgs[0] === "status") return { code: 0, stdout: "", stderr: "" };
+			if (gitArgs[0] === "status") return { code: 0, stdout: worktreeStatus, stderr: "" };
 			if (gitArgs[0] === "worktree" && gitArgs[1] === "add") {
 				await mkdir(gitArgs[4], { recursive: true });
 				return { code: 0, stdout: "", stderr: "" };
@@ -196,6 +225,7 @@ function createHarness(repositoryRoot, worktreePath, workflowBranch) {
 			},
 			ui: {
 				confirm: async () => true,
+				editor: async (_title, prefill) => prefill || "Address the review findings.",
 				notify: (message, level) => notifications.push({ message, level }),
 				setStatus() {},
 				theme: { fg: (_color, text) => text },
@@ -219,15 +249,30 @@ function createHarness(repositoryRoot, worktreePath, workflowBranch) {
 		getActiveTools: () => [...activeTools],
 		getEventHandlers: (name) => [...(events.get(name) ?? [])],
 		setPullRequest(value) {
-			pullRequest = value;
+			pullRequest = { headRefOid: headCommit, ...value };
 		},
 		setHeadCommit(value) {
 			headCommit = value;
+		},
+		setWorktreeStatus(value) {
+			worktreeStatus = value;
 		},
 		setSwitchCancelled(value) {
 			switchCancelled = value;
 		},
 	};
+}
+
+function stateForLegacyStatus(status) {
+	switch (status) {
+		case "ready_for_implementation": return { phase: "planning", step: "ready" };
+		case "implementing": return { phase: "implementing", step: "active" };
+		case "implementation_complete": return { phase: "implementing", step: "complete" };
+		case "reviewing": return { phase: "reviewing", step: "active", round: 1 };
+		case "cleanup_pending": return { phase: "complete", step: "cleanup_pending" };
+		case "review_complete": return { phase: "complete", step: "complete" };
+		default: throw new Error(`Unknown test state: ${status}`);
+	}
 }
 
 async function writeCompletedWorkflow(identifier, status, options = {}) {
@@ -246,7 +291,7 @@ async function writeCompletedWorkflow(identifier, status, options = {}) {
 		identifier,
 		description: "Unify phase transitions",
 		ask: "Unify all workflow phase transitions under /workflow-next.",
-		status,
+		state: stateForLegacyStatus(status),
 		repositoryRoot,
 		gitCommonDir: join(repositoryRoot, ".git"),
 		baseBranch: "main",
@@ -274,20 +319,20 @@ try {
 		const draftId = "planning-draft";
 		await storage.createDraft(storage.draftFiles(draftId), validPlan, {
 			version: storage.WORKFLOW_STATE_VERSION,
-			status: "planning",
+			state: { phase: "planning", step: "draft" },
 			draftId,
 			description: "Unify phase transitions",
 			ask: "Unify all workflow phase transitions under /workflow-next.",
 			createdAt: "2026-01-01T00:00:00.000Z",
 		});
 		const harness = createHarness(repositoryRoot, worktreePath, workflowBranch);
-		assert.deepEqual([...harness.commands.keys()], ["workflow-plan", "workflow-next", "workflow-dashboard"]);
+		assert.deepEqual([...harness.commands.keys()], ["workflow-plan", "workflow-revise", "workflow-next", "workflow-dashboard"]);
 		const ctx = harness.context(repositoryRoot, [phaseEntry("planning", { draftId })]);
 		await harness.emit("session_start", ctx);
 		harness.setSwitchCancelled(true);
 		await harness.commands.get("workflow-next")("", ctx);
 		assert.equal(harness.switches.length, 1);
-		assert.equal((await readMetadata(identifier)).status, "implementing");
+		assert.deepEqual((await readMetadata(identifier)).state, { phase: "implementing", step: "active" });
 		harness.setSwitchCancelled(false);
 		await harness.commands.get("workflow-next")("", ctx);
 		assert.equal(harness.switches.length, 2, "a cancelled implementation switch can be retried");
@@ -319,7 +364,7 @@ try {
 		assert.match(implementationPrompt.systemPrompt, new RegExp(workflow.workflowBranch));
 		await harness.emit("agent_settled", ctx);
 		const completed = await readMetadata(workflow.metadata.identifier);
-		assert.equal(completed.status, "implementation_complete");
+		assert.deepEqual(completed.state, { phase: "implementing", step: "complete" });
 		assert.equal(completed.pullRequestUrl, "https://example.test/pull/17");
 		const completion = harness.entries.find(
 			(entry) => entry.customType === "implementation-workflow-completion",
@@ -327,7 +372,7 @@ try {
 		assert.equal(completion.data.command, "/workflow-next");
 		assert.deepEqual(completion.data.details, ["Pull request: https://example.test/pull/17"]);
 		await harness.commands.get("workflow-next")("", ctx);
-		assert.equal((await readMetadata(workflow.metadata.identifier)).status, "reviewing");
+		assert.deepEqual((await readMetadata(workflow.metadata.identifier)).state, { phase: "reviewing", step: "active", round: 1 });
 		assert.equal(harness.userMessages.length, 0, "review generation does not start another conversational agent");
 		assert.match(harness.notifications.at(-1).message, /review is ready/i);
 		assert.ok(await storage.pathExists(workflow.files.review));
@@ -342,7 +387,7 @@ try {
 		]);
 		await harness.emit("session_start", ctx);
 		await harness.emit("agent_settled", ctx);
-		assert.equal((await readMetadata(workflow.metadata.identifier)).status, "implementing");
+		assert.deepEqual((await readMetadata(workflow.metadata.identifier)).state, { phase: "implementing", step: "active" });
 		harness.setPullRequest({
 			number: 18,
 			url: "https://example.test/pull/18",
@@ -350,7 +395,7 @@ try {
 			headRefName: workflow.workflowBranch,
 		});
 		await harness.commands.get("workflow-next")("", ctx);
-		assert.equal((await readMetadata(workflow.metadata.identifier)).status, "reviewing");
+		assert.deepEqual((await readMetadata(workflow.metadata.identifier)).state, { phase: "reviewing", step: "active", round: 1 });
 		assert.equal(
 			harness.entries.filter((entry) => entry.customType === "implementation-workflow-completion").length,
 			0,
@@ -372,7 +417,7 @@ try {
 		await harness.emit("session_start", ctx);
 		harness.setSwitchCancelled(true);
 		await harness.commands.get("workflow-next")("", ctx);
-		assert.equal((await readMetadata(workflow.metadata.identifier)).status, "reviewing");
+		assert.deepEqual((await readMetadata(workflow.metadata.identifier)).state, { phase: "reviewing", step: "active", round: 1 });
 
 		const resumedHarness = createHarness(workflow.repositoryRoot, workflow.worktreePath, workflow.workflowBranch);
 		const resumedCtx = resumedHarness.context(workflow.worktreePath, [
@@ -390,6 +435,116 @@ try {
 		assert.equal(resumedHarness.switches.length, 1, "a cancelled review switch can be retried after resume");
 		assert.equal(resumedHarness.userMessages.length, 0);
 		assert.match(resumedHarness.notifications.at(-1).message, /review is ready/i);
+	}
+
+	{
+		const workflow = await writeCompletedWorkflow("review-revision-loop", "reviewing", {
+			metadata: {
+				pullRequestUrl: "https://example.test/pull/22",
+				pullRequestNumber: 22,
+			},
+		});
+		await storage.writeWorkflowReview(workflow.files, await sampleReview("abc123", "https://example.test/pull/22"), 1);
+		const reviewHarness = createHarness(workflow.repositoryRoot, workflow.worktreePath, workflow.workflowBranch);
+		const reviewCtx = reviewHarness.context(workflow.worktreePath, [
+			phaseEntry("review", { identifier: workflow.metadata.identifier, reviewRound: 1 }),
+		]);
+		await reviewHarness.emit("session_start", reviewCtx);
+		assert.equal(reviewHarness.getActiveTools().includes("edit"), false, "review remains read-only");
+		reviewHarness.setWorktreeStatus(" M src/index.ts\n");
+		await reviewHarness.commands.get("workflow-revise")("Finish and review my worktree changes.", reviewCtx);
+		assert.deepEqual((await readMetadata(workflow.metadata.identifier)).state, {
+			phase: "revising",
+			step: "active",
+			round: 1,
+			reviewedHeadCommit: "abc123",
+		});
+		assert.equal(reviewHarness.switches.length, 1);
+		assert.match(reviewHarness.userMessages.at(-1), /Finish and review my worktree changes/);
+		const revisionSession = (await readFile(reviewHarness.switches[0], "utf8"))
+			.trim()
+			.split("\n")
+			.map((line) => JSON.parse(line));
+		const revisionPhase = revisionSession.find(
+			(entry) => entry.type === "custom" && entry.customType === "implementation-workflow-phase",
+		);
+		assert.deepEqual(revisionPhase.data, {
+			phase: "revision",
+			identifier: workflow.metadata.identifier,
+			reviewRound: 1,
+		});
+		await reviewHarness.commands.get("workflow-next")("", reviewCtx);
+		assert.match(reviewHarness.notifications.at(-1).message, /cannot advance/i, "the prior review cannot clean up");
+
+		const revisionHarness = createHarness(workflow.repositoryRoot, workflow.worktreePath, workflow.workflowBranch);
+		revisionHarness.setHeadCommit("new123");
+		revisionHarness.setPullRequest({
+			number: 22,
+			url: "https://example.test/pull/22",
+			baseRefName: "main",
+			headRefName: workflow.workflowBranch,
+		});
+		const revisionCtx = revisionHarness.context(workflow.worktreePath, [
+			phaseEntry("revision", { identifier: workflow.metadata.identifier, reviewRound: 1 }),
+		]);
+		await revisionHarness.emit("session_start", revisionCtx);
+		assert.equal(revisionHarness.getActiveTools().includes("edit"), true);
+		assert.equal(revisionHarness.getActiveTools().includes("workflow_questions"), true);
+		await revisionHarness.emit("agent_settled", revisionCtx);
+		assert.deepEqual((await readMetadata(workflow.metadata.identifier)).state, {
+			phase: "revising",
+			step: "complete",
+			round: 1,
+			reviewedHeadCommit: "abc123",
+		});
+		await revisionHarness.commands.get("workflow-next")("", revisionCtx);
+		assert.deepEqual((await readMetadata(workflow.metadata.identifier)).state, {
+			phase: "reviewing",
+			step: "active",
+			round: 2,
+		});
+		assert.equal((await storage.readWorkflowReview(workflow.files)).headCommit, "new123");
+		assert.equal(await storage.pathExists(join(workflow.files.reviews, "0001.json")), true);
+		assert.equal(await storage.pathExists(join(workflow.files.reviews, "0002.json")), true);
+		const secondReviewSession = (await readFile(revisionHarness.switches.at(-1), "utf8"))
+			.trim()
+			.split("\n")
+			.map((line) => JSON.parse(line));
+		const secondReviewPhase = secondReviewSession.find(
+			(entry) => entry.type === "custom" && entry.customType === "implementation-workflow-phase",
+		);
+		assert.equal(secondReviewPhase.data.reviewRound, 2);
+	}
+
+	{
+		const workflow = await writeCompletedWorkflow("unpushed-revision", "reviewing", {
+			metadata: {
+				state: {
+					phase: "revising",
+					step: "active",
+					round: 1,
+					reviewedHeadCommit: "abc123",
+				},
+				pullRequestUrl: "https://example.test/pull/23",
+				pullRequestNumber: 23,
+			},
+		});
+		const harness = createHarness(workflow.repositoryRoot, workflow.worktreePath, workflow.workflowBranch);
+		harness.setHeadCommit("new123");
+		harness.setPullRequest({
+			number: 23,
+			url: "https://example.test/pull/23",
+			baseRefName: "main",
+			headRefName: workflow.workflowBranch,
+			headRefOid: "abc123",
+		});
+		const ctx = harness.context(workflow.worktreePath, [
+			phaseEntry("revision", { identifier: workflow.metadata.identifier, reviewRound: 1 }),
+		]);
+		await harness.emit("session_start", ctx);
+		await harness.emit("agent_settled", ctx);
+		assert.equal((await readMetadata(workflow.metadata.identifier)).state.step, "active");
+		assert.match(harness.notifications.at(-1).message, /has not been pushed/i);
 	}
 
 	{
@@ -431,10 +586,10 @@ try {
 		]);
 		await harness.emit("session_start", ctx);
 		await harness.commands.get("workflow-next")("", ctx);
-		assert.equal((await readMetadata(workflow.metadata.identifier)).status, "reviewing");
-		assert.equal(harness.switches.length, 0, "stale review regeneration must postpone cleanup");
-		assert.equal((await storage.readWorkflowReview(workflow.files)).headCommit, "new123");
-		assert.match(harness.notifications.at(-1).message, /review was regenerated/i);
+		assert.deepEqual((await readMetadata(workflow.metadata.identifier)).state, { phase: "reviewing", step: "active", round: 1 });
+		assert.equal(harness.switches.length, 0, "a stale review must not clean up the worktree");
+		assert.equal((await storage.readWorkflowReview(workflow.files)).headCommit, "old123");
+		assert.match(harness.notifications.at(-1).message, /workflow-revise/i);
 	}
 
 	{
@@ -450,7 +605,7 @@ try {
 		]);
 		await reviewHarness.emit("session_start", reviewCtx);
 		await reviewHarness.commands.get("workflow-next")("", reviewCtx);
-		assert.equal((await readMetadata(workflow.metadata.identifier)).status, "cleanup_pending");
+		assert.deepEqual((await readMetadata(workflow.metadata.identifier)).state, { phase: "complete", step: "cleanup_pending" });
 		assert.equal(reviewHarness.userMessages.length, 0, "cleanup session switching does not invoke the model");
 		const cleanupSession = (await readFile(reviewHarness.switches[0], "utf8"))
 			.trim()
@@ -468,7 +623,7 @@ try {
 		const cleanupHarness = createHarness(workflow.repositoryRoot, workflow.worktreePath, workflow.workflowBranch);
 		const cleanupCtx = cleanupHarness.context(workflow.repositoryRoot, [cleanupPhase]);
 		await cleanupHarness.emit("session_start", cleanupCtx);
-		assert.equal((await readMetadata(workflow.metadata.identifier)).status, "review_complete");
+		assert.deepEqual((await readMetadata(workflow.metadata.identifier)).state, { phase: "complete", step: "complete" });
 		assert.equal(cleanupHarness.userMessages.length, 0);
 		assert.ok(
 			cleanupHarness.entries.some(
