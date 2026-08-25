@@ -8,6 +8,12 @@ const PLAN_SLUG_USER_TEMPLATE = loadTemplate("injected-user-messages/plan-slug.m
 const PLANNING_SYSTEM_TEMPLATE = loadTemplate("system/planning.md");
 const START_PLANNING_USER_TEMPLATE = loadTemplate("injected-user-messages/start-planning.md");
 const REVIEW_SYSTEM_TEMPLATE = loadTemplate("system/review.md");
+const REVIEW_AGENT_SYSTEM_TEMPLATE = loadTemplate("system/review-agent.md");
+const REVIEW_PLANNED_CHANGE_TEMPLATE = loadTemplate("system/review-planned-change.md");
+const REVIEW_PLAN_AUDIT_TEMPLATE = loadTemplate("system/review-plan-audit.md");
+const REVIEW_TESTING_CRITERIA_TEMPLATE = loadTemplate("system/review-testing-criteria.md");
+const REVIEW_SYNTHESIS_TEMPLATE = loadTemplate("system/review-synthesis.md");
+const REVIEW_AGENT_USER_TEMPLATE = loadTemplate("injected-user-messages/review-agent.md");
 const UPDATE_PLAN_TOOL_GUIDELINE = loadTemplate("system/update-plan-tool-guideline.md");
 const UPDATE_PLAN_TOOL_SNIPPET = loadTemplate("system/update-plan-tool-snippet.md");
 
@@ -63,6 +69,64 @@ export function reviewSystemPrompt(values: {
 	reviewMarkdownPath: string;
 }): string {
 	return render(REVIEW_SYSTEM_TEMPLATE, stringifyUndefined(values));
+}
+
+export function reviewAgentSystemPrompt(outputTool: string): string {
+	return render(REVIEW_AGENT_SYSTEM_TEMPLATE, { outputTool });
+}
+
+export function plannedChangeReviewPrompt(values: {
+	id: string;
+	title: string;
+	content: string;
+	metadataPath: string;
+	clarificationsPath: string;
+	planPath: string;
+	baseCommit: string;
+	headCommit: string;
+	pullRequestUrl: string;
+}): string {
+	return render(REVIEW_PLANNED_CHANGE_TEMPLATE, values);
+}
+
+export function planAuditReviewPrompt(values: {
+	metadataPath: string;
+	clarificationsPath: string;
+	planPath: string;
+	baseCommit: string;
+	headCommit: string;
+	pullRequestUrl: string;
+	plannedChanges: string;
+}): string {
+	return render(REVIEW_PLAN_AUDIT_TEMPLATE, values);
+}
+
+export function testingCriteriaReviewPrompt(values: {
+	testingCriteria: string;
+	metadataPath: string;
+	clarificationsPath: string;
+	planPath: string;
+	baseCommit: string;
+	headCommit: string;
+	pullRequestUrl: string;
+}): string {
+	return render(REVIEW_TESTING_CRITERIA_TEMPLATE, values);
+}
+
+export function reviewSynthesisPrompt(values: {
+	pullRequestUrl: string;
+	baseCommit: string;
+	headCommit: string;
+	plannedChangeReviews: string;
+	planAudit: string;
+	testingCriteriaReview: string;
+	outputTool: string;
+}): string {
+	return render(REVIEW_SYNTHESIS_TEMPLATE, values);
+}
+
+export function reviewAgentUserMessage(values: { role: string; outputTool: string }): string {
+	return render(REVIEW_AGENT_USER_TEMPLATE, values);
 }
 
 export function updatePlanToolPromptGuidelines(): string[] {
