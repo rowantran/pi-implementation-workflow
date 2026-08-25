@@ -40,7 +40,7 @@ assert.ok(
     "First line\\n\\nSecond &lt;&#x2F;template&gt;&lt;script&gt;alert(\\&quot;ask\\&quot;)&lt;&#x2F;script&gt; line.",
   ),
 );
-assert.ok(html.includes('originalAskText.textContent = dashboard.ask'));
+assert.ok(html.includes("originalAskText.textContent=dashboard.ask"));
 assert.equal(data.versions[0].content.includes(data.ask), false);
 assert.ok(
   html.includes(
@@ -51,6 +51,19 @@ assert.ok(!html.includes("{{dashboard"));
 assert.ok(!html.includes("</title><script>"));
 assert.ok(!html.includes("</template><script>"));
 assert.ok(html.includes("function renderRichDiff(rows, before, after)"));
+assert.ok(html.includes("function parsePlanStructure(markdown)"));
+assert.ok(html.includes('id="guided-mode-button"'));
+assert.ok(html.includes('id="full-mode-button"'));
+assert.ok(html.includes('aria-label="Plan outline"'));
+assert.ok(!html.includes('data-plan-destination="overview"'));
+assert.ok(html.includes('class="plan-outline-button plan-outline-button--section"'));
+assert.ok(html.includes('aria-keyshortcuts="P"'));
+assert.ok(html.includes('aria-keyshortcuts="N"'));
+assert.ok(html.includes('key==="p"'));
+assert.ok(html.includes('key==="n"'));
+assert.ok(html.indexOf('id="guided-pagination"') < html.indexOf('id="plan-content"'));
+assert.ok(html.includes("heading.focus({preventScroll:true})"));
+assert.ok(html.includes('heading.scrollIntoView({block:"start"})'));
 assert.ok(html.includes('class="markdown diff-document"'));
 assert.ok(html.includes("renderRichDiff(rows,before.content,after.content)"));
 assert.ok(!html.includes('class="diff-table"'));
@@ -61,8 +74,8 @@ const helperSource = dashboardScript.slice(
   dashboardScript.indexOf("function escapeHtml"),
   dashboardScript.indexOf("function initialize"),
 );
-const { lineDiff, renderRichDiff } = new Function(
-  `${helperSource}; return { lineDiff, renderRichDiff };`,
+const { initialViewForHash, lineDiff, parsePlanStructure, renderRichDiff } = new Function(
+  `${helperSource}; return { initialViewForHash, lineDiff, parsePlanStructure, renderRichDiff };`,
 )();
 const before = `# Delivery plan
 
@@ -92,4 +105,43 @@ assert.ok(richDiff.includes('<li class="diff-line add" value="2">Show a rich dif
 assert.ok(richDiff.includes('<span class="diff-code-line remove">const view = &quot;raw&quot;;</span>'));
 assert.ok(richDiff.includes('<span class="diff-code-line add">const view = &quot;rich&quot;;</span>'));
 
-console.log("Dashboard test passed: original asks remain safe and version comparisons use the rich diff view.");
+const structuredPlan = `# Delivery plan
+
+## Goal
+
+Ship a guided reader.
+
+## Planned Changes
+
+### Parse the plan
+
+**What**: Split structured sections.
+
+\`\`\`text
+### This is code, not another change
+\`\`\`
+
+### Render each change
+
+**Why**: Readers can focus on one idea.
+
+## Testing
+
+Verify guided and full-document modes.`;
+const structure = parsePlanStructure(structuredPlan);
+assert.equal(structure.canUseGuidedView, true);
+assert.equal(structure.title, "Delivery plan");
+assert.equal(structure.goal, "Ship a guided reader.");
+assert.equal(structure.changes.length, 2);
+assert.equal(structure.changes[0].title, "Parse the plan");
+assert.ok(structure.changes[0].content.includes("This is code, not another change"));
+assert.equal(structure.changes[1].id, "change-2-render-each-change");
+assert.equal(structure.testing, "Verify guided and full-document modes.");
+const legacyStructure = parsePlanStructure("# Legacy plan\n\nOne long document.");
+assert.equal(legacyStructure.canUseGuidedView, false);
+assert.equal(legacyStructure.title, "Legacy plan");
+assert.equal(initialViewForHash("#compare", "plan"), "diff");
+assert.equal(initialViewForHash("#plan/change-1-parse", "diff"), "plan");
+assert.equal(initialViewForHash("", "diff"), "diff");
+
+console.log("Dashboard test passed: plan navigation, safe original asks, and rich version comparisons render correctly.");

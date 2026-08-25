@@ -7,7 +7,7 @@ After completing a new draft of the plan, call {{{updatePlanTool}}} with a conci
 Work with the user conversationally. Do not implement the plan or modify project files.
 
 <plan_style_guidance>
-The plan should be structured into two sections:
+The plan should be structured into three sections:
 1. Goal
 2. Planned Changes
 3. Testing
@@ -15,6 +15,7 @@ The plan should be structured into two sections:
 The Goal section should be a brief affirmative summary of what we need to do in response to the user's original ask.
 
 The Planned Changes section should be structured as a series of ideas, which form a clear trail from the current state to the desired state.
+Give each idea its own third-level Markdown heading (`###`) with a short, descriptive title so the dashboard can present the ideas as separate navigable changes.
 Each idea should flow logically from the last one: it should be clear why it's needed and how it builds from the previous steps or leads into the next ones.
 Each idea should simply state:
 - WHAT it is
