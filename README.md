@@ -106,7 +106,9 @@ To revise the implementation after review, run:
 /workflow-revise describe the changes to make
 ```
 
-The command opens a required multiline editor and then creates a separate revision session in the same worktree. The worktree can already contain manual, uncommitted changes. The revision agent receives the original ask, frozen plan, clarifications, current review, and submitted change request. After the agent commits and pushes at least one new commit and leaves the worktree clean, `/workflow-next` generates the next review round in a new review session. An older review session cannot clean up or advance a newer revision round. If the branch changes outside the revision flow, the dashboard marks the review stale and cleanup directs the user to `/workflow-revise`.
+When `/workflow-revise` detects that `HEAD` changed since the current review, it first asks whether those commits are an already-completed revision. If confirmed, the workflow requires a clean worktree and verifies that the pull request contains the new `HEAD`; it then records the revision transition and immediately generates the next review without starting a revision agent session.
+
+Otherwise, the command opens a required multiline editor and creates a separate revision session in the same worktree. The worktree can already contain manual, uncommitted changes. The revision agent receives the original ask, frozen plan, clarifications, current review, and submitted change request. After the agent commits and pushes at least one new commit and leaves the worktree clean, `/workflow-next` generates the next review round in a new review session. An older review session cannot clean up or advance a newer revision round. If the branch changes outside the revision flow, the dashboard marks the review stale and cleanup directs the user to `/workflow-revise`.
 
 Advance from an accepted review to cleanup explicitly:
 
@@ -190,7 +192,7 @@ planning → implementing → reviewing → complete
                            revising
 ```
 
-The transition API rejects every phase or step change that is not in this state machine. Stored metadata from older versions is migrated from its legacy status to the typed state when loaded. Workflows created before original-ask capture migrate with `ask: null`; new workflows require a non-empty ask. Existing `description.txt` files are migrated into metadata and removed when the workflow next loads. The identifier remains the source of the plan-directory, branch, and worktree names.
+The transition API rejects every phase or step change that is not in this state machine. Workflow metadata must contain the typed state directly; legacy lifecycle statuses are not converted. Workflows created before original-ask capture can still load with `ask: null`; new workflows require a non-empty ask. Existing `description.txt` files are migrated into metadata and removed when the workflow next loads. The identifier remains the source of the plan-directory, branch, and worktree names.
 
 On first load, old workflow directories that contain `plan.previous.md` are migrated into the numbered history. The legacy file is left in place but is no longer updated.
 

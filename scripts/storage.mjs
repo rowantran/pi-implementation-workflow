@@ -224,7 +224,7 @@ try {
 			{
 				version: 1,
 				identifier: legacyIdentifier,
-				status: "ready_for_implementation",
+				state: { phase: "planning", step: "ready" },
 				repositoryRoot: "/repository",
 				gitCommonDir: "/repository/.git",
 				baseBranch: "main",
@@ -259,7 +259,7 @@ try {
 			{
 				version: 1,
 				identifier: descriptionlessIdentifier,
-				status: "review_complete",
+				state: { phase: "complete", step: "complete" },
 				repositoryRoot: "/repository",
 				gitCommonDir: "/repository/.git",
 				baseBranch: "main",
@@ -278,8 +278,32 @@ try {
 	assert.equal(descriptionless.ask, null);
 	assert.deepEqual(descriptionless.state, { phase: "complete", step: "complete" });
 	assert.equal((await readWorkflowMetadata(descriptionlessFiles)).description, "");
+
+	const statusOnlyIdentifier = "status-only-workflow";
+	const statusOnlyFiles = filesAt(join(temporaryRoot, statusOnlyIdentifier));
+	await mkdir(statusOnlyFiles.root, { recursive: true });
+	await writeFile(statusOnlyFiles.plan, "# Status-only plan\n", "utf8");
+	await writeFile(
+		statusOnlyFiles.metadata,
+		`${JSON.stringify({
+			version: 2,
+			identifier: statusOnlyIdentifier,
+			description: "Unsupported status metadata",
+			ask: "Reject status-only workflow metadata.",
+			status: "reviewing",
+			repositoryRoot: "/repository",
+			gitCommonDir: "/repository/.git",
+			baseBranch: "main",
+			baseCommit: "def456",
+			workflowBranch: `workflow/${statusOnlyIdentifier}`,
+			worktreePath: `/repository/.worktrees/${statusOnlyIdentifier}`,
+			createdAt: "2025-01-01T00:00:00.000Z",
+		}, null, 2)}\n`,
+		"utf8",
+	);
+	await assert.rejects(readWorkflowMetadata(statusOnlyFiles), /invalid metadata/);
 } finally {
 	await rm(temporaryRoot, { recursive: true, force: true });
 }
 
-console.log("Storage test passed: original asks are required, immutable, promoted unchanged, and legacy metadata migrates safely.");
+console.log("Storage test passed: typed workflow states are required and original asks remain immutable.");

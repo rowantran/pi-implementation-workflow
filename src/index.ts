@@ -597,6 +597,7 @@ export default function implementationWorkflow(
 				ctx.ui.notify("Revisions can only start from an active workflow review session.", "error");
 				return;
 			}
+			if (await completeExistingRevisionIfConfirmed(ctx)) return;
 			const request = await ctx.ui.editor("Describe the implementation changes to make", args);
 			if (request === undefined || !request.trim()) {
 				ctx.ui.notify("Revision did not start because no change request was submitted.", "info");
@@ -605,6 +606,52 @@ export default function implementationWorkflow(
 			await beginRevision(ctx, request);
 		},
 	});
+
+	async function completeExistingRevisionIfConfirmed(ctx: ExtensionCommandContext): Promise<boolean> {
+		if (!identifier || !activeFiles) return true;
+		const workflow = await loadCompletedWorkflow(ctx, identifier);
+		if (!workflow) return true;
+		const currentRound =
+			workflow.state.phase === "reviewing" || workflow.state.phase === "revising"
+				? workflow.state.round
+				: undefined;
+		if (
+			currentRound === undefined ||
+			(sessionReviewRound !== currentRound && !(sessionReviewRound === undefined && currentRound === 1))
+		) {
+			ctx.ui.notify(
+				`This review session cannot start a revision while the workflow is ${workflowStateName(workflow.state)}.`,
+				"error",
+			);
+			return true;
+		}
+		const [report, headCommit] = await Promise.all([
+			readWorkflowReview(activeFiles),
+			gitValue(workflow.worktreePath, ["rev-parse", "HEAD"]),
+		]);
+		if (!report || !headCommit || report.headCommit === headCommit) return false;
+		const confirmed = await ctx.ui.confirm(
+			"Use the existing commits as the completed revision?",
+			`The worktree HEAD changed from ${report.headCommit} to ${headCommit} after review round ${currentRound}. Confirm to validate those commits and immediately generate review round ${currentRound + 1}.`,
+		);
+		if (!confirmed) return false;
+		if (workflow.state.phase === "reviewing") {
+			workflow.state = transitionWorkflowState(workflow.state, {
+				phase: "revising",
+				step: "active",
+				round: currentRound,
+				reviewedHeadCommit: report.headCommit,
+			});
+			workflow.revisionStartedAt = new Date().toISOString();
+			workflow.revisionCompletedAt = undefined;
+			await writeWorkflowReview(activeFiles, report, currentRound);
+			await writeCompletedWorkflowMetadata(workflow);
+			metadata = workflow;
+		}
+		const completedWorkflow = await completeCodingPhase(ctx, false, "revision");
+		if (completedWorkflow) await transitionToReview(ctx, identifier);
+		return true;
+	}
 
 	async function beginRevision(ctx: ExtensionCommandContext, request: string): Promise<void> {
 		if (!identifier || !activeFiles) return;

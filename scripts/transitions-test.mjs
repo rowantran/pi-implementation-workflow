@@ -123,6 +123,7 @@ function createHarness(repositoryRoot, worktreePath, workflowBranch) {
 	const events = new Map();
 	const entries = [];
 	const notifications = [];
+	const confirmations = [];
 	const switches = [];
 	const userMessages = [];
 	let activeTools = ["read", "bash", "edit", "write"];
@@ -224,7 +225,10 @@ function createHarness(repositoryRoot, worktreePath, workflowBranch) {
 				return { cancelled: false };
 			},
 			ui: {
-				confirm: async () => true,
+				confirm: async (title, message) => {
+					confirmations.push({ title, message });
+					return true;
+				},
 				editor: async (_title, prefill) => prefill || "Address the review findings.",
 				notify: (message, level) => notifications.push({ message, level }),
 				setStatus() {},
@@ -244,6 +248,7 @@ function createHarness(repositoryRoot, worktreePath, workflowBranch) {
 		emit,
 		entries,
 		notifications,
+		confirmations,
 		switches,
 		userMessages,
 		getActiveTools: () => [...activeTools],
@@ -514,6 +519,39 @@ try {
 			(entry) => entry.type === "custom" && entry.customType === "implementation-workflow-phase",
 		);
 		assert.equal(secondReviewPhase.data.reviewRound, 2);
+	}
+
+	{
+		const workflow = await writeCompletedWorkflow("adopt-existing-revision", "reviewing", {
+			metadata: {
+				pullRequestUrl: "https://example.test/pull/24",
+				pullRequestNumber: 24,
+			},
+		});
+		await storage.writeWorkflowReview(workflow.files, await sampleReview("abc123", "https://example.test/pull/24"), 1);
+		const harness = createHarness(workflow.repositoryRoot, workflow.worktreePath, workflow.workflowBranch);
+		harness.setHeadCommit("new456");
+		harness.setPullRequest({
+			number: 24,
+			url: "https://example.test/pull/24",
+			baseRefName: "main",
+			headRefName: workflow.workflowBranch,
+		});
+		const ctx = harness.context(workflow.worktreePath, [
+			phaseEntry("review", { identifier: workflow.metadata.identifier, reviewRound: 1 }),
+		]);
+		await harness.emit("session_start", ctx);
+		await harness.commands.get("workflow-revise")("This editor prefill must not start a revision agent.", ctx);
+		assert.equal(harness.confirmations.length, 1);
+		assert.match(harness.confirmations[0].title, /existing commits/i);
+		assert.deepEqual((await readMetadata(workflow.metadata.identifier)).state, {
+			phase: "reviewing",
+			step: "active",
+			round: 2,
+		});
+		assert.equal((await storage.readWorkflowReview(workflow.files)).headCommit, "new456");
+		assert.equal(harness.userMessages.length, 0, "an existing completed revision skips the revision agent session");
+		assert.equal(harness.switches.length, 1, "the workflow switches directly to the next review session");
 	}
 
 	{

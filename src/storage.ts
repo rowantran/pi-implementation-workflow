@@ -8,18 +8,10 @@ import {
 } from "./review-report.ts";
 import { assertWorkflowState, type WorkflowState } from "./workflow-state.ts";
 
-export const WORKFLOW_STATE_VERSION = 3;
-const LEGACY_WORKFLOW_STATE_VERSIONS = [1, 2] as const;
+export const WORKFLOW_STATE_VERSION = 2;
+const LEGACY_WORKFLOW_STATE_VERSION = 1;
 export const CLARIFICATIONS_STATE_VERSION = 1;
 export const IDENTIFIER_PATTERN = /^[a-z0-9][a-z0-9-]{0,79}$/;
-
-type LegacyCompletedWorkflowStatus =
-	| "ready_for_implementation"
-	| "implementing"
-	| "implementation_complete"
-	| "reviewing"
-	| "cleanup_pending"
-	| "review_complete";
 
 export interface DraftWorkflowMetadata {
 	version: number;
@@ -383,26 +375,15 @@ export async function readWorkflowMetadata(files: WorkflowFiles): Promise<Workfl
 	let metadata: WorkflowMetadata;
 	let migrated = false;
 	if (isStoredDraftWorkflowMetadata(value)) {
-		const { status: _legacyStatus, ...stored } = value;
-		metadata = {
-			...stored,
-			state: value.state ?? { phase: "planning", step: "draft" },
-			ask: value.ask ?? null,
-		};
-		migrated = value.ask === undefined || value.state === undefined || value.status !== undefined;
+		metadata = { ...value, ask: value.ask ?? null };
+		migrated = value.ask === undefined;
 	} else if (isStoredCompletedWorkflowMetadata(value)) {
-		const { status: _legacyStatus, ...stored } = value;
 		metadata = {
-			...stored,
-			state: value.state ?? stateFromLegacyStatus(value.status!),
+			...value,
 			description: value.description ?? legacyDescription,
 			ask: value.ask ?? null,
 		};
-		migrated =
-			value.description === undefined ||
-			value.ask === undefined ||
-			value.state === undefined ||
-			value.status !== undefined;
+		migrated = value.description === undefined || value.ask === undefined;
 	} else {
 		throw new Error(`Workflow ${basename(files.root)} has invalid metadata.`);
 	}
@@ -443,7 +424,7 @@ function assertDraftMetadataForFiles(files: WorkflowFiles, metadata: DraftWorkfl
 }
 
 function assertSupportedMetadataVersion(version: number): void {
-	if (![...LEGACY_WORKFLOW_STATE_VERSIONS, WORKFLOW_STATE_VERSION].includes(version as 1 | 2 | 3)) {
+	if (version !== LEGACY_WORKFLOW_STATE_VERSION && version !== WORKFLOW_STATE_VERSION) {
 		throw new Error(`Unsupported workflow metadata version: ${version}.`);
 	}
 }
@@ -527,9 +508,7 @@ function isWorkflowClarifications(value: unknown): value is WorkflowClarificatio
 	});
 }
 
-type StoredDraftWorkflowMetadata = Omit<DraftWorkflowMetadata, "state" | "ask"> & {
-	state?: DraftWorkflowMetadata["state"];
-	status?: "planning";
+type StoredDraftWorkflowMetadata = Omit<DraftWorkflowMetadata, "ask"> & {
 	ask?: string | null;
 };
 
@@ -538,8 +517,9 @@ function isStoredDraftWorkflowMetadata(value: unknown): value is StoredDraftWork
 	const item = value as Partial<StoredDraftWorkflowMetadata>;
 	return (
 		isSupportedStoredVersion(item.version) &&
-		((item.state !== undefined && isValidWorkflowState(item.state) && isDraftState(item.state)) ||
-			(item.state === undefined && item.status === "planning")) &&
+		item.state !== undefined &&
+		isValidWorkflowState(item.state) &&
+		isDraftState(item.state) &&
 		typeof item.draftId === "string" &&
 		/^[a-zA-Z0-9-]+$/.test(item.draftId) &&
 		typeof item.description === "string" &&
@@ -548,37 +528,23 @@ function isStoredDraftWorkflowMetadata(value: unknown): value is StoredDraftWork
 	);
 }
 
-type StoredCompletedWorkflowMetadata = Omit<CompletedWorkflowMetadata, "state" | "description" | "ask"> & {
-	state?: WorkflowState;
-	status?: LegacyCompletedWorkflowStatus;
+type StoredCompletedWorkflowMetadata = Omit<CompletedWorkflowMetadata, "description" | "ask"> & {
 	description?: string;
 	ask?: string | null;
 };
 
-const LEGACY_COMPLETED_STATUSES: LegacyCompletedWorkflowStatus[] = [
-	"ready_for_implementation",
-	"implementing",
-	"implementation_complete",
-	"reviewing",
-	"cleanup_pending",
-	"review_complete",
-];
-
 function isStoredCompletedWorkflowMetadata(value: unknown): value is StoredCompletedWorkflowMetadata {
 	if (!value || typeof value !== "object") return false;
 	const item = value as Partial<StoredCompletedWorkflowMetadata>;
-	const hasValidState = item.state !== undefined && isValidWorkflowState(item.state) && !isDraftState(item.state);
-	const hasValidLegacyStatus =
-		item.state === undefined &&
-		typeof item.status === "string" &&
-		LEGACY_COMPLETED_STATUSES.includes(item.status as LegacyCompletedWorkflowStatus);
 	return (
 		isSupportedStoredVersion(item.version) &&
 		typeof item.identifier === "string" &&
 		IDENTIFIER_PATTERN.test(item.identifier) &&
 		(item.description === undefined || typeof item.description === "string") &&
 		isStoredAskValid(item.version, item.ask) &&
-		(hasValidState || hasValidLegacyStatus) &&
+		item.state !== undefined &&
+		isValidWorkflowState(item.state) &&
+		!isDraftState(item.state) &&
 		typeof item.repositoryRoot === "string" &&
 		typeof item.gitCommonDir === "string" &&
 		typeof item.baseBranch === "string" &&
@@ -587,23 +553,6 @@ function isStoredCompletedWorkflowMetadata(value: unknown): value is StoredCompl
 		typeof item.worktreePath === "string" &&
 		typeof item.createdAt === "string"
 	);
-}
-
-function stateFromLegacyStatus(status: LegacyCompletedWorkflowStatus): WorkflowState {
-	switch (status) {
-		case "ready_for_implementation":
-			return { phase: "planning", step: "ready" };
-		case "implementing":
-			return { phase: "implementing", step: "active" };
-		case "implementation_complete":
-			return { phase: "implementing", step: "complete" };
-		case "reviewing":
-			return { phase: "reviewing", step: "active", round: 1 };
-		case "cleanup_pending":
-			return { phase: "complete", step: "cleanup_pending" };
-		case "review_complete":
-			return { phase: "complete", step: "complete" };
-	}
 }
 
 function isValidWorkflowState(value: unknown): value is WorkflowState {
@@ -616,7 +565,7 @@ function isValidWorkflowState(value: unknown): value is WorkflowState {
 }
 
 function isSupportedStoredVersion(version: unknown): version is number {
-	return version === 1 || version === 2 || version === WORKFLOW_STATE_VERSION;
+	return version === LEGACY_WORKFLOW_STATE_VERSION || version === WORKFLOW_STATE_VERSION;
 }
 
 function isStoredAskValid(version: number | undefined, ask: unknown): boolean {
