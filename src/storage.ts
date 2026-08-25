@@ -1,6 +1,11 @@
 import { mkdir, readFile, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
+import {
+	isWorkflowReviewReport,
+	renderWorkflowReviewMarkdown,
+	type WorkflowReviewReport,
+} from "./review-report.ts";
 
 export const WORKFLOW_STATE_VERSION = 2;
 const LEGACY_WORKFLOW_STATE_VERSION = 1;
@@ -79,6 +84,9 @@ export interface WorkflowFiles {
 	clarifications: string;
 	dashboard: string;
 	metadata: string;
+	review: string;
+	reviewMarkdown: string;
+	reviewRuns: string;
 	/** Legacy standalone description storage. Read only during migration. */
 	legacyDescription: string;
 	/** Legacy two-version storage. Read only during migration. */
@@ -108,6 +116,9 @@ function filesAt(root: string): WorkflowFiles {
 		clarifications: join(root, "clarifications.json"),
 		dashboard: join(root, "dashboard.html"),
 		metadata: join(root, "metadata.json"),
+		review: join(root, "review.json"),
+		reviewMarkdown: join(root, "review.md"),
+		reviewRuns: join(root, "review-runs"),
 		legacyDescription: join(root, "description.txt"),
 		previousPlan: join(root, "plan.previous.md"),
 	};
@@ -216,6 +227,27 @@ export async function appendClarifications(
 	};
 	await atomicWrite(files.clarifications, `${JSON.stringify(next, null, 2)}\n`);
 	return next;
+}
+
+export async function readWorkflowReview(files: WorkflowFiles): Promise<WorkflowReviewReport | undefined> {
+	const text = await readText(files.review);
+	if (!text.trim()) return undefined;
+	let value: unknown;
+	try {
+		value = JSON.parse(text);
+	} catch {
+		throw new Error(`Workflow review is invalid JSON: ${files.review}`);
+	}
+	if (!isWorkflowReviewReport(value)) throw new Error(`Workflow review has an invalid structure: ${files.review}`);
+	return value;
+}
+
+export async function writeWorkflowReview(files: WorkflowFiles, report: WorkflowReviewReport): Promise<void> {
+	if (!isWorkflowReviewReport(report)) throw new Error("Cannot save an invalid workflow review report.");
+	await Promise.all([
+		atomicWrite(files.review, `${JSON.stringify(report, null, 2)}\n`),
+		atomicWrite(files.reviewMarkdown, renderWorkflowReviewMarkdown(report)),
+	]);
 }
 
 export async function promoteDraft(draft: WorkflowFiles, destination: WorkflowFiles): Promise<void> {

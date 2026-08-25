@@ -13,6 +13,75 @@ const implementationWorkflow = await jiti.import(new URL("../src/index.ts", impo
 });
 const storage = await jiti.import(new URL("../src/storage.ts", import.meta.url).pathname);
 
+const validPlan = `# Implementation plan
+
+## Goal
+
+Complete the workflow transition.
+
+## Planned Changes
+
+### PC-01: Complete the transition
+
+**What**
+Advance the workflow to its next phase.
+
+**Why**
+The workflow must progress deterministically.
+
+**Pseudocode**
+\`\`\`text
+procedure AdvanceWorkflow()
+\`\`\`
+
+## Testing
+
+Verify each transition.
+`;
+
+async function reviewAgentRunner(request) {
+	if (request.role === "planned-change") {
+		return {
+			id: "PC-01",
+			title: "Complete the transition",
+			summary: "The transition is implemented.",
+			necessary: { status: "yes", explanation: "It maps to the plan." },
+			sufficient: { status: "yes", explanation: "The transition completes." },
+			contracts: [],
+			concerns: [],
+		};
+	}
+	if (request.role === "holistic-review") {
+		return {
+			summary: "The pull request matches the plan.",
+			necessary: { status: "yes", explanation: "No extra work." },
+			sufficient: { status: "yes", explanation: "All behavior exists." },
+			concerns: [],
+		};
+	}
+	if (request.role === "testing-criteria") {
+		return {
+			summary: "The transition criterion is satisfied.",
+			satisfied: { status: "yes", explanation: "Transition tests pass." },
+			criteria: [{
+				criterion: "Verify each transition.",
+				status: "yes",
+				explanation: "The transition test covers each phase.",
+				evidence: [{ location: "scripts/transitions-test.mjs:1", description: "Exercises workflow transitions." }],
+			}],
+			concerns: [],
+		};
+	}
+	return {
+		overallResult: {
+			summary: "The pull request is necessary and sufficient.",
+			necessary: { status: "yes", explanation: "No extra work." },
+			sufficient: { status: "yes", explanation: "All behavior exists." },
+		},
+		overallConcerns: [],
+	};
+}
+
 function phaseEntry(phase, values = {}) {
 	return {
 		type: "custom",
@@ -31,6 +100,7 @@ function createHarness(repositoryRoot, worktreePath, workflowBranch) {
 	let activeTools = ["read", "bash", "edit", "write"];
 	let switchCancelled = false;
 	let pullRequest;
+	let headCommit = "abc123";
 
 	const pi = {
 		appendEntry(customType, data) {
@@ -54,7 +124,7 @@ function createHarness(repositoryRoot, worktreePath, workflowBranch) {
 				return { code: 0, stdout: `${join(repositoryRoot, ".git")}\n`, stderr: "" };
 			}
 			if (gitArgs[0] === "rev-parse" && gitArgs[1] === "HEAD") {
-				return { code: 0, stdout: "abc123\n", stderr: "" };
+				return { code: 0, stdout: `${headCommit}\n`, stderr: "" };
 			}
 			if (gitArgs[0] === "branch" && gitArgs[1] === "--show-current") {
 				return { code: 0, stdout: `${cwd === worktreePath ? workflowBranch : "main"}\n`, stderr: "" };
@@ -93,7 +163,7 @@ function createHarness(repositoryRoot, worktreePath, workflowBranch) {
 		},
 		setSessionName() {},
 	};
-	implementationWorkflow(pi);
+	implementationWorkflow(pi, { reviewAgentRunner });
 
 	function context(cwd, branch) {
 		return {
@@ -117,6 +187,9 @@ function createHarness(repositoryRoot, worktreePath, workflowBranch) {
 				await options.withSession?.({
 					sendUserMessage: async (message) => {
 						userMessages.push(message);
+					},
+					ui: {
+						notify: (message, level) => notifications.push({ message, level }),
 					},
 				});
 				return { cancelled: false };
@@ -148,6 +221,9 @@ function createHarness(repositoryRoot, worktreePath, workflowBranch) {
 		setPullRequest(value) {
 			pullRequest = value;
 		},
+		setHeadCommit(value) {
+			headCommit = value;
+		},
 		setSwitchCancelled(value) {
 			switchCancelled = value;
 		},
@@ -162,8 +238,8 @@ async function writeCompletedWorkflow(identifier, status, options = {}) {
 	await mkdir(worktreePath, { recursive: true });
 	const files = storage.workflowFiles(identifier);
 	await mkdir(files.versions, { recursive: true });
-	await writeFile(files.plan, "# Implementation plan\n\nImplement the transition.\n", "utf8");
-	await writeFile(join(files.versions, "0001.md"), "# Implementation plan\n\nImplement the transition.\n", "utf8");
+	await writeFile(files.plan, validPlan, "utf8");
+	await writeFile(join(files.versions, "0001.md"), validPlan, "utf8");
 	await writeFile(files.clarifications, '{"version":1,"entries":[]}\n', "utf8");
 	const metadata = {
 		version: storage.WORKFLOW_STATE_VERSION,
@@ -196,7 +272,7 @@ try {
 		const workflowBranch = `workflow/${identifier}`;
 		await mkdir(join(repositoryRoot, ".git", "info"), { recursive: true });
 		const draftId = "planning-draft";
-		await storage.createDraft(storage.draftFiles(draftId), "# Implementation plan\n\nUnify transitions.\n", {
+		await storage.createDraft(storage.draftFiles(draftId), validPlan, {
 			version: storage.WORKFLOW_STATE_VERSION,
 			status: "planning",
 			draftId,
@@ -252,7 +328,10 @@ try {
 		assert.deepEqual(completion.data.details, ["Pull request: https://example.test/pull/17"]);
 		await harness.commands.get("workflow-next")("", ctx);
 		assert.equal((await readMetadata(workflow.metadata.identifier)).status, "reviewing");
-		assert.match(harness.userMessages.at(-1), /Review pull request https:\/\/example\.test\/pull\/17/);
+		assert.equal(harness.userMessages.length, 0, "review generation does not start another conversational agent");
+		assert.match(harness.notifications.at(-1).message, /review is ready/i);
+		assert.ok(await storage.pathExists(workflow.files.review));
+		assert.ok(await storage.pathExists(workflow.files.reviewMarkdown));
 	}
 
 	{
@@ -309,7 +388,55 @@ try {
 		);
 		await resumedHarness.commands.get("workflow-next")("", resumedCtx);
 		assert.equal(resumedHarness.switches.length, 1, "a cancelled review switch can be retried after resume");
-		assert.match(resumedHarness.userMessages.at(-1), /Review pull request/);
+		assert.equal(resumedHarness.userMessages.length, 0);
+		assert.match(resumedHarness.notifications.at(-1).message, /review is ready/i);
+	}
+
+	{
+		const workflow = await writeCompletedWorkflow("stale-review-regeneration", "reviewing", {
+			metadata: {
+				pullRequestUrl: "https://example.test/pull/21",
+				pullRequestNumber: 21,
+			},
+		});
+		await storage.writeWorkflowReview(workflow.files, {
+			version: 1,
+			pullRequestUrl: "https://example.test/pull/21",
+			baseCommit: "abc123",
+			headCommit: "old123",
+			sourceFingerprint: "old-source",
+			generatedAt: "2026-01-02T00:00:00.000Z",
+			overallResult: {
+				summary: "Old review.",
+				necessary: { status: "yes", explanation: "Old result." },
+				sufficient: { status: "yes", explanation: "Old result." },
+			},
+			overallConcerns: [],
+			holisticReview: await reviewAgentRunner({ role: "holistic-review" }),
+			plannedChanges: [{
+				id: "PC-01",
+				title: "Complete the transition",
+				what: "Advance the workflow to its next phase.",
+				why: "The workflow must progress deterministically.",
+				pseudocode: "procedure AdvanceWorkflow()",
+				review: await reviewAgentRunner({ role: "planned-change" }),
+			}],
+			testingCriteria: {
+				originalCriteria: "Verify each transition.",
+				review: await reviewAgentRunner({ role: "testing-criteria" }),
+			},
+		});
+		const harness = createHarness(workflow.repositoryRoot, workflow.worktreePath, workflow.workflowBranch);
+		harness.setHeadCommit("new123");
+		const ctx = harness.context(workflow.worktreePath, [
+			phaseEntry("review", { identifier: workflow.metadata.identifier }),
+		]);
+		await harness.emit("session_start", ctx);
+		await harness.commands.get("workflow-next")("", ctx);
+		assert.equal((await readMetadata(workflow.metadata.identifier)).status, "reviewing");
+		assert.equal(harness.switches.length, 0, "stale review regeneration must postpone cleanup");
+		assert.equal((await storage.readWorkflowReview(workflow.files)).headCommit, "new123");
+		assert.match(harness.notifications.at(-1).message, /review was regenerated/i);
 	}
 
 	{

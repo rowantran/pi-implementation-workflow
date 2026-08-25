@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { appendFile, mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -12,6 +13,7 @@ import {
 	type SessionEntry,
 } from "@earendil-works/pi-coding-agent";
 import { writeWorkflowDashboard, writeWorkflowDashboardRedirect } from "./dashboard.ts";
+import { parsePlannedChanges, parseTestingCriteria } from "./planned-changes.ts";
 import { PLAN_TITLE, planningCompletionError } from "./planning.ts";
 import { registerWorkflowPlanTool, WORKFLOW_UPDATE_PLAN_TOOL } from "./plan-tool.ts";
 import {
@@ -21,7 +23,6 @@ import {
 	planSlugUserMessage,
 	planningSystemPrompt,
 	reviewSystemPrompt,
-	reviewUserMessage,
 	startPlanningUserMessage,
 } from "./prompts.ts";
 import {
@@ -29,6 +30,11 @@ import {
 	WORKFLOW_QUESTION_TOOL,
 	type WorkflowQuestionnaireResult,
 } from "./questions.ts";
+import {
+	createSpawnReviewAgent,
+	generateWorkflowReview,
+	type ReviewAgentRunner,
+} from "./review.ts";
 import {
 	appendClarifications,
 	createDraft,
@@ -38,6 +44,7 @@ import {
 	promoteDraft,
 	readCompletedWorkflowMetadata,
 	readText,
+	readWorkflowReview,
 	savePlanVersion,
 	WORKFLOW_STATE_VERSION,
 	type CompletedWorkflowMetadata,
@@ -48,6 +55,7 @@ import {
 	writeCompletedWorkflowMetadata,
 	writeDraftWorkflowMetadata,
 	writeWorkflowMetadata,
+	writeWorkflowReview,
 } from "./storage.ts";
 import {
 	registerWorkflowCompletionRenderer,
@@ -86,7 +94,14 @@ const DASHBOARD_SHORTCUT = "ctrl+alt+d";
 const WORKFLOW_BRANCH_PREFIX = "workflow/";
 const REVIEW_DISABLED_TOOLS = new Set(["edit", "write"]);
 
-export default function implementationWorkflow(pi: ExtensionAPI): void {
+export interface ImplementationWorkflowDependencies {
+	reviewAgentRunner?: ReviewAgentRunner;
+}
+
+export default function implementationWorkflow(
+	pi: ExtensionAPI,
+	dependencies: ImplementationWorkflowDependencies = {},
+): void {
 	registerWorkflowCompletionRenderer(pi);
 
 	let phase: WorkflowPhase | undefined;
@@ -220,7 +235,8 @@ export default function implementationWorkflow(pi: ExtensionAPI): void {
 			ctx.ui.notify("No workflow dashboard is available in this session.", "info");
 			return;
 		}
-		await writeWorkflowDashboard(activeFiles);
+		const currentHead = metadata ? await gitValue(metadata.worktreePath, ["rev-parse", "HEAD"]) : undefined;
+		await writeWorkflowDashboard(activeFiles, currentHead);
 		if (ctx.mode !== "tui") {
 			ctx.ui.notify(`Workflow dashboard: ${activeFiles.dashboard}`, "info");
 			return;
@@ -441,6 +457,14 @@ export default function implementationWorkflow(pi: ExtensionAPI): void {
 			return;
 		}
 
+		const files = workflowFiles(requestedIdentifier);
+		try {
+			await ensureWorkflowReview(ctx, workflow, files);
+		} catch (error) {
+			ctx.ui.notify(`Could not generate the implementation review: ${errorMessage(error)}`, "error");
+			return;
+		}
+
 		const sessionFile = await createPhaseSession(workflow.worktreePath, {
 			phase: "review",
 			identifier: requestedIdentifier,
@@ -448,19 +472,81 @@ export default function implementationWorkflow(pi: ExtensionAPI): void {
 		workflow.status = "reviewing";
 		workflow.reviewStartedAt ??= new Date().toISOString();
 		await writeCompletedWorkflowMetadata(workflow);
-		const files = workflowFiles(requestedIdentifier);
 		await ctx.switchSession(sessionFile, {
 			withSession: async (replacementCtx) => {
-				await replacementCtx.sendUserMessage(
-					reviewUserMessage({
+				replacementCtx.ui.notify("The implementation review is ready in the workflow dashboard.", "info");
+			},
+		});
+	}
+
+	async function ensureWorkflowReview(
+		ctx: ExtensionContext,
+		workflow: CompletedWorkflowMetadata,
+		files: WorkflowFiles,
+	): Promise<void> {
+		const [plan, clarifications, headCommit, existing] = await Promise.all([
+			readText(files.plan),
+			readText(files.clarifications),
+			gitValue(workflow.worktreePath, ["rev-parse", "HEAD"]),
+			readWorkflowReview(files),
+		]);
+		if (!headCommit) throw new Error("Could not identify the pull request head commit.");
+		const plannedChanges = parsePlannedChanges(plan);
+		const testingCriteria = parseTestingCriteria(plan);
+		const sourceFingerprint = createHash("sha256")
+			.update(JSON.stringify([workflow.ask, plan, clarifications]))
+			.digest("hex");
+		if (
+			existing !== undefined &&
+			existing.pullRequestUrl === workflow.pullRequestUrl &&
+			existing.baseCommit === workflow.baseCommit &&
+			existing.headCommit === headCommit &&
+			existing.sourceFingerprint === sourceFingerprint &&
+			existing.testingCriteria.originalCriteria === testingCriteria &&
+			existing.plannedChanges.length === plannedChanges.length &&
+			existing.plannedChanges.every((change, index) => change.id === plannedChanges[index]?.id)
+		) {
+			await writeWorkflowDashboard(files, headCommit);
+			return;
+		}
+
+		await runWorkflowProgress(
+			ctx,
+			"Generating implementation review",
+			["Reviewing planned changes, full plan, and testing criteria", "Synthesizing overall findings", "Saving review report"],
+			async (progress) => {
+				const report = await generateWorkflowReview(
+					{
 						pullRequestUrl: workflow.pullRequestUrl!,
+						baseCommit: workflow.baseCommit,
+						headCommit,
+						sourceFingerprint,
+						worktreePath: workflow.worktreePath,
 						metadataPath: files.metadata,
 						planPath: files.plan,
 						clarificationsPath: files.clarifications,
-					}),
+						reviewRunsPath: files.reviewRuns,
+						plannedChanges,
+						testingCriteria,
+						onStage: (stage) => {
+							if (stage === "analysis-complete") {
+								progress.complete("Reviewed planned changes, full plan, and testing criteria");
+							}
+							if (stage === "synthesis-complete") progress.complete("Synthesized overall findings");
+						},
+					},
+					dependencies.reviewAgentRunner ??
+						createSpawnReviewAgent({
+							model: ctx.model ? `${ctx.model.provider}/${ctx.model.id}` : undefined,
+							thinkingLevel: ctx.thinkingLevel,
+							signal: ctx.signal,
+						}),
 				);
+				await writeWorkflowReview(files, report);
+				await writeWorkflowDashboard(files, headCommit);
+				progress.complete("Saved review report");
 			},
-		});
+		);
 	}
 
 	pi.registerCommand("workflow-next", {
@@ -476,6 +562,7 @@ export default function implementationWorkflow(pi: ExtensionAPI): void {
 				return;
 			}
 			if (phase === "review") {
+				if (await regenerateStaleReview(ctx)) return;
 				await beginReviewCleanup(ctx);
 				return;
 			}
@@ -790,6 +877,19 @@ export default function implementationWorkflow(pi: ExtensionAPI): void {
 		}
 	}
 
+	async function regenerateStaleReview(ctx: ExtensionCommandContext): Promise<boolean> {
+		if (!identifier || !activeFiles) return false;
+		const workflow = await readCompletedWorkflowMetadata(identifier);
+		const report = await readWorkflowReview(activeFiles);
+		if (!report) return false;
+		const headCommit = await gitValue(workflow.worktreePath, ["rev-parse", "HEAD"]);
+		if (!headCommit || report.headCommit === headCommit) return false;
+		await ensureWorkflowReview(ctx, workflow, activeFiles);
+		await openDashboard(ctx, true);
+		ctx.ui.notify("The branch changed, so the implementation review was regenerated. Review it before advancing again.", "warning");
+		return true;
+	}
+
 	async function beginReviewCleanup(ctx: ExtensionCommandContext): Promise<void> {
 		if (!identifier) return;
 		let preparation:
@@ -955,14 +1055,14 @@ export default function implementationWorkflow(pi: ExtensionAPI): void {
 	}
 
 	pi.registerCommand("workflow-dashboard", {
-		description: "Open the active workflow plan dashboard",
+		description: "Open the active implementation workflow dashboard",
 		handler: async (_args, ctx) => {
 			await openDashboard(ctx, true);
 		},
 	});
 
 	pi.registerShortcut(DASHBOARD_SHORTCUT, {
-		description: "Open the workflow plan dashboard",
+		description: "Open the implementation workflow dashboard",
 		handler: async (ctx) => {
 			await openDashboard(ctx, true);
 		},
@@ -997,6 +1097,8 @@ export default function implementationWorkflow(pi: ExtensionAPI): void {
 				metadataPath: activeFiles.metadata,
 				planPath: activeFiles.plan,
 				clarificationsPath: activeFiles.clarifications,
+				reviewPath: activeFiles.review,
+				reviewMarkdownPath: activeFiles.reviewMarkdown,
 			});
 		}
 		if (!instructions) return;
@@ -1060,6 +1162,7 @@ export default function implementationWorkflow(pi: ExtensionAPI): void {
 		if ((phase === "planning" || phase === "implementation" || phase === "review") && activeFiles) {
 			await openDashboard(ctx);
 		}
+		if (phase === "review") revealPhaseReminder(ctx);
 		if (phase === "cleanup" && identifier) await finishReviewCleanup(ctx, identifier);
 	});
 }

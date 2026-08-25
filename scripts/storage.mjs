@@ -11,8 +11,10 @@ const {
 	ensureWorkflowFiles,
 	promoteDraft,
 	readWorkflowMetadata,
+	readWorkflowReview,
 	writeDraftWorkflowMetadata,
 	writeWorkflowMetadata,
+	writeWorkflowReview,
 } = await jiti.import(new URL("../src/storage.ts", import.meta.url).pathname);
 
 const temporaryRoot = await mkdtemp(join(tmpdir(), "pi-workflow-storage-"));
@@ -26,6 +28,9 @@ function filesAt(root) {
 		clarifications: join(root, "clarifications.json"),
 		dashboard: join(root, "dashboard.html"),
 		metadata: join(root, "metadata.json"),
+		review: join(root, "review.json"),
+		reviewMarkdown: join(root, "review.md"),
+		reviewRuns: join(root, "review-runs"),
 		legacyDescription: join(root, "description.txt"),
 		previousPlan: join(root, "plan.previous.md"),
 	};
@@ -124,6 +129,63 @@ try {
 		await writeWorkflowMetadata(completedFiles, lifecycleMetadata);
 		assert.equal((await readWorkflowMetadata(completedFiles)).ask, ask);
 	}
+	const review = {
+		version: 1,
+		pullRequestUrl: "https://example.test/pull/1",
+		baseCommit: "abc123",
+		headCommit: "def456",
+		sourceFingerprint: "source789",
+		generatedAt: "2026-01-03T00:00:00.000Z",
+		overallResult: {
+			summary: "The implementation matches the plan.",
+			necessary: { status: "yes", explanation: "No unrelated work." },
+			sufficient: { status: "yes", explanation: "All planned behavior exists." },
+		},
+		overallConcerns: [],
+		holisticReview: {
+			summary: "The pull request is coherent as a whole.",
+			necessary: { status: "yes", explanation: "No unrelated work." },
+			sufficient: { status: "yes", explanation: "All planned behavior exists." },
+			concerns: [],
+		},
+		plannedChanges: [{
+			id: "PC-01",
+			title: "Store the report",
+			what: "Store a report.",
+			why: "Keep the review durable.",
+			pseudocode: "save(report)",
+			review: {
+				id: "PC-01",
+				title: "Store the report",
+				summary: "Stored as JSON and Markdown.",
+				necessary: { status: "yes", explanation: "Required by the plan." },
+				sufficient: { status: "yes", explanation: "Both files are stored." },
+				contracts: [],
+				concerns: [],
+			},
+		}],
+		testingCriteria: {
+			originalCriteria: "Verify the stored report.",
+			review: {
+				summary: "The report storage test passes.",
+				satisfied: { status: "yes", explanation: "Both formats are verified." },
+				criteria: [{
+					criterion: "Verify the stored report.",
+					status: "yes",
+					explanation: "JSON and Markdown are read back.",
+					evidence: [{ location: "scripts/storage.mjs:1", description: "Verifies both report files." }],
+				}],
+				concerns: [],
+			},
+		},
+	};
+	await writeWorkflowReview(completedFiles, review);
+	assert.deepEqual(await readWorkflowReview(completedFiles), review);
+	assert.match(await readFile(completedFiles.reviewMarkdown, "utf8"), /## Review of planned changes/);
+	assert.match(await readFile(completedFiles.reviewMarkdown, "utf8"), /## Testing criteria/);
+	await writeFile(completedFiles.review, "{}\n", "utf8");
+	await assert.rejects(readWorkflowReview(completedFiles), /invalid structure/);
+	await writeWorkflowReview(completedFiles, review);
 	await assert.rejects(
 		writeWorkflowMetadata(completedFiles, { ...lifecycleMetadata, ask: "changed" }),
 		/original ask is immutable/,
