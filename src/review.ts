@@ -118,9 +118,6 @@ export async function generateWorkflowReview(
 					baseCommit: input.baseCommit,
 					headCommit: input.headCommit,
 					pullRequestUrl: input.pullRequestUrl,
-					plannedChanges: input.plannedChanges
-						.map((change) => `${change.id}: ${change.title}`)
-						.join(", "),
 				}),
 				signal: generationAbort.signal,
 			});
@@ -164,23 +161,40 @@ export async function generateWorkflowReview(
 		if (!analysis) throw new Error(`The review for ${change.id} is missing.`);
 		return analysis;
 	});
-	const synthesisValue = await runAgent({
-		role: "synthesizer",
-		outputTool: REVIEW_SYNTHESIS_OUTPUT_TOOL,
-		cwd: input.worktreePath,
-		prompt: reviewSynthesisPrompt({
-			pullRequestUrl: input.pullRequestUrl,
-			baseCommit: input.baseCommit,
-			headCommit: input.headCommit,
-			plannedChangeReviews: JSON.stringify(orderedAnalyses, null, 2),
-			planAudit: JSON.stringify(audit, null, 2),
-			testingCriteriaReview: JSON.stringify(testingCriteriaReview, null, 2),
+	const synthesisDirectory = await mkdtemp(join(tmpdir(), "pi-workflow-review-synthesis-"));
+	const plannedChangeReviewsPath = join(synthesisDirectory, "planned-change-reviews.json");
+	const planAuditPath = join(synthesisDirectory, "plan-audit.json");
+	const testingCriteriaReviewPath = join(synthesisDirectory, "testing-criteria-review.json");
+	let synthesis: ReviewSynthesis;
+	try {
+		await Promise.all([
+			writeReviewResult(plannedChangeReviewsPath, orderedAnalyses),
+			writeReviewResult(planAuditPath, audit),
+			writeReviewResult(testingCriteriaReviewPath, testingCriteriaReview),
+		]);
+		const synthesisValue = await runAgent({
+			role: "synthesizer",
 			outputTool: REVIEW_SYNTHESIS_OUTPUT_TOOL,
-		}),
-		signal: generationAbort.signal,
-	});
-	if (!isReviewSynthesis(synthesisValue)) throw new Error("The review synthesizer returned an invalid result.");
-	const synthesis: ReviewSynthesis = synthesisValue;
+			cwd: input.worktreePath,
+			prompt: reviewSynthesisPrompt({
+				metadataPath: input.metadataPath,
+				clarificationsPath: input.clarificationsPath,
+				planPath: input.planPath,
+				pullRequestUrl: input.pullRequestUrl,
+				baseCommit: input.baseCommit,
+				headCommit: input.headCommit,
+				plannedChangeReviewsPath,
+				planAuditPath,
+				testingCriteriaReviewPath,
+				outputTool: REVIEW_SYNTHESIS_OUTPUT_TOOL,
+			}),
+			signal: generationAbort.signal,
+		});
+		if (!isReviewSynthesis(synthesisValue)) throw new Error("The review synthesizer returned an invalid result.");
+		synthesis = synthesisValue;
+	} finally {
+		await rm(synthesisDirectory, { recursive: true, force: true });
+	}
 	input.onStage?.("synthesis-complete");
 
 	return {
@@ -204,6 +218,10 @@ export async function generateWorkflowReview(
 			review: testingCriteriaReview,
 		},
 	};
+}
+
+async function writeReviewResult(path: string, value: unknown): Promise<void> {
+	await writeFile(path, `${JSON.stringify(value, null, 2)}\n`, { encoding: "utf8", mode: 0o600 });
 }
 
 export function createSpawnReviewAgent(options: SpawnReviewAgentOptions): ReviewAgentRunner {

@@ -96,7 +96,6 @@ export function planAuditReviewPrompt(values: {
 	baseCommit: string;
 	headCommit: string;
 	pullRequestUrl: string;
-	plannedChanges: string;
 }): string {
 	return render(REVIEW_PLAN_AUDIT_TEMPLATE, values);
 }
@@ -114,12 +113,15 @@ export function testingCriteriaReviewPrompt(values: {
 }
 
 export function reviewSynthesisPrompt(values: {
+	metadataPath: string;
+	clarificationsPath: string;
+	planPath: string;
 	pullRequestUrl: string;
 	baseCommit: string;
 	headCommit: string;
-	plannedChangeReviews: string;
-	planAudit: string;
-	testingCriteriaReview: string;
+	plannedChangeReviewsPath: string;
+	planAuditPath: string;
+	testingCriteriaReviewPath: string;
 	outputTool: string;
 }): string {
 	return render(REVIEW_SYNTHESIS_TEMPLATE, values);

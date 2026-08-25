@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 import { createJiti } from "jiti/static";
 
 const jiti = createJiti(import.meta.url, { moduleCache: false });
@@ -68,6 +69,7 @@ function analysis(id, title) {
 
 const requests = [];
 let synthesisStartedAfterAnalysis = false;
+let synthesisResultPaths = [];
 const runner = async (request) => {
   requests.push(request);
   if (request.role === "planned-change") {
@@ -106,9 +108,24 @@ const runner = async (request) => {
     };
   }
   synthesisStartedAfterAnalysis = requests.filter((candidate) => candidate.role !== "synthesizer").length === 4;
-  assert.match(request.prompt, /PC-01/);
-  assert.match(request.prompt, /Holistic plan audit/);
-  assert.match(request.prompt, /Testing criteria review/);
+  const plannedChangesPath = /Planned-change review results: (.+)$/m.exec(request.prompt)?.[1];
+  const planAuditPath = /Holistic plan audit result: (.+)$/m.exec(request.prompt)?.[1];
+  const testingCriteriaPath = /Testing criteria review result: (.+)$/m.exec(request.prompt)?.[1];
+  assert.ok(plannedChangesPath);
+  assert.ok(planAuditPath);
+  assert.ok(testingCriteriaPath);
+  synthesisResultPaths = [plannedChangesPath, planAuditPath, testingCriteriaPath];
+  assert.doesNotMatch(request.prompt, /PC-01 is implemented by one durable contract/);
+  assert.doesNotMatch(request.prompt, /The changes compose cleanly, with one dashboard gap/);
+  assert.doesNotMatch(request.prompt, /The automated suite passes, but the dashboard still needs visual confirmation/);
+
+  const [savedPlannedChanges, savedPlanAudit, savedTestingCriteria] = await Promise.all(
+    synthesisResultPaths.map(async (path) => JSON.parse(await readFile(path, "utf8"))),
+  );
+  assert.deepEqual(savedPlannedChanges, plannedChanges.map((change) => analysis(change.id, change.title)));
+  assert.equal(savedPlanAudit.summary, "The changes compose cleanly, with one dashboard gap.");
+  assert.equal(savedTestingCriteria.criteria.length, 2);
+
   return {
     overallResult: {
       summary: "The pull request is necessary but only partially sufficient.",
@@ -123,6 +140,8 @@ const stages = [];
 const report = await generateWorkflowReview({ ...input, onStage: (stage) => stages.push(stage) }, runner);
 assert.deepEqual(requests.map(({ role }) => role).sort(), ["plan-auditor", "planned-change", "planned-change", "testing-criteria", "synthesizer"].sort());
 assert.equal(synthesisStartedAfterAnalysis, true);
+assert.equal(synthesisResultPaths.length, 3);
+for (const path of synthesisResultPaths) await assert.rejects(readFile(path), { code: "ENOENT" });
 assert.deepEqual(stages, ["analysis-complete", "synthesis-complete"]);
 assert.deepEqual(report.plannedChanges.map(({ id }) => id), ["PC-01", "PC-02"]);
 assert.equal(report.plannedChanges[1].review.sufficient.status, "partial");
