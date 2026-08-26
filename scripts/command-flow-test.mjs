@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { existsSync } from "node:fs";
-import { access, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { access, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createJiti } from "jiti/static";
@@ -18,12 +18,21 @@ async function exists(path) {
 	}
 }
 
-async function scenario({ args = "", editorResult, afterFirstStart } = {}) {
+async function scenario({ args = "", editorResult, planningModel, afterFirstStart } = {}) {
 	const root = await mkdtemp(join(tmpdir(), "pi-workflow-command-"));
 	const agentDir = join(root, "agent");
 	const repositoryRoot = join(root, "repository");
 	const gitCommonDir = join(repositoryRoot, ".git");
 	process.env.PI_CODING_AGENT_DIR = agentDir;
+	if (planningModel) {
+		const configDirectory = join(agentDir, "implementation-workflow");
+		await mkdir(configDirectory, { recursive: true });
+		await writeFile(
+			join(configDirectory, "config.toml"),
+			`[models.planning]\nprovider = ${JSON.stringify(planningModel.provider)}\nmodel = ${JSON.stringify(planningModel.model)}\n`,
+			"utf8",
+		);
+	}
 
 	const commands = new Map();
 	const events = new Map();
@@ -32,6 +41,7 @@ async function scenario({ args = "", editorResult, afterFirstStart } = {}) {
 	const notifications = [];
 	const phaseEntries = [];
 	const sentMessages = [];
+	const selectedModels = [];
 	let activeTools = ["read", "edit", "write"];
 	let editorValue = editorResult;
 	let kickoffAssertion;
@@ -65,6 +75,10 @@ async function scenario({ args = "", editorResult, afterFirstStart } = {}) {
 		setActiveTools(tools) {
 			activeTools = [...tools];
 		},
+		async setModel(model) {
+			selectedModels.push(model);
+			return true;
+		},
 		setSessionName() {},
 	};
 	implementationWorkflow(pi);
@@ -72,6 +86,14 @@ async function scenario({ args = "", editorResult, afterFirstStart } = {}) {
 	const ctx = {
 		cwd: repositoryRoot,
 		mode: "rpc",
+		model: { provider: "default", id: "default-model" },
+		modelRegistry: {
+			find(provider, model) {
+				return planningModel && provider === planningModel.provider && model === planningModel.model
+					? { provider, id: model }
+					: undefined;
+			},
+		},
 		sessionManager: { getSessionId: () => "command-session" },
 		ui: {
 			editor: async (title, prefill) => {
@@ -130,6 +152,7 @@ async function scenario({ args = "", editorResult, afterFirstStart } = {}) {
 				? await readFile(join(draftRoot, "working-plan.md"), "utf8")
 				: undefined,
 			activeTools,
+			selectedModels,
 		};
 	} finally {
 		await events.get("session_shutdown")?.();
@@ -159,6 +182,14 @@ assert.equal(blank.sentMessages.length, 0);
 const fromEmptyEditor = await scenario({ editorResult: "Ask typed into the empty editor" });
 assert.equal(fromEmptyEditor.editorCalls[0].prefill, "");
 assert.equal(fromEmptyEditor.metadata.ask, "Ask typed into the empty editor");
+
+const modelOverride = await scenario({
+	editorResult: "Plan with the configured Isara model",
+	planningModel: { provider: "isara", model: "anthropic/claude-opus:planning" },
+});
+assert.deepEqual(modelOverride.selectedModels, [
+	{ provider: "isara", id: "anthropic/claude-opus:planning" },
+]);
 
 const protectedFiles = {
 	plan: "/workflow/plan.md",
