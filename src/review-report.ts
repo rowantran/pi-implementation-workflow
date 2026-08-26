@@ -30,6 +30,7 @@ export const ConcernSchema = Type.Object(
 	{ additionalProperties: false },
 );
 
+/** Legacy structure retained so reports generated before the literate walkthrough still load. */
 export const ContractReviewSchema = Type.Object(
 	{
 		name: Type.String(),
@@ -48,10 +49,27 @@ export const PlannedChangeAnalysisSchema = Type.Object(
 	{
 		id: Type.String(),
 		title: Type.String(),
-		summary: Type.String(),
+		walkthrough: Type.String({
+			description:
+				"Literate Markdown walkthrough of what was actually implemented, interleaving prose, code excerpts, and callouts",
+		}),
 		necessary: VerdictSchema,
 		sufficient: VerdictSchema,
-		contracts: Type.Array(ContractReviewSchema),
+		concerns: Type.Array(ConcernSchema),
+	},
+	{ additionalProperties: false },
+);
+
+/** Stored planned-change review: current walkthrough shape or the legacy summary-and-contracts shape. */
+export const StoredPlannedChangeAnalysisSchema = Type.Object(
+	{
+		id: Type.String(),
+		title: Type.String(),
+		walkthrough: Type.Optional(Type.String()),
+		summary: Type.Optional(Type.String()),
+		contracts: Type.Optional(Type.Array(ContractReviewSchema)),
+		necessary: VerdictSchema,
+		sufficient: VerdictSchema,
 		concerns: Type.Array(ConcernSchema),
 	},
 	{ additionalProperties: false },
@@ -127,7 +145,7 @@ export const PlannedChangeReportSchema = Type.Object(
 		what: Type.String(),
 		why: Type.String(),
 		pseudocode: Type.Optional(Type.String()),
-		review: PlannedChangeAnalysisSchema,
+		review: StoredPlannedChangeAnalysisSchema,
 	},
 	{ additionalProperties: false },
 );
@@ -165,6 +183,7 @@ export type SourceEvidence = Static<typeof SourceEvidenceSchema>;
 export type Concern = Static<typeof ConcernSchema>;
 export type ContractReview = Static<typeof ContractReviewSchema>;
 export type PlannedChangeAnalysis = Static<typeof PlannedChangeAnalysisSchema>;
+export type StoredPlannedChangeAnalysis = Static<typeof StoredPlannedChangeAnalysisSchema>;
 export type RelevantPlannedChange = Static<typeof RelevantPlannedChangeSchema>;
 export type IncrementalReviewScope = Static<typeof IncrementalReviewScopeSchema>;
 export type HolisticReview = Static<typeof HolisticReviewSchema>;
@@ -241,9 +260,11 @@ export function renderWorkflowReviewMarkdown(report: WorkflowReviewReport): stri
 			"",
 		);
 		if (change.pseudocode) lines.push("**Pseudocode:**", "", indentCode(change.pseudocode), "");
-		lines.push("#### Actual implementation", "", change.review.summary, "");
-		if (change.review.contracts.length === 0) lines.push("No core types or protocols were identified.", "");
-		for (const contract of change.review.contracts) {
+		lines.push("#### Actual implementation", "");
+		if (change.review.walkthrough) lines.push(change.review.walkthrough, "");
+		else if (change.review.summary) lines.push(change.review.summary, "");
+		const contracts = change.review.contracts ?? [];
+		for (const contract of contracts) {
 			lines.push(`##### ${contract.name} · ${contract.kind}`, "", indentCode(contract.signature), "");
 			if (contract.fields.length > 0) lines.push("Fields:", ...contract.fields.map((field) => `- ${field}`), "");
 			if (contract.constructionSites.length > 0) {

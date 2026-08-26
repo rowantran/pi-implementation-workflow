@@ -12,7 +12,8 @@ interface UpdatePlanResult {
 const Parameters = Type.Object({
 	description: Type.String({
 		maxLength: 160,
-		description: "A concise plain-English description of the plan in one sentence or sentence fragment of at most 18 words",
+		description:
+			"A concise plain-English description of the entire plan as it now stands, in one sentence or sentence fragment of at most 18 words. It is the plan's display title: summarize the whole plan, never the edit you just made",
 	}),
 });
 

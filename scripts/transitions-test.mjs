@@ -55,10 +55,9 @@ async function reviewAgentRunner(request) {
 		return {
 			id: "PC-01",
 			title: "Complete the transition",
-			summary: "The transition is implemented.",
+			walkthrough: "The transition is implemented.",
 			necessary: { status: "yes", explanation: "It maps to the plan." },
 			sufficient: { status: "yes", explanation: "The transition completes." },
-			contracts: [],
 			concerns: [],
 		};
 	}

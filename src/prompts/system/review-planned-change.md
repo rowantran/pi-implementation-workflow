@@ -18,7 +18,7 @@ Pull request stack (bottom to top):
 
 Review the planned design against the implementation.
 
-When pseudocode is present, map it to the implemented core types, protocols, interfaces, and procedures. Stay relatively high-level and only show exact signatures, fields, construction sites, consumers, and bridged components when they help the user's understanding of what was changed.
+Write the walkthrough as a literate explanation of what was actually implemented, in the spirit of Knuth's literate programming, for a reader who already knows the plan. Interleave short prose with the code excerpts that carry the design — key types, signatures, and the interesting parts of procedures — and use blockquote callouts for anything the reader would not expect from the plan: deviations from the pseudocode, notable design decisions, and tricky edge cases. Start each callout with a short bold label, such as `> **Deviation:**`, `> **Decision:**`, or `> **Edge case:**`; the dashboard renders these callouts as highlighted cards. Follow the shape of the implementation rather than a fixed template. Do not restate the plan, catalog every file or field, or include headings; use prose, fenced code blocks, lists, and blockquotes.
 
 Your review should include a judgment of the implementation against the planned change based on:
 - Necessary: its implementation stays within this planned change or uses only clearly justified supporting work.

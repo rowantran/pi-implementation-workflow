@@ -32,7 +32,7 @@ import {
 	REVIEW_REPORT_VERSION,
 	type HolisticReview,
 	type IncrementalReviewScope,
-	type PlannedChangeAnalysis,
+	type StoredPlannedChangeAnalysis,
 	type ReviewSynthesis,
 	type TestingCriteriaAnalysis,
 	type WorkflowReviewReport,
@@ -266,7 +266,7 @@ export async function generateWorkflowReview(
 	let analysisChanged = false;
 	const jobs: Array<
 		() => Promise<
-			| { type: "change"; value: PlannedChangeAnalysis }
+			| { type: "change"; value: StoredPlannedChangeAnalysis }
 			| { type: "holistic"; value: HolisticReview }
 			| { type: "testing"; value: TestingCriteriaAnalysis }
 		>
