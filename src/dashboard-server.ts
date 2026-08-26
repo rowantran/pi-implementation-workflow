@@ -3,6 +3,11 @@ import { open, readFile, realpath } from "node:fs/promises";
 import { createServer, request, type Server, type ServerResponse } from "node:http";
 import { isAbsolute, relative, resolve } from "node:path";
 import {
+	implementationWorkflowConfigPath,
+	loadImplementationWorkflowConfig,
+	type ImplementationWorkflowConfig,
+} from "./config.ts";
+import {
 	DRAFT_IDENTIFIER_PATTERN,
 	IDENTIFIER_PATTERN,
 	type WorkflowFiles,
@@ -63,54 +68,45 @@ export type EnsureDashboardServerResult =
 type ProbeResult = "none" | "different" | "matching";
 
 export function dashboardConfigPath(agentDirectory: string): string {
-	return resolve(agentDirectory, "implementation-workflow.json");
+	return implementationWorkflowConfigPath(agentDirectory);
 }
 
 export async function loadDashboardServerConfig(agentDirectory: string): Promise<DashboardServerConfig> {
-	const configPath = dashboardConfigPath(agentDirectory);
-	let text: string;
-	try {
-		text = await readFile(configPath, "utf8");
-	} catch (error) {
-		if ((error as NodeJS.ErrnoException).code === "ENOENT") return localDashboardConfig(configPath);
-		throw new Error(`Could not read dashboard configuration ${configPath}: ${errorMessage(error)}`);
-	}
+	return dashboardServerConfig(await loadImplementationWorkflowConfig(agentDirectory));
+}
 
-	let document: unknown;
-	try {
-		document = JSON.parse(text);
-	} catch (error) {
-		throw new Error(`Dashboard configuration is not valid JSON: ${configPath} (${errorMessage(error)})`);
-	}
-	if (!isRecord(document)) {
-		throw new Error(`Dashboard configuration must contain a JSON object: ${configPath}`);
-	}
-	const dashboard = document.dashboard;
+export function dashboardServerConfig(config: ImplementationWorkflowConfig): DashboardServerConfig {
+	const { configPath, dashboard } = config;
 	if (dashboard === undefined) return localDashboardConfig(configPath);
-	if (!isRecord(dashboard)) {
-		throw new Error(`The dashboard setting must be a JSON object: ${configPath}`);
+	const unknownFields = Object.keys(dashboard).filter(
+		(key) => key !== "mode" && key !== "public_base_url" && key !== "listen_port" && key !== "listen_host",
+	);
+	if (unknownFields.length > 0) {
+		throw new Error(
+			`Unknown dashboard field${unknownFields.length === 1 ? "" : "s"} ${unknownFields.join(", ")}: ${configPath}`,
+		);
 	}
 
 	const mode = dashboard.mode;
 	if (mode === undefined || mode === "local") {
-		const listenPort = dashboard.listenPort === undefined
+		const listenPort = dashboard.listen_port === undefined
 			? DEFAULT_DASHBOARD_PORT
-			: requireListenPort(dashboard.listenPort, configPath);
+			: requireListenPort(dashboard.listen_port, configPath);
 		return localDashboardConfig(configPath, listenPort);
 	}
 	if (mode !== "remote") {
 		throw new Error(`dashboard.mode must be either "local" or "remote": ${configPath}`);
 	}
 
-	const listenPort = requireListenPort(dashboard.listenPort, configPath);
+	const listenPort = requireListenPort(dashboard.listen_port, configPath);
 	let listenHost = "0.0.0.0";
-	if (dashboard.listenHost !== undefined) {
-		if (typeof dashboard.listenHost !== "string" || !dashboard.listenHost.trim()) {
-			throw new Error(`dashboard.listenHost must be a non-empty string: ${configPath}`);
+	if (dashboard.listen_host !== undefined) {
+		if (typeof dashboard.listen_host !== "string" || !dashboard.listen_host.trim()) {
+			throw new Error(`dashboard.listen_host must be a non-empty string: ${configPath}`);
 		}
-		listenHost = dashboard.listenHost.trim();
+		listenHost = dashboard.listen_host.trim();
 	}
-	const publicBaseUrl = requirePublicBaseUrl(dashboard.publicBaseUrl, configPath);
+	const publicBaseUrl = requirePublicBaseUrl(dashboard.public_base_url, configPath);
 	return {
 		mode: "remote",
 		publicBaseUrl,
@@ -346,37 +342,33 @@ function localDashboardConfig(configPath: string, listenPort = DEFAULT_DASHBOARD
 
 function requireListenPort(value: unknown, configPath: string): number {
 	if (!Number.isInteger(value) || (value as number) < 1 || (value as number) > 65_535) {
-		throw new Error(`dashboard.listenPort must be an integer from 1 through 65535: ${configPath}`);
+		throw new Error(`dashboard.listen_port must be an integer from 1 through 65535: ${configPath}`);
 	}
 	return value as number;
 }
 
 function requirePublicBaseUrl(value: unknown, configPath: string): string {
 	if (typeof value !== "string" || !value.trim()) {
-		throw new Error(`Remote dashboard mode requires dashboard.publicBaseUrl: ${configPath}`);
+		throw new Error(`Remote dashboard mode requires dashboard.public_base_url: ${configPath}`);
 	}
 	const rawUrl = value.trim();
 	let url: URL;
 	try {
 		url = new URL(rawUrl);
 	} catch {
-		throw new Error(`dashboard.publicBaseUrl must be an absolute HTTP or HTTPS URL: ${configPath}`);
+		throw new Error(`dashboard.public_base_url must be an absolute HTTP or HTTPS URL: ${configPath}`);
 	}
 	if ((url.protocol !== "http:" && url.protocol !== "https:") || !url.hostname) {
-		throw new Error(`dashboard.publicBaseUrl must be an absolute HTTP or HTTPS URL: ${configPath}`);
+		throw new Error(`dashboard.public_base_url must be an absolute HTTP or HTTPS URL: ${configPath}`);
 	}
 	if (url.username || url.password || rawUrl.includes("?") || rawUrl.includes("#")) {
-		throw new Error(`dashboard.publicBaseUrl cannot contain credentials, a query, or a fragment: ${configPath}`);
+		throw new Error(`dashboard.public_base_url cannot contain credentials, a query, or a fragment: ${configPath}`);
 	}
 	return url.href.replace(/\/$/, "");
 }
 
 function isWildcardHost(host: string): boolean {
 	return host === "0.0.0.0" || host === "::";
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-	return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
 
 function processServerHolder(): ProcessServerHolder {

@@ -141,39 +141,72 @@ The extension serves dashboards over HTTP in local and remote environments. Dash
 
 A planning link redirects to the completed workflow address after promotion. The server reads the current `dashboard.html` from workflow storage for every request, so new plans and updated dashboards do not require registration or a server restart.
 
-### Local mode
+## Configuration
 
-With no configuration file, the dashboard uses `http://127.0.0.1:43121` and listens only on loopback. All Pi processes using the same workflow directory share that fixed address. If port `43121` conflicts with another service, create `~/.pi/agent/implementation-workflow.json` with a different local port:
+The optional extension configuration is TOML at:
 
-```json
-{
-  "dashboard": {
-    "mode": "local",
-    "listenPort": 43122
-  }
-}
+```text
+~/.pi/agent/implementation-workflow/config.toml
 ```
 
-Local mode always binds to `127.0.0.1`; the public base URL is derived from `listenPort`.
+The path is relative to pi's agent directory, so `PI_CODING_AGENT_DIR` overrides the `~/.pi/agent` part. The previous `~/.pi/agent/implementation-workflow.json` file is no longer accepted. Move its dashboard settings into the TOML file before upgrading.
 
-### Remote devbox mode
+### Phase model overrides
 
-Remote mode is an explicit persistent setting because the extension cannot reliably infer the laptop-facing DNS name. On the devbox, create `~/.pi/agent/implementation-workflow.json`:
+A workflow uses the session's selected model unless its current phase has an override. The four override names are `planning`, `implementing`, `reviewing`, and `revising`:
 
-```json
-{
-  "dashboard": {
-    "mode": "remote",
-    "publicBaseUrl": "http://rowan-v2-devbox:43121",
-    "listenPort": 43121,
-    "listenHost": "0.0.0.0"
-  }
-}
+```toml
+[models.planning]
+provider = "isara"
+model = "anthropic/claude-opus:planning"
+
+[models.implementing]
+provider = "openai-codex"
+model = "gpt-5.4"
+
+[models.reviewing]
+provider = "isara-review"
+model = "openai/gpt-5.4:review"
+
+[models.revising]
+provider = "anthropic"
+model = "claude-opus-4-6"
 ```
 
-- `publicBaseUrl` is the absolute HTTP or HTTPS base URL that the laptop can reach. It can include a path prefix, but it must not contain credentials, query parameters, or a fragment.
-- `listenPort` is the devbox TCP port used by the temporary server.
-- `listenHost` is optional and defaults to `0.0.0.0`. Set it to a specific Tailscale or other interface address to narrow exposure.
+Each override requires both fields:
+
+- `provider` is the model provider registered with pi.
+- `model` is the complete model identifier. It can contain `/`, `:`, or other characters used by custom Isara models because the provider is stored separately.
+
+You can omit any phase. The `reviewing` override applies both to the isolated review agents that generate the report and to the read-only review session. An override is applied when its phase starts or resumes; it does not lock the model against a later manual `/model` change. Unknown models and models without configured authentication produce an error notification instead of silently changing the configuration.
+
+### Local dashboard mode
+
+With no dashboard configuration, the dashboard uses `http://127.0.0.1:43121` and listens only on loopback. All Pi processes using the same workflow directory share that fixed address. If port `43121` conflicts with another service, set a different local port:
+
+```toml
+[dashboard]
+mode = "local"
+listen_port = 43122
+```
+
+Local mode always binds to `127.0.0.1`; the public base URL is derived from `listen_port`.
+
+### Remote devbox dashboard mode
+
+Remote mode is an explicit persistent setting because the extension cannot reliably infer the laptop-facing DNS name. Configure it on the devbox:
+
+```toml
+[dashboard]
+mode = "remote"
+public_base_url = "http://rowan-v2-devbox:43121"
+listen_port = 43121
+listen_host = "0.0.0.0"
+```
+
+- `public_base_url` is the absolute HTTP or HTTPS base URL that the laptop can reach. It can include a path prefix, but it must not contain credentials, query parameters, or a fragment.
+- `listen_port` is the devbox TCP port used by the temporary server.
+- `listen_host` is optional and defaults to `0.0.0.0`. Set it to a specific Tailscale or other interface address to narrow exposure.
 
 **Exposure warning:** `0.0.0.0` accepts connections through every network interface permitted by the host firewall. Dashboard contents can therefore be visible to local-network clients and Tailscale peers, not only to your laptop. Use a narrower bind address or firewall rules when that exposure is not acceptable.
 
@@ -185,9 +218,9 @@ One Pi process owns the temporary listener on the configured port. Other Pi proc
 
 ### Troubleshooting
 
-- **Invalid configuration:** Read the notification error and fix the named `~/.pi/agent/implementation-workflow.json` field. Invalid JSON, modes, ports, hosts, and public URLs are rejected instead of producing an unreachable link.
-- **Occupied port:** Stop the unrelated listener or choose another `listenPort`. In local mode, every Pi process that should share dashboards must use the same override.
-- **Bind denied or remote link unreachable:** Confirm that `listenHost` exists on the devbox, the firewall permits `listenPort`, and `publicBaseUrl` uses a DNS name and port reachable from the laptop.
+- **Invalid configuration:** Read the notification error and fix the named `~/.pi/agent/implementation-workflow/config.toml` field. Invalid TOML, phase names, models, modes, ports, hosts, and public URLs are rejected.
+- **Occupied port:** Stop the unrelated listener or choose another `listen_port`. In local mode, every Pi process that should share dashboards must use the same override.
+- **Bind denied or remote link unreachable:** Confirm that `listen_host` exists on the devbox, the firewall permits `listen_port`, and `public_base_url` uses a DNS name and port reachable from the laptop.
 - **Isara:** Start `isara pi run` inside the workflow repository as described below. The HTTP listener is process-level, but Isara still determines repository filesystem permissions at launch.
 - **Owner exited:** Run `/workflow-dashboard` or press `Ctrl+Alt+D` in another active workflow session to restart service at the stable URL.
 

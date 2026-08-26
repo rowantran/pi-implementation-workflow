@@ -13,11 +13,16 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import { getCapabilities, hyperlink } from "@earendil-works/pi-tui";
 import {
+	loadImplementationWorkflowConfig,
+	type ImplementationWorkflowConfig,
+	type ModelOverridePhase,
+} from "./config.ts";
+import {
 	closeOwnedDashboardServer,
 	dashboardReference,
+	dashboardServerConfig,
 	dashboardUrl,
 	ensureSharedDashboardServer,
-	loadDashboardServerConfig,
 	type DashboardServerConfig,
 } from "./dashboard-server.ts";
 import { writeWorkflowDashboard, writeWorkflowDashboardRedirect } from "./dashboard.ts";
@@ -132,6 +137,7 @@ export default function implementationWorkflow(
 	let planDescription = "";
 	let baseTools: string[] = [];
 	let dashboardAnnounced = false;
+	let workflowConfigPromise: Promise<ImplementationWorkflowConfig> | undefined;
 	let dashboardConfigPromise: Promise<DashboardServerConfig> | undefined;
 	let completionInFlight = false;
 	let lastAutomaticFailure: string | undefined;
@@ -266,9 +272,45 @@ export default function implementationWorkflow(
 		);
 	}
 
+	function workflowConfig(): Promise<ImplementationWorkflowConfig> {
+		workflowConfigPromise ??= loadImplementationWorkflowConfig(getAgentDir());
+		return workflowConfigPromise;
+	}
+
 	function dashboardConfig(): Promise<DashboardServerConfig> {
-		dashboardConfigPromise ??= loadDashboardServerConfig(getAgentDir());
+		dashboardConfigPromise ??= workflowConfig().then(dashboardServerConfig);
 		return dashboardConfigPromise;
+	}
+
+	async function configuredPhaseModel(ctx: ExtensionContext, modelPhase: ModelOverridePhase) {
+		const config = await workflowConfig();
+		const override = config.models[modelPhase];
+		if (!override) return undefined;
+		const model = ctx.modelRegistry.find(override.provider, override.model);
+		if (!model) {
+			throw new Error(
+				`Configured ${modelPhase} model ${override.provider}/${override.model} is not registered (models.${modelPhase} in ${config.configPath}).`,
+			);
+		}
+		return model;
+	}
+
+	async function applyPhaseModel(ctx: ExtensionContext): Promise<void> {
+		const modelPhase = phaseModelOverrideName(phase);
+		if (!modelPhase) return;
+		try {
+			const model = await configuredPhaseModel(ctx, modelPhase);
+			if (!model || (ctx.model?.provider === model.provider && ctx.model.id === model.id)) return;
+			if (!(await pi.setModel(model))) {
+				const config = await workflowConfig();
+				ctx.ui.notify(
+					`Could not use configured ${modelPhase} model ${model.provider}/${model.id}: no authentication is available. Configuration: ${config.configPath}`,
+					"error",
+				);
+			}
+		} catch (error) {
+			ctx.ui.notify(`Could not apply the workflow model override: ${errorMessage(error)}`, "error");
+		}
 	}
 
 	function activeDashboardReference() {
@@ -430,6 +472,7 @@ export default function implementationWorkflow(
 			baseTools = pi
 				.getActiveTools()
 				.filter((name) => name !== WORKFLOW_QUESTION_TOOL && name !== WORKFLOW_UPDATE_PLAN_TOOL);
+			await applyPhaseModel(ctx);
 			applyPhaseTools();
 			updatePhaseStatus(ctx);
 			pi.setSessionName("");
@@ -616,6 +659,7 @@ export default function implementationWorkflow(
 					"Saving review report",
 				]
 			: ["Reviewing planned changes, full plan, and testing criteria", "Synthesizing overall findings", "Saving review report"];
+		const reviewModel = await configuredPhaseModel(ctx, "reviewing");
 		await runWorkflowProgress(
 			ctx,
 			previousReview ? "Generating incremental implementation re-review" : "Generating implementation review",
@@ -655,7 +699,11 @@ export default function implementationWorkflow(
 					},
 					dependencies.reviewAgentRunner ??
 						createSpawnReviewAgent({
-							model: ctx.model ? `${ctx.model.provider}/${ctx.model.id}` : undefined,
+							model: reviewModel
+								? `${reviewModel.provider}/${reviewModel.id}`
+								: ctx.model
+									? `${ctx.model.provider}/${ctx.model.id}`
+									: undefined,
 							thinkingLevel: ctx.thinkingLevel,
 							signal: ctx.signal,
 						}),
@@ -1565,6 +1613,7 @@ export default function implementationWorkflow(
 		if (phase === "review" && identifier) {
 			pi.setSessionName(workflowSessionName("Review", identifier, metadata?.description ?? planDescription));
 		}
+		await applyPhaseModel(ctx);
 		if ((phase === "planning" || phase === "implementation" || phase === "revision" || phase === "review") && activeFiles) {
 			await presentDashboard(ctx);
 		}
@@ -1576,6 +1625,14 @@ export default function implementationWorkflow(
 		if (event?.reason === "new" || event?.reason === "resume" || event?.reason === "fork") return;
 		await closeOwnedDashboardServer();
 	});
+}
+
+export function phaseModelOverrideName(phase: SessionWorkflowPhase | undefined): ModelOverridePhase | undefined {
+	if (phase === "planning") return "planning";
+	if (phase === "implementation") return "implementing";
+	if (phase === "review") return "reviewing";
+	if (phase === "revision") return "revising";
+	return undefined;
 }
 
 export function workflowWriteBlockReason(

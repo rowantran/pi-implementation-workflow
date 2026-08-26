@@ -25,10 +25,11 @@ async function unusedPort() {
 }
 
 const port = await unusedPort();
-await mkdir(agentDirectory, { recursive: true });
+const configDirectory = join(agentDirectory, "implementation-workflow");
+await mkdir(configDirectory, { recursive: true });
 await writeFile(
-	join(agentDirectory, "implementation-workflow.json"),
-	`${JSON.stringify({ dashboard: { mode: "local", listenPort: port } })}\n`,
+	join(configDirectory, "config.toml"),
+	`[dashboard]\nmode = "local"\nlisten_port = ${port}\n`,
 	"utf8",
 );
 
@@ -145,13 +146,14 @@ try {
 	await assert.rejects(fetch(expectedUrl));
 
 	const invalidAgentDirectory = join(temporaryRoot, "invalid-agent");
-	await mkdir(invalidAgentDirectory, { recursive: true });
-	await writeFile(join(invalidAgentDirectory, "implementation-workflow.json"), "{ invalid json\n", "utf8");
+	const invalidConfigDirectory = join(invalidAgentDirectory, "implementation-workflow");
+	await mkdir(invalidConfigDirectory, { recursive: true });
+	await writeFile(join(invalidConfigDirectory, "config.toml"), "[invalid toml\n", "utf8");
 	process.env.PI_CODING_AGENT_DIR = invalidAgentDirectory;
 	const invalidConfigHarness = createHarness();
 	activeNotifications = invalidConfigHarness.notifications;
 	await invalidConfigHarness.commands.get("workflow-plan").handler("", context([]));
-	assert.match(invalidConfigHarness.notifications.at(-1).message, /Could not configure.*implementation-workflow\.json/i);
+	assert.match(invalidConfigHarness.notifications.at(-1).message, /Could not configure.*implementation-workflow.*config\.toml/i);
 	assert.equal(invalidConfigHarness.notifications.at(-1).level, "error");
 	await emit(invalidConfigHarness, "session_shutdown", { reason: "quit" }, context([]));
 

@@ -7,6 +7,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createJiti } from "jiti/static";
+import { stringify } from "smol-toml";
 
 const jiti = createJiti(import.meta.url, { moduleCache: false });
 const dashboardServer = await jiti.import(new URL("../src/dashboard-server.ts", import.meta.url).pathname);
@@ -46,8 +47,9 @@ async function unusedPort() {
 }
 
 async function writeConfig(value) {
-	await mkdir(agentDirectory, { recursive: true });
-	await writeFile(join(agentDirectory, "implementation-workflow.json"), `${JSON.stringify(value)}\n`, "utf8");
+	const configDirectory = join(agentDirectory, "implementation-workflow");
+	await mkdir(configDirectory, { recursive: true });
+	await writeFile(join(configDirectory, "config.toml"), stringify(value), "utf8");
 }
 
 async function ensureFromAnotherProcess(config, root) {
@@ -99,7 +101,7 @@ try {
 	);
 
 	const port = await unusedPort();
-	await writeConfig({ dashboard: { mode: "local", listenPort: port } });
+	await writeConfig({ dashboard: { mode: "local", listen_port: port } });
 	const localConfig = await dashboardServer.loadDashboardServerConfig(agentDirectory);
 	assert.equal(localConfig.publicBaseUrl, `http://127.0.0.1:${port}`);
 	assert.equal(localConfig.listenHost, "127.0.0.1");
@@ -107,8 +109,8 @@ try {
 	await writeConfig({
 		dashboard: {
 			mode: "remote",
-			publicBaseUrl: "http://rowan-v2-devbox:45678",
-			listenPort: 45678,
+			public_base_url: "http://rowan-v2-devbox:45678",
+			listen_port: 45678,
 		},
 	});
 	const remoteConfig = await dashboardServer.loadDashboardServerConfig(agentDirectory);
@@ -118,26 +120,26 @@ try {
 	await writeConfig({
 		dashboard: {
 			mode: "remote",
-			publicBaseUrl: "https://rowan-v2-devbox/workflow-dashboards/",
-			listenPort: 45678,
+			public_base_url: "https://rowan-v2-devbox/workflow-dashboards/",
+			listen_port: 45678,
 		},
 	});
 	const prefixedRemoteConfig = await dashboardServer.loadDashboardServerConfig(agentDirectory);
 	assert.equal(prefixedRemoteConfig.publicBaseUrl, "https://rowan-v2-devbox/workflow-dashboards");
 
 	for (const invalid of [
-		{ dashboard: { mode: "remote", listenPort: 45678 } },
-		{ dashboard: { mode: "remote", publicBaseUrl: "file:///tmp/dashboard", listenPort: 45678 } },
-		{ dashboard: { mode: "remote", publicBaseUrl: "http://devbox:45678/path?query=yes", listenPort: 45678 } },
-		{ dashboard: { mode: "remote", publicBaseUrl: "http://devbox:45678/?", listenPort: 45678 } },
-		{ dashboard: { mode: "remote", publicBaseUrl: "http://devbox:45678/#", listenPort: 45678 } },
-		{ dashboard: { mode: "remote", publicBaseUrl: "http://devbox:45678", listenPort: 45678, listenHost: " " } },
-		{ dashboard: { mode: "local", listenPort: 0 } },
+		{ dashboard: { mode: "remote", listen_port: 45678 } },
+		{ dashboard: { mode: "remote", public_base_url: "file:///tmp/dashboard", listen_port: 45678 } },
+		{ dashboard: { mode: "remote", public_base_url: "http://devbox:45678/path?query=yes", listen_port: 45678 } },
+		{ dashboard: { mode: "remote", public_base_url: "http://devbox:45678/?", listen_port: 45678 } },
+		{ dashboard: { mode: "remote", public_base_url: "http://devbox:45678/#", listen_port: 45678 } },
+		{ dashboard: { mode: "remote", public_base_url: "http://devbox:45678", listen_port: 45678, listen_host: " " } },
+		{ dashboard: { mode: "local", listen_port: 0 } },
 	]) {
 		await writeConfig(invalid);
 		await assert.rejects(
 			dashboardServer.loadDashboardServerConfig(agentDirectory),
-			new RegExp(join(agentDirectory, "implementation-workflow.json").replace(/[.*+?^${}()|[\]\\]/g, "\\$&")),
+			new RegExp(join(agentDirectory, "implementation-workflow", "config.toml").replace(/[.*+?^${}()|[\]\\]/g, "\\$&")),
 		);
 	}
 
