@@ -131,7 +131,8 @@ assert.ok(html.indexOf('id="review-pagination"') < html.indexOf('id="review-cont
 assert.ok(html.includes("function renderReader(name,destination,focusContent,scrollContent)"));
 assert.ok(html.includes("function setReaderMode(name,mode,destination,focusContent)"));
 assert.ok(html.includes("function renderFullReview()"));
-assert.ok(html.includes("moveReader(name,offset,false,false,true)"));
+assert.ok(html.includes("moveReader(name,offset,false,false,true,true)"));
+assert.ok(html.includes('window.scrollTo({top:0,left:0,behavior:"auto"})'));
 assert.ok(html.includes("heading.focus({preventScroll:true})"));
 assert.ok(html.includes('if(scrollContent!==false)heading.scrollIntoView({block:"start"})'));
 assert.ok(html.includes(".plan-card{overflow:clip}"));
@@ -219,14 +220,17 @@ const fakeReaderDocument = {
 const fakeLocation = { href: "https://example.test/dashboard.html", hash: "" };
 const fakeHistory = { replaceState(_state, _title, url) { fakeLocation.href = url; } };
 const readerStore = {};
+const pageScrolls = [];
+const fakeWindow = { scrollTo(options) { pageScrolls.push(options); } };
 const readerHelpers = new Function(
   "readers",
   "document",
   "location",
   "history",
   "requestAnimationFrame",
+  "window",
   `${helperSource}; return { configureReader, moveReader, renderReader, setReaderMode };`,
-)(readerStore, fakeReaderDocument, fakeLocation, fakeHistory, (callback) => callback());
+)(readerStore, fakeReaderDocument, fakeLocation, fakeHistory, (callback) => callback(), fakeWindow);
 for (const name of ["plan", "review"]) {
   readerHelpers.configureReader(name, [
     { id: "first", label: "First" },
@@ -256,10 +260,11 @@ readerElements["plan-content"].heading = {
   scrollIntoView() { headingScrolls++; },
 };
 readerHelpers.setReaderMode("plan", "guided", "first", false);
-readerHelpers.moveReader("plan", 1, false, false, true);
+readerHelpers.moveReader("plan", 1, false, false, true, true);
 assert.equal(headingFocusOptions, undefined);
 assert.equal(headingScrolls, 0);
 assert.deepEqual(readerButtons.find((button) => button.dataset.reader === "plan" && button.dataset.readerDestination === "second").focusOptions, { preventScroll: true });
+assert.deepEqual(pageScrolls, [{ top: 0, left: 0, behavior: "auto" }]);
 readerHelpers.renderReader("plan", "first", true);
 assert.deepEqual(headingFocusOptions, { preventScroll: true });
 assert.equal(headingScrolls, 1);
