@@ -31,19 +31,13 @@ type ReviewReport:
     findings: Finding[]
 \`\`\`
 
-### PC-02: Render the report
+### PC-02: Document the report
 
 **What**
-Show each planned change in the dashboard.
+Document each planned change in the README.
 
 **Why**
-The reviewer needs a focused browser view.
-
-**Pseudocode**
-\`\`\`text
-for each plannedChange:
-    render plannedChange.review
-\`\`\`
+The reviewer needs a clear usage guide.
 
 ## Testing
 
@@ -65,8 +59,22 @@ assert.match(
   /expected PC-02, found PC-03/,
 );
 assert.match(
-  planningCompletionError(validPlan.replace("**Pseudocode**", "**Design**"), "A description"),
-  /must contain \*\*What\*\*, \*\*Why\*\*, and \*\*Pseudocode\*\*/,
+  planningCompletionError(
+    validPlan.replace("**Why**\nThe reviewer needs a clear usage guide.", "The reviewer needs a clear usage guide."),
+    "A description",
+  ),
+  /must contain \*\*What\*\* and \*\*Why\*\* once/,
+);
+assert.match(
+  planningCompletionError(validPlan.replace("**Pseudocode**", "**Pseudocode**\n\n**Pseudocode**"), "A description"),
+  /at most one optional \*\*Pseudocode\*\* field/,
+);
+assert.match(
+  planningCompletionError(
+    validPlan.replace("```text\ntype ReviewReport:\n    findings: Finding[]\n```", ""),
+    "A description",
+  ),
+  /empty Pseudocode field; remove it when it is not useful/,
 );
 assert.match(
   planningCompletionError(validPlan.replace("Verify the saved report and dashboard.", ""), "A description"),
@@ -75,8 +83,9 @@ assert.match(
 assert.equal(planningCompletionError(validPlan, "Generate planned-change implementation reviews"), undefined);
 assert.equal(parseTestingCriteria(validPlan), "Verify the saved report and dashboard.");
 
+const plannedChanges = parsePlannedChanges(validPlan);
 assert.deepEqual(
-  parsePlannedChanges(validPlan).map(({ id, title, what, why }) => ({ id, title, what, why })),
+  plannedChanges.map(({ id, title, what, why }) => ({ id, title, what, why })),
   [
     {
       id: "PC-01",
@@ -86,11 +95,14 @@ assert.deepEqual(
     },
     {
       id: "PC-02",
-      title: "Render the report",
-      what: "Show each planned change in the dashboard.",
-      why: "The reviewer needs a focused browser view.",
+      title: "Document the report",
+      what: "Document each planned change in the README.",
+      why: "The reviewer needs a clear usage guide.",
     },
   ],
 );
+assert.equal(plannedChanges[0].pseudocode, "```text\ntype ReviewReport:\n    findings: Finding[]\n```");
+assert.equal(plannedChanges[1].pseudocode, undefined);
+assert.ok(!Object.hasOwn(plannedChanges[1], "pseudocode"));
 
-console.log("Planning test passed: planned changes and testing criteria are stable, explicit, and parseable.");
+console.log("Planning test passed: planned changes support precise optional pseudocode and explicit testing criteria.");

@@ -6,7 +6,7 @@ import { createJiti } from "jiti/static";
 
 const jiti = createJiti(import.meta.url, { moduleCache: false });
 const { generateWorkflowReview } = await jiti.import(new URL("../src/review.ts", import.meta.url).pathname);
-const { renderWorkflowReviewMarkdown } = await jiti.import(
+const { isWorkflowReviewReport, renderWorkflowReviewMarkdown } = await jiti.import(
   new URL("../src/review-report.ts", import.meta.url).pathname,
 );
 
@@ -24,7 +24,6 @@ const plannedChanges = [
     title: "Render the report",
     what: "Show findings in the dashboard.",
     why: "The review should be easy to scan.",
-    pseudocode: "procedure RenderReview(report)",
     content: "### PC-02: Render the report\n...",
   },
 ];
@@ -176,12 +175,17 @@ assert.equal(report.holisticReview.summary, "The changes compose cleanly, with o
 assert.equal(report.testingCriteria.originalCriteria, input.testingCriteria);
 assert.equal(report.testingCriteria.review.satisfied.status, "partial");
 assert.equal(report.testingCriteria.review.criteria.length, 2);
+assert.ok(isWorkflowReviewReport(report));
+assert.equal(report.plannedChanges[0].pseudocode, plannedChanges[0].pseudocode);
+assert.ok(!Object.hasOwn(report.plannedChanges[1], "pseudocode"));
 
 const markdown = renderWorkflowReviewMarkdown(report);
 assert.match(markdown, /## Overall result/);
 assert.match(markdown, /## Overall concerns/);
 assert.match(markdown, /## Review of planned changes/);
 assert.match(markdown, /### PC-01: Store the report/);
+assert.match(markdown, /### PC-02: Render the report/);
+assert.equal(markdown.match(/\*\*Pseudocode:\*\*/g)?.length, 1);
 assert.match(markdown, /interface WorkflowReviewReport/);
 assert.match(markdown, /Necessary: \*\*Yes\*\*/);
 assert.match(markdown, /## Testing criteria/);

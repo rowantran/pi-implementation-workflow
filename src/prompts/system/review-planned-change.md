@@ -15,7 +15,9 @@ Durable sources, in priority order:
 Implementation range: {{{baseCommit}}}..{{{headCommit}}}
 Pull request: {{{pullRequestUrl}}}
 
-Map the planned pseudocode to the actual core types, protocols, interfaces, and procedures that were implemented. Stay relatively high-level and only show exact signatures, fields, construction sites, consumers, and bridged components when they help the user's understanding of the implemented code.
+Review the planned design against the implementation.
+
+When pseudocode is present, map it to the implemented core types, protocols, interfaces, and procedures. Stay relatively high-level and only show exact signatures, fields, construction sites, consumers, and bridged components when they help the user's understanding of what was changed.
 
 Your review should include a judgment of the implementation against the planned change based on:
 - Necessary: its implementation stays within this planned change or uses only clearly justified supporting work.

@@ -441,7 +441,7 @@ export async function generateWorkflowReview(
 			title: change.title,
 			what: change.what,
 			why: change.why,
-			pseudocode: change.pseudocode,
+			...(change.pseudocode === undefined ? {} : { pseudocode: change.pseudocode }),
 			review: orderedAnalyses[index]!,
 		})),
 		testingCriteria: {

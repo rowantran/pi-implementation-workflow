@@ -178,6 +178,12 @@ assert.ok(overallReview.includes("&lt;script&gt;alert(&quot;review&quot;)&lt;/sc
 const plannedChangeReview = renderReviewDestination({ kind: "change", number: 1, change: data.review.plannedChanges[0] });
 assert.ok(plannedChangeReview.includes('class="review-planned-design"'));
 assert.ok(plannedChangeReview.includes("PC-01:"));
+assert.ok(plannedChangeReview.includes("<h4>Pseudocode</h4>"));
+const changeWithoutPseudocode = { ...data.review.plannedChanges[0] };
+delete changeWithoutPseudocode.pseudocode;
+const reviewWithoutPseudocode = renderReviewDestination({ kind: "change", number: 1, change: changeWithoutPseudocode });
+assert.ok(!reviewWithoutPseudocode.includes("<h4>Pseudocode</h4>"));
+assert.ok(!reviewWithoutPseudocode.includes("undefined"));
 const testingReview = renderReviewDestination({ kind: "testing" });
 assert.ok(testingReview.includes("Testing criteria"));
 assert.ok(testingReview.includes("Run the dashboard test and inspect the report."));
