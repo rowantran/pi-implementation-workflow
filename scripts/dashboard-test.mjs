@@ -137,8 +137,8 @@ assert.ok(!html.includes('data-plan-destination="overview"'));
 assert.ok(html.includes('data-reader="plan" data-reader-destination="goal"'));
 assert.ok(html.includes('data-reader="review" data-reader-destination="testing"'));
 assert.ok(html.includes('class="plan-outline-button plan-outline-button--section"'));
-assert.equal(html.match(/aria-keyshortcuts="P"/g)?.length, 2);
-assert.equal(html.match(/aria-keyshortcuts="N"/g)?.length, 2);
+assert.equal(html.match(/aria-keyshortcuts="\["/g)?.length, 3);
+assert.equal(html.match(/aria-keyshortcuts="\]"/g)?.length, 3);
 assert.equal(html.match(/aria-keyshortcuts="S"/g)?.length, 2);
 assert.equal(html.match(/aria-keyshortcuts="C"/g)?.length, 1);
 assert.ok(html.includes('id="plan-navigation-sidebar-button"'));
@@ -147,9 +147,11 @@ assert.ok(html.includes('id="context-sidebar-button"'));
 assert.ok(html.includes('id="workflow-context-sidebar"'));
 assert.ok(html.includes('<kbd class="shortcut-key">S</kbd>'));
 assert.ok(html.includes('<kbd class="shortcut-key">C</kbd>'));
-assert.ok(html.includes('key==="p"'));
-assert.ok(html.includes('key==="n"'));
+assert.ok(html.includes('event.key==="["'));
+assert.ok(html.includes('event.key==="]"'));
 assert.ok(html.includes('key==="s"'));
+assert.ok(!html.includes('key==="p"'));
+assert.ok(!html.includes('key==="n"'));
 assert.ok(html.includes('key==="c"'));
 assert.ok(html.indexOf('id="plan-pagination"') < html.indexOf('id="plan-content"'));
 assert.ok(html.indexOf('id="review-pagination"') < html.indexOf('id="review-content"'));
@@ -185,6 +187,10 @@ assert.ok(html.includes('initialView=unseenReview ? "review"'));
 assert.ok(!html.includes('<script>alert("review")</script>'));
 assert.ok(html.includes('class="markdown diff-document"'));
 assert.ok(html.includes("renderRichDiff(rows,before.content,after.content)"));
+assert.ok(html.includes('id="diff-previous-block"'));
+assert.ok(html.includes('id="diff-next-block"'));
+assert.ok(html.includes("function diffBlockStartIndexes(rows, contextLines = 3)"));
+assert.ok(html.includes("function moveDiffBlock(offset)"));
 assert.ok(!html.includes('class="diff-table"'));
 const dashboardScript = html.match(/<script>([\s\S]*)<\/script>/)?.[1];
 assert.ok(dashboardScript);
@@ -193,8 +199,8 @@ const helperSource = dashboardScript.slice(
   dashboardScript.indexOf("function escapeHtml"),
   dashboardScript.indexOf("function initialize"),
 );
-const { hashReaderDestination, initialViewForHash, lineDiff, parsePlanStructure, renderRichDiff } = new Function(
-  `${helperSource}; return { hashReaderDestination, initialViewForHash, lineDiff, parsePlanStructure, renderRichDiff };`,
+const { diffBlockStartIndexes, hashReaderDestination, initialViewForHash, lineDiff, parsePlanStructure, renderRichDiff } = new Function(
+  `${helperSource}; return { diffBlockStartIndexes, hashReaderDestination, initialViewForHash, lineDiff, parsePlanStructure, renderRichDiff };`,
 )();
 const { renderReviewDestination } = new Function(
   "dashboard",
@@ -418,10 +424,45 @@ const view = "rich";
 const richDiff = renderRichDiff(lineDiff(before, after), before, after);
 assert.ok(richDiff.includes('<h2 class="diff-line context">Steps</h2>'));
 assert.ok(richDiff.includes('<strong>formatted text</strong>'));
-assert.ok(richDiff.includes('<li class="diff-line remove" value="2">Show raw source</li>'));
-assert.ok(richDiff.includes('<li class="diff-line add" value="2">Show a rich diff</li>'));
+assert.match(richDiff, /<li class="diff-line remove"[^>]* value="2">Show raw source<\/li>/);
+assert.match(richDiff, /<li class="diff-line add"[^>]* value="2">Show a rich diff<\/li>/);
 assert.ok(richDiff.includes('<span class="diff-code-line remove">const view = &quot;raw&quot;;</span>'));
 assert.ok(richDiff.includes('<span class="diff-code-line add">const view = &quot;rich&quot;;</span>'));
+assert.equal(richDiff.match(/data-diff-block-index=/g)?.length, 1, "nearby list and code changes form one block");
+const contextRow = { kind: "context", old: 1, new: 1, text: "same" };
+const changedRow = { kind: "add", old: null, new: 1, text: "changed" };
+assert.deepEqual([...diffBlockStartIndexes([changedRow, ...Array(6).fill(contextRow), changedRow]).entries()], [[0, 0]]);
+assert.deepEqual([...diffBlockStartIndexes([changedRow, ...Array(7).fill(contextRow), changedRow]).entries()], [[0, 0], [8, 1]]);
+
+const diffAnchors = [0, 1].map(() => {
+  const classes = new Set();
+  return {
+    classList: { add(name) { classes.add(name); }, remove(name) { classes.delete(name); }, contains(name) { return classes.has(name); } },
+    focus(options) { this.focusOptions = options; },
+    scrollIntoView(options) { this.scrollOptions = options; },
+  };
+});
+const diffButtons = { "diff-previous-block": {}, "diff-next-block": {} };
+const diffNavigation = new Function(
+  "document",
+  `let currentDiffBlockIndex=-1;${helperSource}; return { moveDiffBlock, updateDiffBlockNavigation };`,
+)({
+  querySelectorAll(selector) { assert.equal(selector, "[data-diff-block-index]"); return diffAnchors; },
+  getElementById(id) { return diffButtons[id]; },
+});
+diffNavigation.updateDiffBlockNavigation();
+assert.equal(diffButtons["diff-previous-block"].disabled, true);
+assert.equal(diffButtons["diff-next-block"].disabled, false);
+diffNavigation.moveDiffBlock(1);
+assert.equal(diffAnchors[0].classList.contains("diff-block--active"), true);
+assert.deepEqual(diffAnchors[0].focusOptions, { preventScroll: true });
+assert.deepEqual(diffAnchors[0].scrollOptions, { block: "start", behavior: "auto" });
+diffNavigation.moveDiffBlock(1);
+assert.equal(diffAnchors[0].classList.contains("diff-block--active"), false);
+assert.equal(diffAnchors[1].classList.contains("diff-block--active"), true);
+assert.equal(diffButtons["diff-next-block"].disabled, true);
+diffNavigation.moveDiffBlock(-1);
+assert.equal(diffAnchors[0].classList.contains("diff-block--active"), true);
 
 const structuredPlan = `# Delivery plan
 
@@ -467,4 +508,4 @@ assert.equal(initialViewForHash("#plan/change-1-parse", "review", true), "plan")
 assert.equal(initialViewForHash("", "review", true), "review");
 assert.equal(initialViewForHash("", "diff", false), "diff");
 
-console.log("Dashboard test passed: review documents, plan navigation, safe content, and rich version comparisons render correctly.");
+console.log("Dashboard test passed: plan, review, and grouped diff navigation render and behave correctly.");
