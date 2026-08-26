@@ -282,34 +282,42 @@ export default function implementationWorkflow(
 		return dashboardConfigPromise;
 	}
 
-	async function configuredPhaseModel(ctx: ExtensionContext, modelPhase: ModelOverridePhase) {
+	async function configuredPhaseOverride(ctx: ExtensionContext, modelPhase: ModelOverridePhase) {
 		const config = await workflowConfig();
 		const override = config.models[modelPhase];
 		if (!override) return undefined;
-		const model = ctx.modelRegistry.find(override.provider, override.model);
-		if (!model) {
+		const model = override.provider && override.model
+			? ctx.modelRegistry.find(override.provider, override.model)
+			: undefined;
+		if (override.provider && override.model && !model) {
 			throw new Error(
 				`Configured ${modelPhase} model ${override.provider}/${override.model} is not registered (models.${modelPhase} in ${config.configPath}).`,
 			);
 		}
-		return model;
+		return { model, thinkingLevel: override.thinkingLevel };
 	}
 
-	async function applyPhaseModel(ctx: ExtensionContext): Promise<void> {
+	async function applyPhaseOverride(ctx: ExtensionContext): Promise<void> {
 		const modelPhase = phaseModelOverrideName(phase);
 		if (!modelPhase) return;
 		try {
-			const model = await configuredPhaseModel(ctx, modelPhase);
-			if (!model || (ctx.model?.provider === model.provider && ctx.model.id === model.id)) return;
-			if (!(await pi.setModel(model))) {
-				const config = await workflowConfig();
-				ctx.ui.notify(
-					`Could not use configured ${modelPhase} model ${model.provider}/${model.id}: no authentication is available. Configuration: ${config.configPath}`,
-					"error",
-				);
+			const override = await configuredPhaseOverride(ctx, modelPhase);
+			if (!override) return;
+			const { model, thinkingLevel } = override;
+			let modelAvailable = true;
+			if (model && (ctx.model?.provider !== model.provider || ctx.model.id !== model.id)) {
+				modelAvailable = await pi.setModel(model);
+				if (!modelAvailable) {
+					const config = await workflowConfig();
+					ctx.ui.notify(
+						`Could not use configured ${modelPhase} model ${model.provider}/${model.id}: no authentication is available. Configuration: ${config.configPath}`,
+						"error",
+					);
+				}
 			}
+			if (thinkingLevel !== undefined && modelAvailable) pi.setThinkingLevel(thinkingLevel);
 		} catch (error) {
-			ctx.ui.notify(`Could not apply the workflow model override: ${errorMessage(error)}`, "error");
+			ctx.ui.notify(`Could not apply the workflow phase override: ${errorMessage(error)}`, "error");
 		}
 	}
 
@@ -472,7 +480,7 @@ export default function implementationWorkflow(
 			baseTools = pi
 				.getActiveTools()
 				.filter((name) => name !== WORKFLOW_QUESTION_TOOL && name !== WORKFLOW_UPDATE_PLAN_TOOL);
-			await applyPhaseModel(ctx);
+			await applyPhaseOverride(ctx);
 			applyPhaseTools();
 			updatePhaseStatus(ctx);
 			pi.setSessionName("");
@@ -659,7 +667,7 @@ export default function implementationWorkflow(
 					"Saving review report",
 				]
 			: ["Reviewing planned changes, full plan, and testing criteria", "Synthesizing overall findings", "Saving review report"];
-		const reviewModel = await configuredPhaseModel(ctx, "reviewing");
+		const reviewOverride = await configuredPhaseOverride(ctx, "reviewing");
 		await runWorkflowProgress(
 			ctx,
 			previousReview ? "Generating incremental implementation re-review" : "Generating implementation review",
@@ -699,12 +707,12 @@ export default function implementationWorkflow(
 					},
 					dependencies.reviewAgentRunner ??
 						createSpawnReviewAgent({
-							model: reviewModel
-								? `${reviewModel.provider}/${reviewModel.id}`
+							model: reviewOverride?.model
+								? `${reviewOverride.model.provider}/${reviewOverride.model.id}`
 								: ctx.model
 									? `${ctx.model.provider}/${ctx.model.id}`
 									: undefined,
-							thinkingLevel: ctx.thinkingLevel,
+							thinkingLevel: reviewOverride?.thinkingLevel ?? ctx.thinkingLevel,
 							signal: ctx.signal,
 						}),
 				);
@@ -1613,7 +1621,7 @@ export default function implementationWorkflow(
 		if (phase === "review" && identifier) {
 			pi.setSessionName(workflowSessionName("Review", identifier, metadata?.description ?? planDescription));
 		}
-		await applyPhaseModel(ctx);
+		await applyPhaseOverride(ctx);
 		if ((phase === "planning" || phase === "implementation" || phase === "revision" || phase === "review") && activeFiles) {
 			await presentDashboard(ctx);
 		}

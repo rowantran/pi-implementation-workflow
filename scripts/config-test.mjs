@@ -33,6 +33,7 @@ listen_host = "0.0.0.0"
 [models.planning]
 provider = "isara"
 model = "anthropic/claude-opus:planning"
+thinking_level = "high"
 
 [models.implementing]
 provider = "openai-codex"
@@ -41,17 +42,17 @@ model = "gpt-5.4"
 [models.reviewing]
 provider = "isara-review"
 model = "openai/gpt-5.4:review"
+thinking_level = "max"
 
 [models.revising]
-provider = "anthropic"
-model = "claude-opus-4-6"
+thinking_level = "low"
 `);
 	const configured = await configModule.loadImplementationWorkflowConfig(configuredAgentDirectory);
 	assert.deepEqual(configured.models, {
-		planning: { provider: "isara", model: "anthropic/claude-opus:planning" },
+		planning: { provider: "isara", model: "anthropic/claude-opus:planning", thinkingLevel: "high" },
 		implementing: { provider: "openai-codex", model: "gpt-5.4" },
-		reviewing: { provider: "isara-review", model: "openai/gpt-5.4:review" },
-		revising: { provider: "anthropic", model: "claude-opus-4-6" },
+		reviewing: { provider: "isara-review", model: "openai/gpt-5.4:review", thinkingLevel: "max" },
+		revising: { thinkingLevel: "low" },
 	});
 	assert.equal(configured.dashboard.public_base_url, "http://devbox:43121");
 
@@ -73,7 +74,21 @@ model = "claude-opus-4-6"
 	await writeConfig(incompleteAgentDirectory, `[models.planning]\nmodel = "planner"\n`);
 	await assert.rejects(
 		configModule.loadImplementationWorkflowConfig(incompleteAgentDirectory),
-		/models\.planning\.provider must be a non-empty string/,
+		/models\.planning\.provider and models\.planning\.model must be specified together/,
+	);
+
+	const invalidThinkingAgentDirectory = join(temporaryRoot, "invalid-thinking-agent");
+	await writeConfig(invalidThinkingAgentDirectory, `[models.planning]\nthinking_level = "extreme"\n`);
+	await assert.rejects(
+		configModule.loadImplementationWorkflowConfig(invalidThinkingAgentDirectory),
+		/models\.planning\.thinking_level must be one of off, minimal, low, medium, high, xhigh, or max/,
+	);
+
+	const emptyOverrideAgentDirectory = join(temporaryRoot, "empty-override-agent");
+	await writeConfig(emptyOverrideAgentDirectory, `[models.planning]\n`);
+	await assert.rejects(
+		configModule.loadImplementationWorkflowConfig(emptyOverrideAgentDirectory),
+		/models\.planning must specify provider and model, thinking_level, or both/,
 	);
 
 	const malformedAgentDirectory = join(temporaryRoot, "malformed-agent");
@@ -91,7 +106,7 @@ model = "claude-opus-4-6"
 		/legacy JSON configuration.*implementation-workflow\.json.*implementation-workflow.*config\.toml/is,
 	);
 
-	console.log("Config test passed: TOML parsing, phase model references, strict phase names, and legacy migration errors work.");
+	console.log("Config test passed: TOML parsing, model and thinking overrides, strict phase names, and legacy migration errors work.");
 } finally {
 	await rm(temporaryRoot, { recursive: true, force: true });
 }
