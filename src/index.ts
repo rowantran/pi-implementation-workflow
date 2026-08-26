@@ -1273,17 +1273,31 @@ export default function implementationWorkflow(
 					"--limit",
 					"100",
 					"--json",
-					"number,url,baseRefName,headRefName,headRefOid",
+					"number,url,baseRefName,headRefName",
 				],
 				{ cwd: workflow.worktreePath, timeout: 15_000 },
 			),
 		]);
 		if (!branch || result.code !== 0) return undefined;
 		try {
-			const pullRequests = parseOpenPullRequests(JSON.parse(result.stdout));
-			return pullRequests
-				? buildPullRequestStack(pullRequests, branch, workflow.baseBranch)
-				: undefined;
+			const openPullRequests = parseOpenPullRequests(JSON.parse(result.stdout));
+			if (!openPullRequests) return undefined;
+			const stack = buildPullRequestStack(openPullRequests, branch, workflow.baseBranch);
+			if ("error" in stack) return stack;
+
+			const pullRequests: OpenPullRequest[] = [];
+			for (const pullRequest of stack.pullRequests) {
+				// Older gh releases do not expose headRefOid through `pr list`; the REST field is stable.
+				const head = await pi.exec(
+					"gh",
+					["api", `repos/{owner}/{repo}/pulls/${pullRequest.number}`, "--jq", ".head.sha"],
+					{ cwd: workflow.worktreePath, timeout: 15_000 },
+				);
+				const headRefOid = head.code === 0 ? head.stdout.trim() : "";
+				if (!headRefOid) return undefined;
+				pullRequests.push({ ...pullRequest, headRefOid });
+			}
+			return { pullRequests };
 		} catch {
 			return undefined;
 		}

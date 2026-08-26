@@ -9,36 +9,36 @@ export interface OpenPullRequest extends WorkflowPullRequest {
 	headRefOid: string;
 }
 
-export type PullRequestStackResult =
-	| { pullRequests: OpenPullRequest[] }
+export type PullRequestStackResult<PullRequestT extends WorkflowPullRequest = WorkflowPullRequest> =
+	| { pullRequests: PullRequestT[] }
 	| { error: string };
 
-export function parseOpenPullRequests(value: unknown): OpenPullRequest[] | undefined {
+export function parseOpenPullRequests(value: unknown): WorkflowPullRequest[] | undefined {
 	if (!Array.isArray(value)) return undefined;
-	const pullRequests: OpenPullRequest[] = [];
+	const pullRequests: WorkflowPullRequest[] = [];
 	for (const item of value) {
-		if (!isOpenPullRequest(item)) return undefined;
+		if (!isWorkflowPullRequest(item)) return undefined;
 		pullRequests.push(item);
 	}
 	return pullRequests;
 }
 
-export function buildPullRequestStack(
-	openPullRequests: OpenPullRequest[],
+export function buildPullRequestStack<PullRequestT extends WorkflowPullRequest>(
+	openPullRequests: PullRequestT[],
 	topBranch: string,
 	baseBranch: string,
-): PullRequestStackResult {
+): PullRequestStackResult<PullRequestT> {
 	if (!topBranch) return { error: "could not identify the checked-out stack tip branch" };
 	if (topBranch === baseBranch) return { error: `the checked-out branch is the base branch ${baseBranch}` };
 
-	const byHeadBranch = new Map<string, OpenPullRequest[]>();
+	const byHeadBranch = new Map<string, PullRequestT[]>();
 	for (const pullRequest of openPullRequests) {
 		const candidates = byHeadBranch.get(pullRequest.headRefName) ?? [];
 		candidates.push(pullRequest);
 		byHeadBranch.set(pullRequest.headRefName, candidates);
 	}
 
-	const reversed: OpenPullRequest[] = [];
+	const reversed: PullRequestT[] = [];
 	const visited = new Set<string>();
 	let branch = topBranch;
 	while (branch !== baseBranch) {
@@ -85,13 +85,5 @@ export function isWorkflowPullRequest(value: unknown): value is WorkflowPullRequ
 		Boolean(pullRequest.baseRefName) &&
 		typeof pullRequest.headRefName === "string" &&
 		Boolean(pullRequest.headRefName)
-	);
-}
-
-function isOpenPullRequest(value: unknown): value is OpenPullRequest {
-	return (
-		isWorkflowPullRequest(value) &&
-		typeof (value as Partial<OpenPullRequest>).headRefOid === "string" &&
-		Boolean((value as Partial<OpenPullRequest>).headRefOid)
 	);
 }
