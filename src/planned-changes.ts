@@ -3,7 +3,7 @@ export interface PlannedChange {
 	title: string;
 	what: string;
 	why: string;
-	pseudocode: string;
+	pseudocode?: string;
 	content: string;
 }
 
@@ -60,8 +60,10 @@ export function parsePlannedChanges(plan: string): PlannedChange[] {
 			.map((line, index) => ({ index, match: bodyOutsideFence[index] ? FIELD_HEADING.exec(line) : null }))
 			.filter((item): item is { index: number; match: RegExpExecArray } => item.match !== null);
 		const names = fields.map((item) => item.match[1]!.toLowerCase());
-		if (names.join(",") !== "what,why,pseudocode") {
-			throw new Error(`${heading.id} must contain **What**, **Why**, and **Pseudocode** once, in that order`);
+		if (names.join(",") !== "what,why" && names.join(",") !== "what,why,pseudocode") {
+			throw new Error(
+				`${heading.id} must contain **What** and **Why** once, in that order, followed by at most one optional **Pseudocode** field`,
+			);
 		}
 		const value = (fieldIndex: number): string => {
 			const start = fields[fieldIndex]!.index + 1;
@@ -70,15 +72,16 @@ export function parsePlannedChanges(plan: string): PlannedChange[] {
 		};
 		const what = value(0);
 		const why = value(1);
-		const pseudocode = value(2);
-		if (!what || !why || !pseudocode) throw new Error(`${heading.id} has an empty What, Why, or Pseudocode field`);
+		const pseudocode = fields.length === 3 ? value(2) : undefined;
+		if (!what || !why) throw new Error(`${heading.id} has an empty What or Why field`);
+		if (pseudocode === "") throw new Error(`${heading.id} has an empty Pseudocode field; remove it when it is not useful`);
 
 		return {
 			id: heading.id,
 			title: heading.title,
 			what,
 			why,
-			pseudocode,
+			...(pseudocode === undefined ? {} : { pseudocode }),
 			content: lines.slice(heading.index, end).join("\n").trim(),
 		};
 	});

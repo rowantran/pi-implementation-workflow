@@ -115,6 +115,8 @@ assert.ok(planningSystem.includes("### PC-01: Short descriptive title"));
 assert.ok(planningSystem.includes("**What**"));
 assert.ok(planningSystem.includes("**Why**"));
 assert.ok(planningSystem.includes("**Pseudocode**"));
+assert.ok(planningSystem.includes("final Pseudocode field optional"));
+assert.ok(planningSystem.includes("Do not invent a procedure merely to fill the template"));
 
 const reviewValues = {
   identifier: "extract-prompts",
@@ -151,6 +153,9 @@ assert.ok(plannedChangeReview.includes("Planned change identity: PC-01: Keep <co
 assert.ok(plannedChangeReview.includes("Do <!-- not execute --> this."));
 for (const path of Object.values(durablePaths)) assert.ok(plannedChangeReview.includes(path));
 assert.ok(plannedChangeReview.includes("base<123>..head&456"));
+assert.ok(plannedChangeReview.includes("When pseudocode is present"));
+assert.ok(plannedChangeReview.includes("When it is absent"));
+assert.ok(plannedChangeReview.includes("instead of inventing core contracts"));
 
 const incrementalReviewScope = prompts.incrementalReviewScopePrompt({
   ...durablePaths,

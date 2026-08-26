@@ -126,7 +126,7 @@ export const PlannedChangeReportSchema = Type.Object(
 		title: Type.String(),
 		what: Type.String(),
 		why: Type.String(),
-		pseudocode: Type.String(),
+		pseudocode: Type.Optional(Type.String()),
 		review: PlannedChangeAnalysisSchema,
 	},
 	{ additionalProperties: false },
@@ -225,15 +225,9 @@ export function renderWorkflowReviewMarkdown(report: WorkflowReviewReport): stri
 			"",
 			`**Why:** ${change.why}`,
 			"",
-			"**Pseudocode:**",
-			"",
-			indentCode(change.pseudocode),
-			"",
-			"#### Actual implementation",
-			"",
-			change.review.summary,
-			"",
 		);
+		if (change.pseudocode) lines.push("**Pseudocode:**", "", indentCode(change.pseudocode), "");
+		lines.push("#### Actual implementation", "", change.review.summary, "");
 		if (change.review.contracts.length === 0) lines.push("No core types or protocols were identified.", "");
 		for (const contract of change.review.contracts) {
 			lines.push(`##### ${contract.name} · ${contract.kind}`, "", indentCode(contract.signature), "");

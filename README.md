@@ -55,7 +55,7 @@ The extension saves the submitted ask verbatim as immutable workflow metadata, s
 
 Press `Ctrl+Alt+D` or run `/workflow-dashboard` to regenerate the dashboard and show its link again.
 
-The plan has **Goal**, **Planned Changes**, and **Testing** sections. Every planned change uses a stable consecutive identifier (`PC-01`, `PC-02`, and so on) with explicit **What**, **Why**, and **Pseudocode** fields. The Testing section contains explicit verification criteria. Planned changes and testing criteria become separate units of the final implementation review. Planning cannot advance if this structure is missing, empty, or ambiguous.
+The plan has **Goal**, **Planned Changes**, and **Testing** sections. Every planned change uses a stable consecutive identifier (`PC-01`, `PC-02`, and so on) with explicit **What** and **Why** fields. A change includes **Pseudocode** only when it clarifies meaningful behavior, state, interfaces, or data flow; mechanical documentation, testing, configuration, data, migration, and wiring changes can omit it. The Testing section contains explicit verification criteria. Planned changes and testing criteria become separate units of the final implementation review. Planning cannot advance if the required structure is missing, empty, or ambiguous.
 
 During planning, the agent uses native `edit` or `write` calls only on `working-plan.md`. It then calls `workflow_update_plan` with a one-sentence-or-less English description. The tool is the only way to commit a plan change: it stores the complete working plan as the next numbered Markdown file under `versions/`, copies the same content to `plan.md`, and updates the description. Calls whose working-plan content matches the prior version still create a new version. `/workflow-next` refuses to advance while `working-plan.md` differs from the committed `plan.md`.
 
@@ -91,7 +91,7 @@ The extension shows progress while checking the worktree and finding the pull re
 
 Send `/workflow-next` in the implementation session. A persistent reminder below the editor keeps the command visible until the workflow advances, even if later background output pushes the completion card out of view. If automatic completion checks fail, `/workflow-next` retries them. When the implementation is ready, the workflow deterministically generates the initial review before entering a separate review session:
 
-1. one isolated, read-only agent reviews each `PC-*` planned change and maps its pseudocode to the implemented core types, protocols, construction sites, and consumers;
+1. one isolated, read-only agent reviews each `PC-*` planned change against its What, Why, and optional Pseudocode, mapping core contracts or other implementation evidence as appropriate;
 2. one read-only holistic reviewer checks cross-cutting architecture, missing behavior, and implementation outside the plan;
 3. one read-only testing-criteria reviewer verifies every material requirement in the approved Testing section with repository and execution evidence;
 4. one synthesizer receives paths to all three forms of analysis and produces only the overall result and deduplicated overall concerns.
