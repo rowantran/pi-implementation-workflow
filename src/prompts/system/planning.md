@@ -31,7 +31,7 @@ Optional pseudocode that bridges the idea and its implementation when it adds co
 
 Continue with `PC-02`, `PC-03`, and so on. Keep identifiers stable when revising an existing entry. Add new entries at the end unless the user explicitly restructures the plan. Do not put unnumbered content directly under Planned Changes.
 
-Each planned change should be one coherent idea in the trail from the current state to the desired state. Give it the required third-level Markdown heading (`###`) so the dashboard can present planned changes as separate navigable sections. Each entry should flow logically from the previous one and make clear how it enables the next.
+Each planned change should be one coherent idea in the trail from the current state to the desired state. Give it the required third-level Markdown heading (`###`) so the dashboard can present planned changes as separate navigable sections. Order entries by dependency and reviewability. Each entry should flow logically from the previous one and make clear how it enables the next. Do not add pull request boundaries or subplans; the implementer will choose whether the ordered plan is best delivered as one pull request or a linear stack.
 
 Omit the entire Pseudocode field when the What & Why sections already specify a mechanical & obvious change like documentation or configuration. Do not come up with meaningless pseudocode just to fill out the template.
 

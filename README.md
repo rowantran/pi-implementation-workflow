@@ -80,14 +80,18 @@ The planning conversation remains saved and does not enter implementation contex
 
 Implementation inspects three durable sources before it acts: the immutable original ask in `metadata.json`, the frozen approved scope in `plan.md`, and later explicit answers in `clarifications.json`. If the approved plan has material ambiguity, the agent asks through `workflow_questions`. Submitted answers are appended verbatim to `clarifications.json` and shown in the dashboard. Selected answers retain the exact option label; custom answers retain the exact submitted text. Cancelled questionnaires are not stored.
 
+The implementer chooses the lightest reviewable delivery. A small cohesive plan uses one pull request. A larger plan can use a linear stack through Graphite, GitHub's native stack tooling, or ordinary Git branches. The initial `workflow/<identifier>` branch is always the bottom branch. Its pull request targets the recorded base branch; every later pull request targets the branch directly below it; and the checked-out branch remains the stack tip. Planning does not add subplans or pull request boundaries.
+
 After the agent settles, the extension automatically completes implementation when:
 
-- the expected worktree and branch exist;
+- the expected worktree exists and its checked-out branch contains the recorded base commit;
 - the worktree is clean;
-- an open pull request exists from the workflow branch to the recorded base branch;
-- the pull request branch contains the local `HEAD` commit.
+- walking open pull requests backward from the checked-out branch forms a complete linear chain to the recorded base branch;
+- the bottom pull request uses the initial workflow branch;
+- each pull request branch contains the current branch below it; and
+- the stack tip contains the local `HEAD` commit.
 
-The extension shows progress while checking the worktree and finding the pull request. When the gates pass, it records the pull request and shows a high-contrast completion card. It does not modify the clipboard.
+A normal pull request is a stack with one item. The extension shows progress while checking the worktree and discovering the delivery, records every pull request from bottom to top, and shows them in the completion card. It does not modify the clipboard.
 
 Send `/workflow-next` in the implementation session. A persistent reminder below the editor keeps the command visible until the workflow advances, even if later background output pushes the completion card out of view. If automatic completion checks fail, `/workflow-next` retries them. When the implementation is ready, the workflow deterministically generates the initial review before entering a separate review session:
 
@@ -100,7 +104,7 @@ The review progress display nests a live status row under the active stage for e
 
 Each generated review stores its manifest and agent results under `review-runs/`, keyed by commit range and a fingerprint of the original ask, approved plan, and clarifications. A retry reuses every valid completed result, so a synthesis failure does not repeat the earlier reviews. A new source fingerprint or commit range starts a separate run and preserves earlier results.
 
-The workflow validates that every planned change has exactly one result, stores the combined structured report in `review.json`, exports it as `review.md`, and renders it as the default **Review** tab in the browser dashboard. Review uses the same Guided view and Full document modes as Plan. Guided view shares the one-section-at-a-time outline, previous/next controls, and `[`/`]` shortcuts. Each planned-change section has separate necessary and sufficient verdicts and its own concerns. A dedicated Testing criteria section shows the original criteria, the testing review's verdict, and source evidence for each criterion. Repeating `/workflow-next` after a cancelled session switch reuses the report when the plan and head commit still match.
+The workflow reviews the aggregate `baseCommit..stackTip` implementation once rather than creating separate workflow review state for each pull request. It validates that every planned change has exactly one result, stores the combined structured report in `review.json`, exports it as `review.md`, and renders it as the default **Review** tab in the browser dashboard. The report and dashboard list every pull request from bottom to top. Review uses the same Guided view and Full document modes as Plan. Guided view shares the one-section-at-a-time outline, previous/next controls, and `[`/`]` shortcuts. Each planned-change section has separate necessary and sufficient verdicts and its own concerns. A dedicated Testing criteria section shows the original criteria, the testing review's verdict, and source evidence for each criterion. Repeating `/workflow-next` after a cancelled session switch reuses the report when the plan and head commit still match.
 
 The review session keeps the implementation conversation out of review context and announces the completed report through the dashboard link. If another extension cancels the review session switch, run `/workflow-next` again.
 
@@ -110,11 +114,11 @@ To revise the implementation after review, run:
 /workflow-revise describe the changes to make
 ```
 
-When `/workflow-revise` detects that `HEAD` changed since the current review, it first asks whether those commits are an already-completed revision. If confirmed, the workflow requires a clean worktree and verifies that the pull request contains the new `HEAD`; it then records the revision transition and immediately generates the next review without starting a revision agent session.
+When `/workflow-revise` detects that `HEAD` changed since the current review, it first asks whether those commits are an already-completed revision. If confirmed, the workflow requires a clean worktree and verifies the complete pull request chain through the new `HEAD`; it then records the revision transition and immediately generates the next review without starting a revision agent session.
 
 Otherwise, the command opens a required multiline editor and creates a separate revision session in the same worktree. The worktree can already contain manual, uncommitted changes. The revision agent receives the original ask, frozen plan, clarifications, current review, and submitted change request. After the agent commits and pushes at least one new commit and leaves the worktree clean, `/workflow-next` generates the next review round in a new review session.
 
-Each re-review is incremental. First, a read-only scope agent compares the previous reviewed commit with the revised commit and identifies the `PC-*` planned changes whose prior reviews could be affected. The workflow shows that scope agent and each subsequent rerun as nested live progress. It reruns only the affected planned-change reviewers and carries the unaffected planned-change results forward. It always reruns the holistic reviewer, testing-criteria reviewer, and synthesizer against the revised pull request. A retry reuses any valid scope and reviewer results already completed for that re-review.
+Each re-review is incremental. First, a read-only scope agent compares the previous reviewed commit with the revised stack tip and identifies the `PC-*` planned changes whose prior reviews could be affected. The workflow shows that scope agent and each subsequent rerun as nested live progress. It reruns only the affected planned-change reviewers and carries the unaffected planned-change results forward. It always reruns the holistic reviewer, testing-criteria reviewer, and synthesizer against the complete aggregate delivery. A retry reuses any valid scope and reviewer results already completed for that re-review.
 
 An older review session cannot clean up or advance a newer revision round. If the branch changes outside the revision flow, the dashboard marks the review stale and cleanup directs the user to `/workflow-revise`.
 
@@ -124,7 +128,7 @@ Advance from an accepted review to cleanup explicitly:
 /workflow-next
 ```
 
-Review completion shows progress while checking and removing the worktree. It switches Pi back to the original repository and removes the worktree directory and Git worktree registration. A high-contrast completion card confirms the result. It keeps the local branch, remote branch, pull request, and saved workflow state.
+Review completion shows progress while checking and removing the worktree. It switches Pi back to the original repository and removes the worktree directory and Git worktree registration. A high-contrast completion card confirms the result. It keeps the local branches, remote branches, pull requests, and saved workflow state.
 
 ## Dashboard delivery
 
@@ -263,7 +267,7 @@ Completed plans use the same files under their final identifier:
 
 `review.json` and `review.md` contain the latest review. Numbered JSON and Markdown reports under `reviews/` preserve every review round. `review-runs/` preserves the reusable agent outputs for each generated review, including the incremental scope for a re-review. Review files do not exist in planning drafts.
 
-`metadata.json` exists from the start of planning. It contains `DraftWorkflowMetadata` while planning and is replaced by `CompletedWorkflowMetadata` when planning completes. Both types store the verbatim, write-once original ask, the plain-English description, and a typed `state` object. `state.phase` is one of `planning`, `implementing`, `reviewing`, `revising`, or `complete`. A step records retry-safe progress inside a phase. Review and revision states also record the review round; revision states record the commit that was reviewed. The declared phase transitions are:
+`metadata.json` exists from the start of planning. It contains `DraftWorkflowMetadata` while planning and is replaced by `CompletedWorkflowMetadata` when planning completes. Both types store the verbatim, write-once original ask, the plain-English description, and a typed `state` object. Completed metadata stores `pullRequests` in bottom-to-top order after implementation completes; legacy singular pull request fields migrate to a one-item array when loaded. `state.phase` is one of `planning`, `implementing`, `reviewing`, `revising`, or `complete`. A step records retry-safe progress inside a phase. Review and revision states also record the review round; revision states record the commit that was reviewed. The declared phase transitions are:
 
 ```text
 planning → implementing → reviewing → complete

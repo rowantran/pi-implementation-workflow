@@ -6,6 +6,7 @@ import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { PlannedChange } from "./planned-changes.ts";
+import { formatPullRequestStack, type WorkflowPullRequest } from "./pull-requests.ts";
 import {
 	holisticReviewPrompt,
 	incrementalReviewScopePrompt,
@@ -35,11 +36,12 @@ import {
 	type ReviewSynthesis,
 	type TestingCriteriaAnalysis,
 	type WorkflowReviewReport,
+	workflowReviewPullRequestUrls,
 } from "./review-report.ts";
 
 const REVIEW_AGENT_EXTENSION = fileURLToPath(new URL("./review-agent-output.ts", import.meta.url));
 const MAX_REVIEW_CONCURRENCY = 4;
-const REVIEW_ROUND_VERSION = 1;
+const REVIEW_ROUND_VERSION = 2;
 
 export type ReviewAgentRole =
 	| "incremental-scope"
@@ -68,7 +70,7 @@ export interface ReviewAgentProgress {
 }
 
 export interface ReviewGenerationInput {
-	pullRequestUrl: string;
+	pullRequests: WorkflowPullRequest[];
 	baseCommit: string;
 	headCommit: string;
 	sourceFingerprint: string;
@@ -95,7 +97,7 @@ export interface SpawnReviewAgentOptions {
 interface ReviewRoundManifest {
 	version: typeof REVIEW_ROUND_VERSION;
 	status: "in-progress" | "analysis-complete" | "complete";
-	pullRequestUrl: string;
+	pullRequestUrls: string[];
 	baseCommit: string;
 	headCommit: string;
 	sourceFingerprint: string;
@@ -133,6 +135,10 @@ export async function generateWorkflowReview(
 		throw new Error("The previous review does not match the current workflow review inputs.");
 	}
 
+	if (input.pullRequests.length === 0) throw new Error("The workflow has no pull requests to review.");
+	const pullRequestStack = formatPullRequestStack(input.pullRequests);
+	const pullRequestUrls = input.pullRequests.map(({ url }) => url);
+
 	const reportAgentProgress = (agent: ReviewAgentIdentity, status: ReviewAgentProgressStatus): void => {
 		input.onAgentProgress?.({ ...agent, status });
 	};
@@ -158,7 +164,7 @@ export async function generateWorkflowReview(
 		: {
 				version: REVIEW_ROUND_VERSION,
 				status: "in-progress",
-				pullRequestUrl: input.pullRequestUrl,
+				pullRequestUrls,
 				baseCommit: input.baseCommit,
 				headCommit: input.headCommit,
 				sourceFingerprint: input.sourceFingerprint,
@@ -208,7 +214,7 @@ export async function generateWorkflowReview(
 						previousReviewPath: input.previousReviewPath!,
 						previousHeadCommit: previousReview.headCommit,
 						headCommit: input.headCommit,
-						pullRequestUrl: input.pullRequestUrl,
+						pullRequestStack,
 					}),
 					signal: generationAbort.signal,
 				});
@@ -299,7 +305,7 @@ export async function generateWorkflowReview(
 						planPath: input.planPath,
 						baseCommit: input.baseCommit,
 						headCommit: input.headCommit,
-						pullRequestUrl: input.pullRequestUrl,
+						pullRequestStack,
 					}),
 					signal: generationAbort.signal,
 				});
@@ -331,7 +337,7 @@ export async function generateWorkflowReview(
 						planPath: input.planPath,
 						baseCommit: input.baseCommit,
 						headCommit: input.headCommit,
-						pullRequestUrl: input.pullRequestUrl,
+						pullRequestStack,
 					}),
 					signal: generationAbort.signal,
 				});
@@ -361,7 +367,7 @@ export async function generateWorkflowReview(
 						planPath: input.planPath,
 						baseCommit: input.baseCommit,
 						headCommit: input.headCommit,
-						pullRequestUrl: input.pullRequestUrl,
+						pullRequestStack,
 					}),
 					signal: generationAbort.signal,
 				});
@@ -406,7 +412,7 @@ export async function generateWorkflowReview(
 					metadataPath: input.metadataPath,
 					clarificationsPath: input.clarificationsPath,
 					planPath: input.planPath,
-					pullRequestUrl: input.pullRequestUrl,
+					pullRequestStack,
 					baseCommit: input.baseCommit,
 					headCommit: input.headCommit,
 					plannedChangeReviewsDirectory: paths.plannedChanges,
@@ -428,7 +434,7 @@ export async function generateWorkflowReview(
 
 	return {
 		version: REVIEW_REPORT_VERSION,
-		pullRequestUrl: input.pullRequestUrl,
+		pullRequestUrls,
 		baseCommit: input.baseCommit,
 		headCommit: input.headCommit,
 		sourceFingerprint: input.sourceFingerprint,
@@ -474,7 +480,7 @@ function safePathSegment(value: string, label: string): string {
 
 function manifestMatches(manifest: ReviewRoundManifest, input: ReviewGenerationInput): boolean {
 	return (
-		manifest.pullRequestUrl === input.pullRequestUrl &&
+		arraysEqual(manifest.pullRequestUrls, input.pullRequests.map(({ url }) => url)) &&
 		manifest.baseCommit === input.baseCommit &&
 		manifest.headCommit === input.headCommit &&
 		manifest.sourceFingerprint === input.sourceFingerprint &&
@@ -493,7 +499,9 @@ function isReviewRoundManifest(value: unknown): value is ReviewRoundManifest {
 	return (
 		candidate.version === REVIEW_ROUND_VERSION &&
 		(candidate.status === "in-progress" || candidate.status === "analysis-complete" || candidate.status === "complete") &&
-		typeof candidate.pullRequestUrl === "string" &&
+		Array.isArray(candidate.pullRequestUrls) &&
+		candidate.pullRequestUrls.length > 0 &&
+		candidate.pullRequestUrls.every((url) => typeof url === "string") &&
 		typeof candidate.baseCommit === "string" &&
 		typeof candidate.headCommit === "string" &&
 		typeof candidate.sourceFingerprint === "string" &&
@@ -516,7 +524,7 @@ function isReviewRoundManifest(value: unknown): value is ReviewRoundManifest {
 
 function previousReviewMatches(previous: WorkflowReviewReport, input: ReviewGenerationInput): boolean {
 	return (
-		previous.pullRequestUrl === input.pullRequestUrl &&
+		arraysEqual(workflowReviewPullRequestUrls(previous), input.pullRequests.map(({ url }) => url)) &&
 		previous.baseCommit === input.baseCommit &&
 		previous.headCommit !== input.headCommit &&
 		previous.testingCriteria.originalCriteria === input.testingCriteria &&

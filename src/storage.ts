@@ -1,6 +1,7 @@
 import { mkdir, readFile, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
+import { isWorkflowPullRequest, type WorkflowPullRequest } from "./pull-requests.ts";
 import {
 	isWorkflowReviewReport,
 	renderWorkflowReviewMarkdown,
@@ -8,8 +9,8 @@ import {
 } from "./review-report.ts";
 import { assertWorkflowState, type WorkflowState } from "./workflow-state.ts";
 
-export const WORKFLOW_STATE_VERSION = 2;
-const LEGACY_WORKFLOW_STATE_VERSION = 1;
+export const WORKFLOW_STATE_VERSION = 3;
+const LEGACY_WORKFLOW_STATE_VERSIONS = new Set([1, 2]);
 export const CLARIFICATIONS_STATE_VERSION = 1;
 export const DRAFT_IDENTIFIER_PATTERN = /^[a-zA-Z0-9-]+$/;
 export const IDENTIFIER_PATTERN = /^[a-z0-9][a-z0-9-]{0,79}$/;
@@ -44,8 +45,8 @@ export interface CompletedWorkflowMetadata {
 	reviewCompletedAt?: string;
 	revisionStartedAt?: string;
 	revisionCompletedAt?: string;
-	pullRequestUrl?: string;
-	pullRequestNumber?: number;
+	/** Ordered from the bottom pull request to the stack tip. A normal delivery has one item. */
+	pullRequests?: WorkflowPullRequest[];
 }
 
 export type WorkflowMetadata = DraftWorkflowMetadata | CompletedWorkflowMetadata;
@@ -378,15 +379,37 @@ export async function readWorkflowMetadata(files: WorkflowFiles): Promise<Workfl
 	let metadata: WorkflowMetadata;
 	let migrated = false;
 	if (isStoredDraftWorkflowMetadata(value)) {
-		metadata = { ...value, ask: value.ask ?? null };
-		migrated = value.ask === undefined;
+		const version = currentStoredVersion(value.version);
+		metadata = { ...value, version, ask: value.ask ?? null };
+		migrated = value.version !== version || value.ask === undefined;
 	} else if (isStoredCompletedWorkflowMetadata(value)) {
+		const { pullRequestUrl, pullRequestNumber, ...stored } = value;
+		const version = currentStoredVersion(value.version);
+		const pullRequests =
+			value.pullRequests ??
+			(typeof pullRequestUrl === "string" && typeof pullRequestNumber === "number"
+				? [
+						{
+							number: pullRequestNumber,
+							url: pullRequestUrl,
+							baseRefName: value.baseBranch,
+							headRefName: value.workflowBranch,
+						},
+					]
+				: undefined);
 		metadata = {
-			...value,
+			...stored,
+			version,
 			description: value.description ?? legacyDescription,
 			ask: value.ask ?? null,
+			...(pullRequests ? { pullRequests } : {}),
 		};
-		migrated = value.description === undefined || value.ask === undefined;
+		migrated =
+			value.version !== version ||
+			value.description === undefined ||
+			value.ask === undefined ||
+			pullRequestUrl !== undefined ||
+			pullRequestNumber !== undefined;
 	} else {
 		throw new Error(`Workflow ${basename(files.root)} has invalid metadata.`);
 	}
@@ -427,9 +450,13 @@ function assertDraftMetadataForFiles(files: WorkflowFiles, metadata: DraftWorkfl
 }
 
 function assertSupportedMetadataVersion(version: number): void {
-	if (version !== LEGACY_WORKFLOW_STATE_VERSION && version !== WORKFLOW_STATE_VERSION) {
+	if (!LEGACY_WORKFLOW_STATE_VERSIONS.has(version) && version !== WORKFLOW_STATE_VERSION) {
 		throw new Error(`Unsupported workflow metadata version: ${version}.`);
 	}
+}
+
+function currentStoredVersion(version: number): number {
+	return version >= 2 ? WORKFLOW_STATE_VERSION : version;
 }
 
 function isDraftState(state: WorkflowState): state is WorkflowState & { phase: "planning"; step: "draft" } {
@@ -534,6 +561,9 @@ function isStoredDraftWorkflowMetadata(value: unknown): value is StoredDraftWork
 type StoredCompletedWorkflowMetadata = Omit<CompletedWorkflowMetadata, "description" | "ask"> & {
 	description?: string;
 	ask?: string | null;
+	/** Legacy singular pull request fields, migrated on read. */
+	pullRequestUrl?: string;
+	pullRequestNumber?: number;
 };
 
 function isStoredCompletedWorkflowMetadata(value: unknown): value is StoredCompletedWorkflowMetadata {
@@ -554,7 +584,14 @@ function isStoredCompletedWorkflowMetadata(value: unknown): value is StoredCompl
 		typeof item.baseCommit === "string" &&
 		typeof item.workflowBranch === "string" &&
 		typeof item.worktreePath === "string" &&
-		typeof item.createdAt === "string"
+		typeof item.createdAt === "string" &&
+		(item.pullRequests === undefined ||
+			(Array.isArray(item.pullRequests) &&
+				item.pullRequests.length > 0 &&
+				item.pullRequests.every(isWorkflowPullRequest))) &&
+		(item.pullRequestUrl === undefined || typeof item.pullRequestUrl === "string") &&
+		(item.pullRequestNumber === undefined ||
+			(Number.isSafeInteger(item.pullRequestNumber) && (item.pullRequestNumber as number) > 0))
 	);
 }
 
@@ -568,7 +605,8 @@ function isValidWorkflowState(value: unknown): value is WorkflowState {
 }
 
 function isSupportedStoredVersion(version: unknown): version is number {
-	return version === LEGACY_WORKFLOW_STATE_VERSION || version === WORKFLOW_STATE_VERSION;
+	return typeof version === "number" &&
+		(LEGACY_WORKFLOW_STATE_VERSIONS.has(version) || version === WORKFLOW_STATE_VERSION);
 }
 
 function isStoredAskValid(version: number | undefined, ask: unknown): boolean {

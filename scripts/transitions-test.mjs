@@ -12,6 +12,7 @@ const implementationWorkflow = await jiti.import(new URL("../src/index.ts", impo
 	default: true,
 });
 const storage = await jiti.import(new URL("../src/storage.ts", import.meta.url).pathname);
+const { buildPullRequestStack } = await jiti.import(new URL("../src/pull-requests.ts", import.meta.url).pathname);
 const dashboardServer = await jiti.import(new URL("../src/dashboard-server.ts", import.meta.url).pathname);
 
 const validPlan = `# Implementation plan
@@ -139,8 +140,9 @@ function createHarness(repositoryRoot, worktreePath, workflowBranch) {
 	const userMessages = [];
 	let activeTools = ["read", "bash", "edit", "write"];
 	let switchCancelled = false;
-	let pullRequest;
+	let pullRequests = [];
 	let headCommit = "abc123";
+	let currentBranch = workflowBranch;
 	let worktreeStatus = "";
 
 	const pi = {
@@ -151,7 +153,7 @@ function createHarness(repositoryRoot, worktreePath, workflowBranch) {
 			if (command === "gh") {
 				return {
 					code: 0,
-					stdout: JSON.stringify(pullRequest ? [pullRequest] : []),
+					stdout: JSON.stringify(pullRequests),
 					stderr: "",
 				};
 			}
@@ -168,7 +170,10 @@ function createHarness(repositoryRoot, worktreePath, workflowBranch) {
 				return { code: 0, stdout: `${headCommit}\n`, stderr: "" };
 			}
 			if (gitArgs[0] === "branch" && gitArgs[1] === "--show-current") {
-				return { code: 0, stdout: `${cwd === worktreePath ? workflowBranch : "main"}\n`, stderr: "" };
+				return { code: 0, stdout: `${cwd === worktreePath ? currentBranch : "main"}\n`, stderr: "" };
+			}
+			if (gitArgs[0] === "merge-base" && gitArgs[1] === "--is-ancestor") {
+				return { code: 0, stdout: "", stderr: "" };
 			}
 			if (gitArgs[0] === "status") return { code: 0, stdout: worktreeStatus, stderr: "" };
 			if (gitArgs[0] === "worktree" && gitArgs[1] === "add") {
@@ -270,7 +275,13 @@ function createHarness(repositoryRoot, worktreePath, workflowBranch) {
 		getActiveTools: () => [...activeTools],
 		getEventHandlers: (name) => [...(events.get(name) ?? [])],
 		setPullRequest(value) {
-			pullRequest = { headRefOid: headCommit, ...value };
+			pullRequests = [{ headRefOid: headCommit, ...value }];
+		},
+		setPullRequests(values) {
+			pullRequests = values.map((value) => ({ headRefOid: headCommit, ...value }));
+		},
+		setCurrentBranch(value) {
+			currentBranch = value;
 		},
 		setHeadCommit(value) {
 			headCommit = value;
@@ -332,6 +343,42 @@ async function readMetadata(identifier) {
 
 try {
 	{
+		const bottom = {
+			number: 1,
+			url: "https://example.test/pull/1",
+			baseRefName: "main",
+			headRefName: "workflow/example",
+			headRefOid: "bottom123",
+		};
+		const top = {
+			number: 2,
+			url: "https://example.test/pull/2",
+			baseRefName: "workflow/example",
+			headRefName: "workflow/example/top",
+			headRefOid: "top456",
+		};
+		assert.deepEqual(
+			buildPullRequestStack([top, bottom], top.headRefName, "main"),
+			{ pullRequests: [bottom, top] },
+			"stack discovery orders pull requests from bottom to top",
+		);
+		assert.match(
+			buildPullRequestStack([top], top.headRefName, "main").error,
+			/no open pull request has head branch workflow\/example/,
+			"stack discovery rejects a missing lower pull request",
+		);
+		assert.match(
+			buildPullRequestStack(
+				[{ ...bottom, baseRefName: top.headRefName }, top],
+				top.headRefName,
+				"main",
+			).error,
+			/cycle/,
+			"stack discovery rejects branch cycles",
+		);
+	}
+
+	{
 		const repositoryRoot = join(temporaryRoot, "planning-repository");
 		const identifier = "direct-phase-transitions";
 		const worktreePath = join(repositoryRoot, ".worktrees", identifier);
@@ -386,7 +433,12 @@ try {
 		await harness.emit("agent_settled", ctx);
 		const completed = await readMetadata(workflow.metadata.identifier);
 		assert.deepEqual(completed.state, { phase: "implementing", step: "complete" });
-		assert.equal(completed.pullRequestUrl, "https://example.test/pull/17");
+		assert.deepEqual(completed.pullRequests, [{
+			number: 17,
+			url: "https://example.test/pull/17",
+			baseRefName: "main",
+			headRefName: workflow.workflowBranch,
+		}]);
 		const completion = harness.entries.find(
 			(entry) => entry.customType === "implementation-workflow-completion",
 		);
@@ -402,6 +454,45 @@ try {
 		assert.match(harness.notifications.at(-1).message, /review is ready/i);
 		assert.ok(await storage.pathExists(workflow.files.review));
 		assert.ok(await storage.pathExists(workflow.files.reviewMarkdown));
+	}
+
+	{
+		const workflow = await writeCompletedWorkflow("stacked-completion", "implementing");
+		const topBranch = `${workflow.workflowBranch}/02-dashboard`;
+		const harness = createHarness(workflow.repositoryRoot, workflow.worktreePath, workflow.workflowBranch);
+		harness.setCurrentBranch(topBranch);
+		harness.setHeadCommit("top456");
+		harness.setPullRequests([
+			{
+				number: 31,
+				url: "https://example.test/pull/31",
+				baseRefName: "main",
+				headRefName: workflow.workflowBranch,
+				headRefOid: "bottom123",
+			},
+			{
+				number: 32,
+				url: "https://example.test/pull/32",
+				baseRefName: workflow.workflowBranch,
+				headRefName: topBranch,
+				headRefOid: "top456",
+			},
+		]);
+		const ctx = harness.context(workflow.worktreePath, [
+			phaseEntry("implementation", { identifier: workflow.metadata.identifier }),
+		]);
+		await harness.emit("session_start", ctx);
+		await harness.emit("agent_settled", ctx);
+		const completed = await readMetadata(workflow.metadata.identifier);
+		assert.deepEqual(completed.state, { phase: "implementing", step: "complete" });
+		assert.deepEqual(completed.pullRequests.map(({ number }) => number), [31, 32]);
+		assert.deepEqual(
+			harness.entries.find((entry) => entry.customType === "implementation-workflow-completion").data.details,
+			[
+				"Pull request 1: https://example.test/pull/31",
+				"Pull request 2: https://example.test/pull/32",
+			],
+		);
 	}
 
 	{
@@ -718,5 +809,5 @@ try {
 }
 
 console.log(
-	"Transition test passed: /workflow-next handles direct phase entry, automatic completion, retries, and cleanup.",
+	"Transition test passed: /workflow-next handles single and stacked delivery, retries, review, and cleanup.",
 );

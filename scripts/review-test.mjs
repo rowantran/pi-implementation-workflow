@@ -30,7 +30,20 @@ const plannedChanges = [
 
 const temporaryRoot = await mkdtemp(join(tmpdir(), "pi-workflow-review-test-"));
 const input = {
-  pullRequestUrl: "https://example.test/pull/42",
+  pullRequests: [
+    {
+      number: 41,
+      url: "https://example.test/pull/41",
+      baseRefName: "main",
+      headRefName: "workflow/review",
+    },
+    {
+      number: 42,
+      url: "https://example.test/pull/42",
+      baseRefName: "workflow/review",
+      headRefName: "workflow/review/dashboard",
+    },
+  ],
   baseCommit: "base123",
   headCommit: "head456",
   sourceFingerprint: "source789",
@@ -171,6 +184,7 @@ assert.deepEqual(report.plannedChanges.map(({ id }) => id), ["PC-01", "PC-02"]);
 assert.equal(report.plannedChanges[1].review.sufficient.status, "partial");
 assert.equal(report.overallConcerns.length, 1);
 assert.equal(report.sourceFingerprint, input.sourceFingerprint);
+assert.deepEqual(report.pullRequestUrls, input.pullRequests.map(({ url }) => url));
 assert.equal(report.holisticReview.summary, "The changes compose cleanly, with one dashboard gap.");
 assert.equal(report.testingCriteria.originalCriteria, input.testingCriteria);
 assert.equal(report.testingCriteria.review.satisfied.status, "partial");
@@ -180,6 +194,9 @@ assert.equal(report.plannedChanges[0].pseudocode, plannedChanges[0].pseudocode);
 assert.ok(!Object.hasOwn(report.plannedChanges[1], "pseudocode"));
 
 const markdown = renderWorkflowReviewMarkdown(report);
+assert.match(markdown, /Pull request stack \(bottom to top\):/);
+assert.match(markdown, /1\. https:\/\/example\.test\/pull\/41/);
+assert.match(markdown, /2\. https:\/\/example\.test\/pull\/42/);
 assert.match(markdown, /## Overall result/);
 assert.match(markdown, /## Overall concerns/);
 assert.match(markdown, /## Review of planned changes/);

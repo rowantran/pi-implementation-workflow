@@ -73,7 +73,9 @@ assert.ok(implementationSystem.includes(implementationValues.workflowBranch));
 assert.ok(implementationSystem.includes("sources of truth, from highest to lowest priority"));
 assert.ok(implementationSystem.includes("The original ask and approved plan are read-only"));
 assert.ok(implementationSystem.includes("use workflow_questions before changing code"));
-assert.ok(implementationSystem.includes("all code is committed, pushed, and included in a pull request to main"));
+assert.ok(implementationSystem.includes("use one pull request for a small cohesive change"));
+assert.ok(implementationSystem.includes("create a linear stack"));
+assert.ok(implementationSystem.includes("bottom pull request must target main"));
 assert.ok(!implementationSystem.includes("&amp;"));
 
 const implementationUserValues = {
@@ -116,18 +118,20 @@ assert.ok(planningSystem.includes("**What**"));
 assert.ok(planningSystem.includes("**Why**"));
 assert.ok(planningSystem.includes("**Pseudocode**"));
 assert.ok(planningSystem.includes("final Pseudocode field optional"));
-assert.ok(planningSystem.includes("Do not invent a procedure merely to fill the template"));
+assert.ok(planningSystem.includes("Order entries by dependency and reviewability"));
+assert.ok(planningSystem.includes("Do not add pull request boundaries or subplans"));
+assert.ok(planningSystem.includes("Do not come up with meaningless pseudocode just to fill out the template"));
 
 const reviewValues = {
   identifier: "extract-prompts",
-  pullRequestUrl: "https://example.test/pull/1?a=1&b=2",
+  pullRequestStack: "https://example.test/pull/1?a=1&b=2",
   ...durablePaths,
   reviewPath: "/tmp/a & b/review.json",
   reviewMarkdownPath: "/tmp/a & b/review.md",
 };
 const reviewSystem = prompts.reviewSystemPrompt(reviewValues);
 for (const path of Object.values(durablePaths)) assert.ok(reviewSystem.includes(path));
-assert.ok(reviewSystem.includes(reviewValues.pullRequestUrl));
+assert.ok(reviewSystem.includes(reviewValues.pullRequestStack));
 assert.ok(reviewSystem.includes(reviewValues.reviewPath));
 assert.ok(reviewSystem.includes(reviewValues.reviewMarkdownPath));
 assert.ok(reviewSystem.includes("deterministic multi-agent review"));
@@ -147,22 +151,21 @@ const plannedChangeReview = prompts.plannedChangeReviewPrompt({
   ...durablePaths,
   baseCommit: "base<123>",
   headCommit: "head&456",
-  pullRequestUrl: reviewValues.pullRequestUrl,
+  pullRequestStack: reviewValues.pullRequestStack,
 });
 assert.ok(plannedChangeReview.includes("Planned change identity: PC-01: Keep <contracts> & {{syntax}}"));
 assert.ok(plannedChangeReview.includes("Do <!-- not execute --> this."));
 for (const path of Object.values(durablePaths)) assert.ok(plannedChangeReview.includes(path));
 assert.ok(plannedChangeReview.includes("base<123>..head&456"));
 assert.ok(plannedChangeReview.includes("When pseudocode is present"));
-assert.ok(plannedChangeReview.includes("When it is absent"));
-assert.ok(plannedChangeReview.includes("instead of inventing core contracts"));
+assert.ok(plannedChangeReview.includes("map it to the implemented core types"));
 
 const incrementalReviewScope = prompts.incrementalReviewScopePrompt({
   ...durablePaths,
   previousReviewPath: "/tmp/reviews/0001.json",
   previousHeadCommit: "head456",
   headCommit: "head789",
-  pullRequestUrl: reviewValues.pullRequestUrl,
+  pullRequestStack: reviewValues.pullRequestStack,
 });
 assert.ok(incrementalReviewScope.includes("head456..head789"));
 assert.ok(incrementalReviewScope.includes("/tmp/reviews/0001.json"));
@@ -172,16 +175,16 @@ const holisticReview = prompts.holisticReviewPrompt({
   ...durablePaths,
   baseCommit: "base123",
   headCommit: "head456",
-  pullRequestUrl: reviewValues.pullRequestUrl,
+  pullRequestStack: reviewValues.pullRequestStack,
 });
-assert.ok(holisticReview.includes("Review the complete pull request holistically"));
+assert.ok(holisticReview.includes("Review the complete delivery holistically"));
 
 const testingCriteriaReview = prompts.testingCriteriaReviewPrompt({
   testingCriteria: "Run {{tests}} & inspect <output>.",
   ...durablePaths,
   baseCommit: "base123",
   headCommit: "head456",
-  pullRequestUrl: reviewValues.pullRequestUrl,
+  pullRequestStack: reviewValues.pullRequestStack,
 });
 assert.ok(testingCriteriaReview.includes("Run {{tests}} & inspect <output>."));
 assert.ok(testingCriteriaReview.includes("needs-human-review"));
@@ -193,7 +196,7 @@ const synthesisResultPaths = {
 };
 const synthesisReview = prompts.reviewSynthesisPrompt({
   ...durablePaths,
-  pullRequestUrl: reviewValues.pullRequestUrl,
+  pullRequestStack: reviewValues.pullRequestStack,
   baseCommit: "base123",
   headCommit: "head456",
   ...synthesisResultPaths,

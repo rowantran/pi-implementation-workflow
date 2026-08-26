@@ -143,7 +143,10 @@ export const TestingCriteriaReportSchema = Type.Object(
 export const WorkflowReviewReportSchema = Type.Object(
 	{
 		version: Type.Literal(REVIEW_REPORT_VERSION),
-		pullRequestUrl: Type.String(),
+		/** New reports store the ordered pull request stack here. */
+		pullRequestUrls: Type.Optional(Type.Array(Type.String(), { minItems: 1 })),
+		/** Legacy reports stored only the single pull request URL. */
+		pullRequestUrl: Type.Optional(Type.String()),
 		baseCommit: Type.String(),
 		headCommit: Type.String(),
 		sourceFingerprint: Type.Optional(Type.String()),
@@ -191,14 +194,25 @@ export function isReviewSynthesis(value: unknown): value is ReviewSynthesis {
 }
 
 export function isWorkflowReviewReport(value: unknown): value is WorkflowReviewReport {
-	return Check(WorkflowReviewReportSchema, value);
+	if (!Check(WorkflowReviewReportSchema, value)) return false;
+	return workflowReviewPullRequestUrls(value).length > 0;
+}
+
+export function workflowReviewPullRequestUrls(report: WorkflowReviewReport): string[] {
+	if (report.pullRequestUrls?.length) return report.pullRequestUrls;
+	return report.pullRequestUrl ? [report.pullRequestUrl] : [];
 }
 
 export function renderWorkflowReviewMarkdown(report: WorkflowReviewReport): string {
+	const pullRequestUrls = workflowReviewPullRequestUrls(report);
+	const pullRequestLines =
+		pullRequestUrls.length === 1
+			? [`Pull request: ${pullRequestUrls[0]}`]
+			: ["Pull request stack (bottom to top):", ...pullRequestUrls.map((url, index) => `${index + 1}. ${url}`)];
 	const lines = [
 		"# Implementation review",
 		"",
-		`Pull request: ${report.pullRequestUrl}`,
+		...pullRequestLines,
 		`Compared: ${report.baseCommit} → ${report.headCommit}`,
 		`Generated: ${report.generatedAt}`,
 		"",
