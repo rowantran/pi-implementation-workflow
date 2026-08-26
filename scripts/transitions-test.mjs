@@ -138,6 +138,7 @@ function createHarness(repositoryRoot, worktreePath, workflowBranch) {
 	const widgets = new Map();
 	const switches = [];
 	const userMessages = [];
+	const ghCommands = [];
 	let activeTools = ["read", "bash", "edit", "write"];
 	let switchCancelled = false;
 	let pullRequests = [];
@@ -151,11 +152,26 @@ function createHarness(repositoryRoot, worktreePath, workflowBranch) {
 		},
 		exec: async (command, args, options = {}) => {
 			if (command === "gh") {
-				return {
-					code: 0,
-					stdout: JSON.stringify(pullRequests),
-					stderr: "",
-				};
+				ghCommands.push(args);
+				if (args[0] === "pr" && args[1] === "list") {
+					const fields = args[args.indexOf("--json") + 1];
+					if (fields.includes("headRefOid")) {
+						return { code: 1, stdout: "", stderr: 'Unknown JSON field: "headRefOid"' };
+					}
+					return {
+						code: 0,
+						stdout: JSON.stringify(pullRequests.map(({ headRefOid: _headRefOid, ...pullRequest }) => pullRequest)),
+						stderr: "",
+					};
+				}
+				if (args[0] === "api") {
+					const number = Number(args[1].split("/").at(-1));
+					const pullRequest = pullRequests.find((candidate) => candidate.number === number);
+					return pullRequest
+						? { code: 0, stdout: `${pullRequest.headRefOid}\n`, stderr: "" }
+						: { code: 1, stdout: "", stderr: "pull request not found" };
+				}
+				throw new Error(`Unexpected gh command: ${args.join(" ")} (${options.cwd ?? repositoryRoot})`);
 			}
 			assert.equal(command, "git");
 			const cwd = args[1];
@@ -272,6 +288,7 @@ function createHarness(repositoryRoot, worktreePath, workflowBranch) {
 		widgets,
 		switches,
 		userMessages,
+		ghCommands,
 		getActiveTools: () => [...activeTools],
 		getEventHandlers: (name) => [...(events.get(name) ?? [])],
 		setPullRequest(value) {
@@ -439,6 +456,14 @@ try {
 			baseRefName: "main",
 			headRefName: workflow.workflowBranch,
 		}]);
+		assert.deepEqual(
+			harness.ghCommands.slice(0, 2),
+			[
+				["pr", "list", "--state", "open", "--limit", "100", "--json", "number,url,baseRefName,headRefName"],
+				["api", "repos/{owner}/{repo}/pulls/17", "--jq", ".head.sha"],
+			],
+			"completion retrieves the head commit without requiring gh pr list headRefOid support",
+		);
 		const completion = harness.entries.find(
 			(entry) => entry.customType === "implementation-workflow-completion",
 		);
