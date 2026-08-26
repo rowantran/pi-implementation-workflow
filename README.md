@@ -48,8 +48,8 @@ The extension saves the submitted ask verbatim as immutable workflow metadata, s
 
 - a concise plain-English plan description as the main document title, beside its prominent current version number;
 - a **Plan** view with a guided, change-by-change reader, a full-document fallback, the immutable original ask, and structured user clarifications;
-- an automatically generated plan outline, top-anchored previous/next navigation, `P`/`N` and arrow-key shortcuts, `S`/`C` controls for the navigation and workflow-context sidebars, and direct links to individual planned changes;
-- a **Compare versions** view with two version selectors and a rich, formatted plan diff with green additions and red deletions;
+- an automatically generated plan outline, top-anchored previous/next navigation, `[`/`]` section shortcuts, `S`/`C` controls for the navigation and workflow-context sidebars, and direct links to individual planned changes;
+- a **Compare versions** view with two version selectors, `[`/`]` diff-block navigation, and a rich, formatted plan diff with green additions and red deletions; nearby changes use Git's default three-line context rule, so changes separated by up to six unchanged lines form one block;
 - light and dark themes;
 - automatic change detection when the browser regains focus, with a reload only when dashboard content changed.
 
@@ -100,7 +100,7 @@ The review progress display nests a live status row under the active stage for e
 
 Each generated review stores its manifest and agent results under `review-runs/`, keyed by commit range and a fingerprint of the original ask, approved plan, and clarifications. A retry reuses every valid completed result, so a synthesis failure does not repeat the earlier reviews. A new source fingerprint or commit range starts a separate run and preserves earlier results.
 
-The workflow validates that every planned change has exactly one result, stores the combined structured report in `review.json`, exports it as `review.md`, and renders it as the default **Review** tab in the browser dashboard. Review uses the same Guided view and Full document modes as Plan. Guided view shares the one-section-at-a-time outline, previous/next controls, and `P`/`N` shortcuts. Each planned-change section has separate necessary and sufficient verdicts and its own concerns. A dedicated Testing criteria section shows the original criteria, the testing review's verdict, and source evidence for each criterion. Repeating `/workflow-next` after a cancelled session switch reuses the report when the plan and head commit still match.
+The workflow validates that every planned change has exactly one result, stores the combined structured report in `review.json`, exports it as `review.md`, and renders it as the default **Review** tab in the browser dashboard. Review uses the same Guided view and Full document modes as Plan. Guided view shares the one-section-at-a-time outline, previous/next controls, and `[`/`]` shortcuts. Each planned-change section has separate necessary and sufficient verdicts and its own concerns. A dedicated Testing criteria section shows the original criteria, the testing review's verdict, and source evidence for each criterion. Repeating `/workflow-next` after a cancelled session switch reuses the report when the plan and head commit still match.
 
 The review session keeps the implementation conversation out of review context and announces the completed report through the dashboard link. If another extension cancels the review session switch, run `/workflow-next` again.
 
