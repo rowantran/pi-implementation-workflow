@@ -18,18 +18,24 @@ async function exists(path) {
 	}
 }
 
-async function scenario({ args = "", editorResult, planningModel, afterFirstStart } = {}) {
+async function scenario({ args = "", editorResult, planningModel, planningThinkingLevel, afterFirstStart } = {}) {
 	const root = await mkdtemp(join(tmpdir(), "pi-workflow-command-"));
 	const agentDir = join(root, "agent");
 	const repositoryRoot = join(root, "repository");
 	const gitCommonDir = join(repositoryRoot, ".git");
 	process.env.PI_CODING_AGENT_DIR = agentDir;
-	if (planningModel) {
+	if (planningModel || planningThinkingLevel) {
 		const configDirectory = join(agentDir, "implementation-workflow");
 		await mkdir(configDirectory, { recursive: true });
+		const modelConfig = planningModel
+			? `provider = ${JSON.stringify(planningModel.provider)}\nmodel = ${JSON.stringify(planningModel.model)}\n`
+			: "";
+		const thinkingConfig = planningThinkingLevel
+			? `thinking_level = ${JSON.stringify(planningThinkingLevel)}\n`
+			: "";
 		await writeFile(
 			join(configDirectory, "config.toml"),
-			`[models.planning]\nprovider = ${JSON.stringify(planningModel.provider)}\nmodel = ${JSON.stringify(planningModel.model)}\n`,
+			`[models.planning]\n${modelConfig}${thinkingConfig}`,
 			"utf8",
 		);
 	}
@@ -42,6 +48,7 @@ async function scenario({ args = "", editorResult, planningModel, afterFirstStar
 	const phaseEntries = [];
 	const sentMessages = [];
 	const selectedModels = [];
+	const selectedThinkingLevels = [];
 	let activeTools = ["read", "edit", "write"];
 	let editorValue = editorResult;
 	let kickoffAssertion;
@@ -78,6 +85,9 @@ async function scenario({ args = "", editorResult, planningModel, afterFirstStar
 		async setModel(model) {
 			selectedModels.push(model);
 			return true;
+		},
+		setThinkingLevel(level) {
+			selectedThinkingLevels.push(level);
 		},
 		setSessionName() {},
 	};
@@ -153,6 +163,7 @@ async function scenario({ args = "", editorResult, planningModel, afterFirstStar
 				: undefined,
 			activeTools,
 			selectedModels,
+			selectedThinkingLevels,
 		};
 	} finally {
 		await events.get("session_shutdown")?.();
@@ -186,10 +197,19 @@ assert.equal(fromEmptyEditor.metadata.ask, "Ask typed into the empty editor");
 const modelOverride = await scenario({
 	editorResult: "Plan with the configured Isara model",
 	planningModel: { provider: "isara", model: "anthropic/claude-opus:planning" },
+	planningThinkingLevel: "high",
 });
 assert.deepEqual(modelOverride.selectedModels, [
 	{ provider: "isara", id: "anthropic/claude-opus:planning" },
 ]);
+assert.deepEqual(modelOverride.selectedThinkingLevels, ["high"]);
+
+const thinkingOnlyOverride = await scenario({
+	editorResult: "Plan with the current model at maximum thinking",
+	planningThinkingLevel: "max",
+});
+assert.deepEqual(thinkingOnlyOverride.selectedModels, []);
+assert.deepEqual(thinkingOnlyOverride.selectedThinkingLevels, ["max"]);
 
 const protectedFiles = {
 	plan: "/workflow/plan.md",

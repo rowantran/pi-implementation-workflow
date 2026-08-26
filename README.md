@@ -151,34 +151,39 @@ The optional extension configuration is TOML at:
 
 The path is relative to pi's agent directory, so `PI_CODING_AGENT_DIR` overrides the `~/.pi/agent` part. The previous `~/.pi/agent/implementation-workflow.json` file is no longer accepted. Move its dashboard settings into the TOML file before upgrading.
 
-### Phase model overrides
+### Phase model and thinking overrides
 
-A workflow uses the session's selected model unless its current phase has an override. The four override names are `planning`, `implementing`, `reviewing`, and `revising`:
+A workflow uses the session's selected model and thinking level unless its current phase has an override. The four override names are `planning`, `implementing`, `reviewing`, and `revising`:
 
 ```toml
 [models.planning]
 provider = "isara"
 model = "anthropic/claude-opus:planning"
+thinking_level = "high"
 
 [models.implementing]
 provider = "openai-codex"
 model = "gpt-5.4"
+thinking_level = "medium"
 
 [models.reviewing]
 provider = "isara-review"
 model = "openai/gpt-5.4:review"
+thinking_level = "max"
 
 [models.revising]
-provider = "anthropic"
-model = "claude-opus-4-6"
+thinking_level = "high"
 ```
 
-Each override requires both fields:
+Every field is optional, with these constraints:
 
-- `provider` is the model provider registered with pi.
-- `model` is the complete model identifier. It can contain `/`, `:`, or other characters used by custom Isara models because the provider is stored separately.
+- `provider` is the model provider registered with pi. If present, `model` is also required.
+- `model` is the complete model identifier. It can contain `/`, `:`, or other characters used by custom Isara models because the provider is stored separately. If present, `provider` is also required.
+- `thinking_level` is one of `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, or `max`.
 
-You can omit any phase. The `reviewing` override applies both to the isolated review agents that generate the report and to the read-only review session. An override is applied when its phase starts or resumes; it does not lock the model against a later manual `/model` change. Unknown models and models without configured authentication produce an error notification instead of silently changing the configuration.
+A phase table must override the model, the thinking level, or both. You can omit the entire phase. An omitted setting keeps the session's current value. Pi clamps a configured thinking level when the selected model does not support it.
+
+The `reviewing` settings apply both to the isolated review agents that generate the report and to the read-only review session. An override is applied when its phase starts or resumes; it does not lock the model or thinking level against a later manual change. Unknown models, unavailable authentication, and invalid thinking levels produce an error notification instead of silently changing the configuration.
 
 ### Local dashboard mode
 

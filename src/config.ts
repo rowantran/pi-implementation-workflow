@@ -3,12 +3,15 @@ import { resolve } from "node:path";
 import { parse } from "smol-toml";
 
 export const MODEL_OVERRIDE_PHASES = ["planning", "implementing", "reviewing", "revising"] as const;
+export const THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const;
 
 export type ModelOverridePhase = (typeof MODEL_OVERRIDE_PHASES)[number];
+export type WorkflowThinkingLevel = (typeof THINKING_LEVELS)[number];
 
 export interface WorkflowModelOverride {
-	provider: string;
-	model: string;
+	provider?: string;
+	model?: string;
+	thinkingLevel?: WorkflowThinkingLevel;
 }
 
 export interface ImplementationWorkflowConfig {
@@ -101,16 +104,44 @@ function parseModelOverrides(
 		const candidate = value[phase];
 		if (candidate === undefined) continue;
 		if (!isRecord(candidate)) throw new Error(`models.${phase} must be a TOML table: ${configPath}`);
-		const unknownFields = Object.keys(candidate).filter((key) => key !== "provider" && key !== "model");
+		const unknownFields = Object.keys(candidate).filter(
+			(key) => key !== "provider" && key !== "model" && key !== "thinking_level",
+		);
 		if (unknownFields.length > 0) {
 			throw new Error(`Unknown models.${phase} field${unknownFields.length === 1 ? "" : "s"} ${unknownFields.join(", ")}: ${configPath}`);
 		}
+		const hasProvider = candidate.provider !== undefined;
+		const hasModel = candidate.model !== undefined;
+		if (hasProvider !== hasModel) {
+			throw new Error(`models.${phase}.provider and models.${phase}.model must be specified together: ${configPath}`);
+		}
+		const thinkingLevel = optionalThinkingLevel(candidate.thinking_level, `models.${phase}.thinking_level`, configPath);
+		if (!hasProvider && thinkingLevel === undefined) {
+			throw new Error(`models.${phase} must specify provider and model, thinking_level, or both: ${configPath}`);
+		}
 		overrides[phase] = {
-			provider: requireNonEmptyString(candidate.provider, `models.${phase}.provider`, configPath),
-			model: requireNonEmptyString(candidate.model, `models.${phase}.model`, configPath),
+			...(hasProvider
+				? {
+						provider: requireNonEmptyString(candidate.provider, `models.${phase}.provider`, configPath),
+						model: requireNonEmptyString(candidate.model, `models.${phase}.model`, configPath),
+					}
+				: {}),
+			...(thinkingLevel === undefined ? {} : { thinkingLevel }),
 		};
 	}
 	return overrides;
+}
+
+function optionalThinkingLevel(
+	value: unknown,
+	field: string,
+	configPath: string,
+): WorkflowThinkingLevel | undefined {
+	if (value === undefined) return undefined;
+	if (typeof value !== "string" || !(THINKING_LEVELS as readonly string[]).includes(value)) {
+		throw new Error(`${field} must be one of off, minimal, low, medium, high, xhigh, or max: ${configPath}`);
+	}
+	return value as WorkflowThinkingLevel;
 }
 
 function requireNonEmptyString(value: unknown, field: string, configPath: string): string {
