@@ -1,9 +1,9 @@
 import { createHash } from "node:crypto";
 import { appendFile, mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
-import { pathToFileURL } from "node:url";
 import { type Message, uuidv7 } from "@earendil-works/pi-ai";
 import {
+	getAgentDir,
 	SessionManager,
 	withFileMutationQueue,
 	type ExtensionAPI,
@@ -11,6 +11,15 @@ import {
 	type ExtensionContext,
 	type SessionEntry,
 } from "@earendil-works/pi-coding-agent";
+import { getCapabilities, hyperlink } from "@earendil-works/pi-tui";
+import {
+	closeOwnedDashboardServer,
+	dashboardReference,
+	dashboardUrl,
+	ensureSharedDashboardServer,
+	loadDashboardServerConfig,
+	type DashboardServerConfig,
+} from "./dashboard-server.ts";
 import { writeWorkflowDashboard, writeWorkflowDashboardRedirect } from "./dashboard.ts";
 import { parsePlannedChanges, parseTestingCriteria } from "./planned-changes.ts";
 import { PLAN_TITLE, planningCompletionError } from "./planning.ts";
@@ -53,6 +62,7 @@ import {
 	type WorkflowClarification,
 	type WorkflowFiles,
 	workflowFiles,
+	workflowsRoot,
 	writeCompletedWorkflowMetadata,
 	writeDraftWorkflowMetadata,
 	writeWorkflowMetadata,
@@ -119,7 +129,8 @@ export default function implementationWorkflow(
 	let activeFiles: WorkflowFiles | undefined;
 	let planDescription = "";
 	let baseTools: string[] = [];
-	let dashboardOpened = false;
+	let dashboardAnnounced = false;
+	let dashboardConfigPromise: Promise<DashboardServerConfig> | undefined;
 	let completionInFlight = false;
 	let lastAutomaticFailure: string | undefined;
 	let phaseReminderVisible = false;
@@ -253,33 +264,48 @@ export default function implementationWorkflow(
 		);
 	}
 
-	async function openDashboard(ctx: ExtensionContext, force = false): Promise<void> {
-		if (!activeFiles) {
+	function dashboardConfig(): Promise<DashboardServerConfig> {
+		dashboardConfigPromise ??= loadDashboardServerConfig(getAgentDir());
+		return dashboardConfigPromise;
+	}
+
+	function activeDashboardReference() {
+		if (!activeFiles) return undefined;
+		if (draftId) return dashboardReference(activeFiles, "draft", draftId);
+		if (identifier) return dashboardReference(activeFiles, "workflow", identifier);
+		return undefined;
+	}
+
+	async function presentDashboard(ctx: ExtensionContext, force = false): Promise<void> {
+		const reference = activeDashboardReference();
+		if (!activeFiles || !reference) {
 			ctx.ui.notify("No workflow dashboard is available in this session.", "info");
 			return;
 		}
 		const currentHead = metadata ? await gitValue(metadata.worktreePath, ["rev-parse", "HEAD"]) : undefined;
 		await writeWorkflowDashboard(activeFiles, currentHead);
-		if (ctx.mode !== "tui") {
-			ctx.ui.notify(`Workflow dashboard: ${activeFiles.dashboard}`, "info");
-			return;
-		}
-		if (dashboardOpened && !force) return;
+		if (dashboardAnnounced && !force) return;
 
-		const url = pathToFileURL(activeFiles.dashboard).href;
-		let command = "xdg-open";
-		let args = [url];
-		if (process.platform === "darwin") command = "open";
-		if (process.platform === "win32") {
-			command = "cmd";
-			args = ["/c", "start", "", url];
-		}
-		const result = await pi.exec(command, args, { timeout: 10_000 });
-		if (result.code !== 0) {
-			ctx.ui.notify(`Could not open the workflow dashboard. Open this file manually:\n${url}`, "error");
+		let config: DashboardServerConfig;
+		try {
+			config = await dashboardConfig();
+		} catch (error) {
+			ctx.ui.notify(`Could not configure the workflow dashboard: ${errorMessage(error)}`, "error");
 			return;
 		}
-		dashboardOpened = true;
+		const result = await ensureSharedDashboardServer(config, workflowsRoot());
+		if (result.status === "error") {
+			ctx.ui.notify(
+				`Could not serve the workflow dashboard on ${config.listenHost}:${config.listenPort}. ${result.message}\nConfiguration: ${config.configPath}`,
+				"error",
+			);
+			return;
+		}
+
+		const url = dashboardUrl(reference, config);
+		const displayLink = ctx.mode === "tui" && getCapabilities().hyperlinks ? hyperlink(url, url) : url;
+		ctx.ui.notify(`Workflow dashboard: ${displayLink}`, "info");
+		dashboardAnnounced = true;
 	}
 
 	async function repositoryIdentity(cwd: string): Promise<RepositoryIdentity | undefined> {
@@ -406,7 +432,7 @@ export default function implementationWorkflow(
 			updatePhaseStatus(ctx);
 			pi.setSessionName("");
 			await prepareActivePlan(files);
-			await openDashboard(ctx);
+			await presentDashboard(ctx);
 			pi.sendUserMessage(startPlanningUserMessage(ask));
 		},
 	});
@@ -933,7 +959,9 @@ export default function implementationWorkflow(
 
 					const dashboardWarnings: string[] = [];
 					try {
-						await writeWorkflowDashboardRedirect(draft.dashboard, destination.dashboard);
+						const config = await dashboardConfig();
+						const completedReference = dashboardReference(destination, "workflow", nextIdentifier);
+						await writeWorkflowDashboardRedirect(draft.dashboard, dashboardUrl(completedReference, config));
 					} catch (error) {
 						dashboardWarnings.push(`could not preserve the planning dashboard URL: ${errorMessage(error)}`);
 					}
@@ -1355,16 +1383,16 @@ export default function implementationWorkflow(
 	}
 
 	pi.registerCommand("workflow-dashboard", {
-		description: "Open the active implementation workflow dashboard",
+		description: "Show the active implementation workflow dashboard link",
 		handler: async (_args, ctx) => {
-			await openDashboard(ctx, true);
+			await presentDashboard(ctx, true);
 		},
 	});
 
 	pi.registerShortcut(DASHBOARD_SHORTCUT, {
-		description: "Open the implementation workflow dashboard",
+		description: "Show the implementation workflow dashboard link",
 		handler: async (ctx) => {
-			await openDashboard(ctx, true);
+			await presentDashboard(ctx, true);
 		},
 	});
 
@@ -1481,10 +1509,15 @@ export default function implementationWorkflow(
 			pi.setSessionName(workflowSessionName("Review", identifier, metadata?.description ?? planDescription));
 		}
 		if ((phase === "planning" || phase === "implementation" || phase === "revision" || phase === "review") && activeFiles) {
-			await openDashboard(ctx);
+			await presentDashboard(ctx);
 		}
 		if (phase === "review") revealPhaseReminder(ctx);
 		if (phase === "cleanup" && identifier) await finishReviewCleanup(ctx, identifier);
+	});
+
+	pi.on("session_shutdown", async (event) => {
+		if (event?.reason === "new" || event?.reason === "resume" || event?.reason === "fork") return;
+		await closeOwnedDashboardServer();
 	});
 }
 

@@ -146,6 +146,7 @@ assert.ok(html.includes('id="review-tab" data-view="review"'));
 assert.ok(html.includes('aria-label="Review outline"'));
 assert.ok(html.includes('class="card review-card"'));
 assert.ok(html.includes('class="markdown review-document"'));
+assert.ok(!html.includes('href="review.md"'));
 assert.ok(!html.includes('class="review-layout"'));
 assert.ok(!html.includes('class="planned-review-body"'));
 assert.ok(!html.includes("function focusReviewSection"));

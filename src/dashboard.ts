@@ -1,6 +1,5 @@
 import { readFileSync } from "node:fs";
 import { basename, dirname } from "node:path";
-import { pathToFileURL } from "node:url";
 import Mustache from "mustache";
 import {
 	atomicWrite,
@@ -47,12 +46,11 @@ export async function writeWorkflowDashboard(files: WorkflowFiles, currentHeadCo
 	await atomicWrite(files.dashboard, renderWorkflowDashboard(data));
 }
 
-export async function writeWorkflowDashboardRedirect(from: string, destination: string): Promise<void> {
-	const url = pathToFileURL(destination).href;
-	const serializedUrl = JSON.stringify(url).replaceAll("<", "\\u003c");
+export async function writeWorkflowDashboardRedirect(from: string, destinationUrl: string): Promise<void> {
+	const serializedUrl = JSON.stringify(destinationUrl).replaceAll("<", "\\u003c");
 	await atomicWrite(
 		from,
-		`<!doctype html>\n<html lang="en">\n<head>\n<meta charset="utf-8">\n<meta http-equiv="refresh" content="0;url=${escapeHtml(url)}">\n<title>Implementation plan moved</title>\n</head>\n<body>\n<p>This implementation plan moved to <a href="${escapeHtml(url)}">its completed workflow dashboard</a>.</p>\n<script>location.replace(${serializedUrl});</script>\n</body>\n</html>\n`,
+		`<!doctype html>\n<html lang="en">\n<head>\n<meta charset="utf-8">\n<meta http-equiv="refresh" content="0;url=${escapeHtml(destinationUrl)}">\n<title>Implementation plan moved</title>\n</head>\n<body>\n<p>This implementation plan moved to <a href="${escapeHtml(destinationUrl)}">its completed workflow dashboard</a>.</p>\n<script>location.replace(${serializedUrl});</script>\n</body>\n</html>\n`,
 	);
 }
 

@@ -26,7 +26,7 @@ Run `/reload` in an existing Pi session after installation.
 - GitHub CLI (`gh`) authenticated for pull request detection
 - Isara for the sandbox-aware session workflow described below
 
-Each completed plan has a unique identifier, a complete numbered version history, a static web dashboard, and structured implementation clarifications.
+Each completed plan has a unique identifier, a complete numbered version history, an HTTP dashboard, and structured implementation clarifications.
 
 ## Normal workflow
 
@@ -44,7 +44,7 @@ The command opens a required multiline editor. Submit a non-empty ask to start p
 
 If planning is already active, continue through normal conversation instead of running `/workflow-plan` again.
 
-The extension saves the submitted ask verbatim as immutable workflow metadata, starts `plan.md` and `working-plan.md` with only the implementation-plan title, sends the ask as the planning kickoff message, and opens `dashboard.html` in the default browser. The dashboard is a self-contained file styled with the Isara design system, so it does not need a web server. It has:
+The extension saves the submitted ask verbatim as immutable workflow metadata, starts `plan.md` and `working-plan.md` with only the implementation-plan title, sends the ask as the planning kickoff message, and announces an HTTP dashboard link in the notification panel. It never opens the browser automatically. The dashboard is a self-contained file styled with the Isara design system and served by the extension. It has:
 
 - a concise plain-English plan description as the main document title, beside its prominent current version number;
 - a **Plan** view with a guided, change-by-change reader, a full-document fallback, the immutable original ask, and structured user clarifications;
@@ -53,7 +53,7 @@ The extension saves the submitted ask verbatim as immutable workflow metadata, s
 - light and dark themes;
 - automatic refresh when the browser regains focus.
 
-Press `Ctrl+Alt+D` or run `/workflow-dashboard` to open the dashboard again.
+Press `Ctrl+Alt+D` or run `/workflow-dashboard` to regenerate the dashboard and show its link again.
 
 The plan has **Goal**, **Planned Changes**, and **Testing** sections. Every planned change uses a stable consecutive identifier (`PC-01`, `PC-02`, and so on) with explicit **What**, **Why**, and **Pseudocode** fields. The Testing section contains explicit verification criteria. Planned changes and testing criteria become separate units of the final implementation review. Planning cannot advance if this structure is missing, empty, or ambiguous.
 
@@ -102,7 +102,7 @@ Each generated review stores its manifest and agent results under `review-runs/`
 
 The workflow validates that every planned change has exactly one result, stores the combined structured report in `review.json`, exports it as `review.md`, and renders it as the default **Review** tab in the browser dashboard. Review uses the same Guided view and Full document modes as Plan. Guided view shares the one-section-at-a-time outline, previous/next controls, and `P`/`N` shortcuts. Each planned-change section has separate necessary and sufficient verdicts and its own concerns. A dedicated Testing criteria section shows the original criteria, the testing review's verdict, and source evidence for each criterion. Repeating `/workflow-next` after a cancelled session switch reuses the report when the plan and head commit still match.
 
-The review session keeps the implementation conversation out of review context and opens the completed report. If another extension cancels the review session switch, run `/workflow-next` again.
+The review session keeps the implementation conversation out of review context and announces the completed report through the dashboard link. If another extension cancels the review session switch, run `/workflow-next` again.
 
 To revise the implementation after review, run:
 
@@ -126,12 +126,73 @@ Advance from an accepted review to cleanup explicitly:
 
 Review completion shows progress while checking and removing the worktree. It switches Pi back to the original repository and removes the worktree directory and Git worktree registration. A high-contrast completion card confirms the result. It keeps the local branch, remote branch, pull request, and saved workflow state.
 
+## Dashboard delivery
+
+The extension serves dashboards over HTTP in local and remote environments. Dashboard addresses are deterministic:
+
+```text
+/implementation-workflow/drafts/<draft-id>
+/implementation-workflow/workflows/<workflow-id>
+```
+
+A planning link redirects to the completed workflow address after promotion. The server reads the current `dashboard.html` from workflow storage for every request, so new plans and updated dashboards do not require registration or a server restart.
+
+### Local mode
+
+With no configuration file, the dashboard uses `http://127.0.0.1:43121` and listens only on loopback. All Pi processes using the same workflow directory share that fixed address. If port `43121` conflicts with another service, create `~/.pi/agent/implementation-workflow.json` with a different local port:
+
+```json
+{
+  "dashboard": {
+    "mode": "local",
+    "listenPort": 43122
+  }
+}
+```
+
+Local mode always binds to `127.0.0.1`; the public base URL is derived from `listenPort`.
+
+### Remote devbox mode
+
+Remote mode is an explicit persistent setting because the extension cannot reliably infer the laptop-facing DNS name. On the devbox, create `~/.pi/agent/implementation-workflow.json`:
+
+```json
+{
+  "dashboard": {
+    "mode": "remote",
+    "publicBaseUrl": "http://rowan-v2-devbox:43121",
+    "listenPort": 43121,
+    "listenHost": "0.0.0.0"
+  }
+}
+```
+
+- `publicBaseUrl` is the absolute HTTP or HTTPS base URL that the laptop can reach. It can include a path prefix, but it must not contain credentials, query parameters, or a fragment.
+- `listenPort` is the devbox TCP port used by the temporary server.
+- `listenHost` is optional and defaults to `0.0.0.0`. Set it to a specific Tailscale or other interface address to narrow exposure.
+
+**Exposure warning:** `0.0.0.0` accepts connections through every network interface permitted by the host firewall. Dashboard contents can therefore be visible to local-network clients and Tailscale peers, not only to your laptop. Use a narrower bind address or firewall rules when that exposure is not acceptable.
+
+### Sharing and lifecycle
+
+One Pi process owns the temporary listener on the configured port. Other Pi processes recognize it through a versioned health endpoint and use the same deterministic routes for every plan. The server does not retain Pi session objects or an in-memory plan registry.
+
+`/new`, `/resume`, `/fork`, and workflow session switches keep the process-level server alive. Quitting Pi or reloading the extension closes a listener owned by that process. If the owner exits while other Pi processes remain, the next dashboard presentation claims the same port and restores the same URLs; no PID file, detached process, or manual cleanup is needed.
+
+### Troubleshooting
+
+- **Invalid configuration:** Read the notification error and fix the named `~/.pi/agent/implementation-workflow.json` field. Invalid JSON, modes, ports, hosts, and public URLs are rejected instead of producing an unreachable link.
+- **Occupied port:** Stop the unrelated listener or choose another `listenPort`. In local mode, every Pi process that should share dashboards must use the same override.
+- **Bind denied or remote link unreachable:** Confirm that `listenHost` exists on the devbox, the firewall permits `listenPort`, and `publicBaseUrl` uses a DNS name and port reachable from the laptop.
+- **Isara:** Start `isara pi run` inside the workflow repository as described below. The HTTP listener is process-level, but Isara still determines repository filesystem permissions at launch.
+- **Owner exited:** Run `/workflow-dashboard` or press `Ctrl+Alt+D` in another active workflow session to restart service at the stable URL.
+
 ## Commands
 
-- `/workflow-plan [ask]` — open the required multiline ask editor, optionally prefilled with the argument, then start planning and open the dashboard.
+- `/workflow-plan [ask]` — open the required multiline ask editor, optionally prefilled with the argument, then start planning and show the dashboard link.
 - `/workflow-revise [request]` — open the required multiline revision editor, optionally prefilled with the argument, then start a separate revision session from review.
 - `/workflow-next` — advance planning, implementation, revision, or review to the next phase.
-- `/workflow-dashboard` — regenerate and open the active workflow dashboard.
+- `/workflow-dashboard` — regenerate the active workflow dashboard and show its link.
 
 ## Session names
 
