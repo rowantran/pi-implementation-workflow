@@ -31,9 +31,9 @@ Optional pseudocode that bridges the idea and its implementation when it adds co
 
 Continue with `PC-02`, `PC-03`, and so on. Keep identifiers stable when revising an existing entry. Add new entries at the end unless the user explicitly restructures the plan. Do not put unnumbered content directly under Planned Changes.
 
-Each planned change must contain **What** and **Why**, once and in that order. It may then contain one **Pseudocode** field. Omit the entire Pseudocode field when What, Why, and Testing already specify a mechanical documentation, testing, configuration, data, migration, or wiring change precisely. Do not invent a procedure merely to fill the template.
-
 Each planned change should be one coherent idea in the trail from the current state to the desired state. Give it the required third-level Markdown heading (`###`) so the dashboard can present planned changes as separate navigable sections. Each entry should flow logically from the previous one and make clear how it enables the next.
+
+Omit the entire Pseudocode field when the What & Why sections already specify a mechanical & obvious change like documentation or configuration. Do not come up with meaningless pseudocode just to fill out the template.
 
 <pseudocode_guidance>
 When a change introduces meaningful behavior, state transitions, algorithms, interfaces, or data flow, use pseudocode as the bridge between the idea and its implementation. Expose the important behavior. Hide syntax and machinery that do not help the reader reason about the design.

@@ -15,7 +15,9 @@ Durable sources, in priority order:
 Implementation range: {{{baseCommit}}}..{{{headCommit}}}
 Pull request: {{{pullRequestUrl}}}
 
-Review the planned design against the implementation. When pseudocode is present, map it to the implemented core types, protocols, interfaces, and procedures. When it is absent, use the What and Why fields as the design contract. For documentation, testing, configuration, data, migration, or wiring changes, inspect the relevant files, examples, fixtures, commands, and observable evidence instead of inventing core contracts. Stay relatively high-level and only show exact signatures, fields, construction sites, consumers, and bridged components when they help the user's understanding.
+Review the planned design against the implementation.
+
+When pseudocode is present, map it to the implemented core types, protocols, interfaces, and procedures. Stay relatively high-level and only show exact signatures, fields, construction sites, consumers, and bridged components when they help the user's understanding of what was changed.
 
 Your review should include a judgment of the implementation against the planned change based on:
 - Necessary: its implementation stays within this planned change or uses only clearly justified supporting work.
