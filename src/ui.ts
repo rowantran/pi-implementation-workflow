@@ -9,28 +9,37 @@ import { Box, type Component, Container, Text, truncateToWidth, type TUI } from 
 const COMPLETION_ENTRY = "implementation-workflow-completion";
 export const PHASE_REMINDER_ENTRY = "implementation-workflow-phase-reminder";
 const PHASE_STATUS_ID = "implementation-workflow-phase";
+const WORKFLOW_NEXT_NOTICE_ID = "implementation-workflow-next-notice";
 const SPINNER_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 const COMPLETION_DELAY_MS = 300;
 const FAILURE_DELAY_MS = 600;
 
 type ProgressStatus = "pending" | "active" | "complete" | "failed";
+export type WorkflowSubstepStatus = "queued" | "running" | "complete" | "failed" | "reused";
 export type WorkflowStatusPhase = "planning" | "implementation" | "revision" | "review" | "cleanup" | "complete";
+
+interface ProgressSubstep {
+	id: string;
+	label: string;
+	status: WorkflowSubstepStatus;
+}
 
 interface ProgressStep {
 	label: string;
 	status: ProgressStatus;
+	substeps: ProgressSubstep[];
 }
 
 export interface WorkflowProgress {
 	complete(label?: string): void;
 	fail(label?: string): void;
+	updateSubstep(id: string, label: string, status: WorkflowSubstepStatus): void;
 }
 
 export interface WorkflowCompletionData {
 	title: string;
 	details?: string[];
 	command?: string;
-	clipboard: "copied" | "failed" | "none";
 	instruction?: string;
 }
 
@@ -49,7 +58,7 @@ export interface WorkflowReviewTranscriptCardContent {
 
 type ProgressResult<T> = { ok: true; value: T } | { ok: false; error: unknown };
 
-class WorkflowProgressComponent implements Component, WorkflowProgress {
+export class WorkflowProgressComponent implements Component, WorkflowProgress {
 	private frame = 0;
 	private timer: NodeJS.Timeout | undefined;
 	private readonly steps: ProgressStep[];
@@ -63,6 +72,7 @@ class WorkflowProgressComponent implements Component, WorkflowProgress {
 		this.steps = labels.map((label, index) => ({
 			label,
 			status: index === 0 ? "active" : "pending",
+			substeps: [],
 		}));
 		this.timer = setInterval(() => {
 			this.frame = (this.frame + 1) % SPINNER_FRAMES.length;
@@ -90,6 +100,19 @@ class WorkflowProgressComponent implements Component, WorkflowProgress {
 			if (label) step.label = label;
 		}
 		this.stop();
+		this.tui.requestRender();
+	}
+
+	updateSubstep(id: string, label: string, status: WorkflowSubstepStatus): void {
+		const existing = this.steps.flatMap((step) => step.substeps).find((substep) => substep.id === id);
+		if (existing) {
+			existing.label = label;
+			existing.status = status;
+		} else {
+			const activeStep = this.steps.find((step) => step.status === "active");
+			if (!activeStep) return;
+			activeStep.substeps.push({ id, label, status });
+		}
 		this.tui.requestRender();
 	}
 
@@ -127,6 +150,27 @@ class WorkflowProgressComponent implements Component, WorkflowProgress {
 				label = this.theme.fg("error", step.label);
 			}
 			lines.push(` ${marker} ${label}`);
+			for (const substep of step.substeps) {
+				let substepMarker = this.theme.fg("dim", "○");
+				let substepLabel = this.theme.fg("dim", substep.label);
+				if (substep.status === "running") {
+					substepMarker = this.theme.fg("accent", SPINNER_FRAMES[this.frame] ?? "⠋");
+					substepLabel = this.theme.fg("text", substep.label);
+				}
+				if (substep.status === "complete") {
+					substepMarker = this.theme.fg("success", "✓");
+					substepLabel = this.theme.fg("success", substep.label);
+				}
+				if (substep.status === "reused") {
+					substepMarker = this.theme.fg("muted", "↻");
+					substepLabel = this.theme.fg("muted", substep.label);
+				}
+				if (substep.status === "failed") {
+					substepMarker = this.theme.fg("error", "✗");
+					substepLabel = this.theme.fg("error", substep.label);
+				}
+				lines.push(`   ${substepMarker} ${substepLabel}`);
+			}
 		}
 		lines.push("", this.theme.fg("borderAccent", "─".repeat(renderWidth)));
 		return lines.map((line) => truncateToWidth(line, renderWidth, ""));
@@ -136,6 +180,7 @@ class WorkflowProgressComponent implements Component, WorkflowProgress {
 const NOOP_PROGRESS: WorkflowProgress = {
 	complete: () => {},
 	fail: () => {},
+	updateSubstep: () => {},
 };
 
 export function workflowPhaseStatusText(phase: WorkflowStatusPhase | undefined): string | undefined {
@@ -192,6 +237,22 @@ export function registerWorkflowPhaseReminderRenderer(pi: ExtensionAPI): void {
 	});
 }
 
+export function workflowNextNoticeText(): string {
+	return "Send /workflow-next here to start a separate review session.";
+}
+
+export function showWorkflowNextNotice(ctx: ExtensionContext, visible: boolean): void {
+	if (!visible) {
+		ctx.ui.setWidget(WORKFLOW_NEXT_NOTICE_ID, undefined);
+		return;
+	}
+	ctx.ui.setWidget(
+		WORKFLOW_NEXT_NOTICE_ID,
+		["/workflow-next — send here to start a separate review session"],
+		{ placement: "belowEditor" },
+	);
+}
+
 export async function runWorkflowProgress<T>(
 	ctx: ExtensionContext,
 	title: string,
@@ -226,7 +287,6 @@ export function registerWorkflowCompletionRenderer(pi: ExtensionAPI): void {
 	pi.registerEntryRenderer<WorkflowCompletionData>(COMPLETION_ENTRY, (entry, _options, theme) => {
 		const data = entry.data ?? {
 			title: "Workflow phase complete",
-			clipboard: "none" as const,
 		};
 		const box = new Box(1, 1, (text) => theme.bg("toolSuccessBg", text));
 		const borderColor = (text: string) => theme.fg("success", text);
@@ -238,11 +298,7 @@ export function registerWorkflowCompletionRenderer(pi: ExtensionAPI): void {
 		if (data.command) {
 			box.addChild(new Text(theme.fg("accent", theme.bold(data.command)), 0, 1));
 		}
-		if (data.clipboard === "copied") {
-			box.addChild(new Text(theme.fg("success", data.instruction ?? "Copied to the clipboard."), 0, 0));
-		} else if (data.clipboard === "failed") {
-			box.addChild(new Text(theme.fg("warning", data.instruction ?? "Could not copy the command."), 0, 0));
-		} else if (data.instruction) {
+		if (data.instruction) {
 			box.addChild(new Text(data.instruction, 0, 0));
 		}
 		box.addChild(new DynamicBorder(borderColor));
@@ -260,5 +316,5 @@ export function showWorkflowCompletion(
 	const lines = [data.title, ...(data.details ?? [])];
 	if (data.command) lines.push(data.command);
 	if (data.instruction) lines.push(data.instruction);
-	ctx.ui.notify(lines.join("\n"), data.clipboard === "failed" ? "error" : "info");
+	ctx.ui.notify(lines.join("\n"), "info");
 }

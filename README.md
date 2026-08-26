@@ -87,14 +87,16 @@ After the agent settles, the extension automatically completes implementation wh
 - an open pull request exists from the workflow branch to the recorded base branch;
 - the pull request branch contains the local `HEAD` commit.
 
-The extension shows progress while checking the worktree and finding the pull request. When the gates pass, it records the pull request, copies `/workflow-next` to the clipboard, and shows a high-contrast completion card.
+The extension shows progress while checking the worktree and finding the pull request. When the gates pass, it records the pull request and shows a high-contrast completion card. It does not modify the clipboard.
 
-Paste `/workflow-next` directly into the implementation session. If automatic completion checks fail, `/workflow-next` retries them. When the implementation is ready, the workflow deterministically generates the initial review before entering a separate review session:
+Send `/workflow-next` in the implementation session. A persistent reminder below the editor keeps the command visible until the workflow advances, even if later background output pushes the completion card out of view. If automatic completion checks fail, `/workflow-next` retries them. When the implementation is ready, the workflow deterministically generates the initial review before entering a separate review session:
 
 1. one isolated, read-only agent reviews each `PC-*` planned change and maps its pseudocode to the implemented core types, protocols, construction sites, and consumers;
 2. one read-only holistic reviewer checks cross-cutting architecture, missing behavior, and implementation outside the plan;
 3. one read-only testing-criteria reviewer verifies every material requirement in the approved Testing section with repository and execution evidence;
 4. one synthesizer receives paths to all three forms of analysis and produces only the overall result and deduplicated overall concerns.
+
+The review progress display nests a live status row under the active stage for every individual agent. Queued and running reviewers, completed or failed reviewers, and reused cached results remain visible while the workflow advances through analysis and synthesis.
 
 Each generated review stores its manifest and agent results under `review-runs/`, keyed by commit range and a fingerprint of the original ask, approved plan, and clarifications. A retry reuses every valid completed result, so a synthesis failure does not repeat the earlier reviews. A new source fingerprint or commit range starts a separate run and preserves earlier results.
 
@@ -112,7 +114,7 @@ When `/workflow-revise` detects that `HEAD` changed since the current review, it
 
 Otherwise, the command opens a required multiline editor and creates a separate revision session in the same worktree. The worktree can already contain manual, uncommitted changes. The revision agent receives the original ask, frozen plan, clarifications, current review, and submitted change request. After the agent commits and pushes at least one new commit and leaves the worktree clean, `/workflow-next` generates the next review round in a new review session.
 
-Each re-review is incremental. First, a read-only scope agent compares the previous reviewed commit with the revised commit and identifies the `PC-*` planned changes whose prior reviews could be affected. The workflow reruns only those planned-change reviewers and carries the unaffected planned-change results forward. It always reruns the holistic reviewer, testing-criteria reviewer, and synthesizer against the revised pull request. A retry reuses any valid scope and reviewer results already completed for that re-review.
+Each re-review is incremental. First, a read-only scope agent compares the previous reviewed commit with the revised commit and identifies the `PC-*` planned changes whose prior reviews could be affected. The workflow shows that scope agent and each subsequent rerun as nested live progress. It reruns only the affected planned-change reviewers and carries the unaffected planned-change results forward. It always reruns the holistic reviewer, testing-criteria reviewer, and synthesizer against the revised pull request. A retry reuses any valid scope and reviewer results already completed for that re-review.
 
 An older review session cannot clean up or advance a newer revision round. If the branch changes outside the revision flow, the dashboard marks the review stale and cleanup directs the user to `/workflow-revise`.
 
@@ -152,7 +154,7 @@ Workflows created before descriptions were introduced keep the shorter title wit
 
 After the first planning, implementation, or revision agent turn settles, the footer shows `/workflow-next when ready`. The review session shows the footer reminder immediately because its report is already generated. It also adds a durable transcript card that identifies the session as read-only and explains how to ask about findings, request changes with `/workflow-revise`, or accept the review with `/workflow-next`. The session title identifies the active phase.
 
-The reminder and review card stay visible if the session resumes. Implementation and revision completion checks run after each settled turn, and `/workflow-next` enters review after completion or retries failed checks. Cleanup and completion do not add session names or footer status because they are short, non-agentic transitions.
+The footer reminder and review card stay visible if the session resumes. Implementation and revision completion checks run after each settled turn. After either coding phase completes, a persistent below-editor reminder tells the user to send `/workflow-next`; it stays visible until the workflow enters review. `/workflow-next` enters review after completion or retries failed checks. Cleanup and final completion do not add session names, footer status, or reminders because they are short, non-agentic transitions.
 
 ## State
 

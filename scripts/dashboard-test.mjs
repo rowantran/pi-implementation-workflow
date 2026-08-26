@@ -128,12 +128,19 @@ assert.ok(html.includes('key==="p"'));
 assert.ok(html.includes('key==="n"'));
 assert.ok(html.indexOf('id="plan-pagination"') < html.indexOf('id="plan-content"'));
 assert.ok(html.indexOf('id="review-pagination"') < html.indexOf('id="review-content"'));
-assert.ok(html.includes("function renderReader(name,destination,focusContent)"));
+assert.ok(html.includes("function renderReader(name,destination,focusContent,scrollContent)"));
 assert.ok(html.includes("function setReaderMode(name,mode,destination,focusContent)"));
 assert.ok(html.includes("function renderFullReview()"));
-assert.ok(html.includes("moveReader(name,offset,true)"));
+assert.ok(html.includes("moveReader(name,offset,false,false,true)"));
 assert.ok(html.includes("heading.focus({preventScroll:true})"));
-assert.ok(html.includes('heading.scrollIntoView({block:"start"})'));
+assert.ok(html.includes('if(scrollContent!==false)heading.scrollIntoView({block:"start"})'));
+assert.ok(html.includes(".plan-card{overflow:clip}"));
+assert.ok(html.includes(".review-card{overflow:clip}"));
+assert.ok(html.includes(".plan-outline-sticky{position:sticky;top:84px"));
+assert.ok(html.includes(".plan-outline{position:sticky;top:60px;z-index:10;align-self:start;overflow:auto"));
+assert.ok(html.includes(".plan-outline-sticky{position:static;max-height:none;overflow:visible;padding:10px}"));
+assert.equal(html.match(/class="plan-outline-sticky"/g)?.length, 2);
+assert.equal(html.match(/role="status" aria-live="polite" aria-atomic="true"/g)?.length, 2);
 assert.ok(html.includes('id="review-tab" data-view="review"'));
 assert.ok(html.includes('aria-label="Review outline"'));
 assert.ok(html.includes('class="card review-card"'));
@@ -185,7 +192,7 @@ function readerElement() {
     classList: { toggle() {} },
     setAttribute() {},
     removeAttribute() {},
-    querySelector() { return null; },
+    querySelector(selector) { return selector === "h2" ? this.heading || null : null; },
   };
 }
 const readerElements = {};
@@ -199,6 +206,8 @@ const readerButtons = ["plan", "review"].flatMap((name) => ["first", "second"].m
   classList: { toggle() {} },
   setAttribute() {},
   removeAttribute() {},
+  focus(options) { this.focusOptions = options; },
+  getBoundingClientRect() { return { top: 0, bottom: 0, left: 0, right: 0 }; },
 })));
 const fakeReaderDocument = {
   getElementById(id) { return readerElements[id]; },
@@ -239,6 +248,60 @@ for (const name of ["plan", "review"]) {
   assert.equal(readerElements[`${name}-outline`].hidden, true);
   assert.equal(readerElements[`${name}-pagination`].hidden, true);
 }
+
+let headingFocusOptions;
+let headingScrolls = 0;
+readerElements["plan-content"].heading = {
+  focus(options) { headingFocusOptions = options; },
+  scrollIntoView() { headingScrolls++; },
+};
+readerHelpers.setReaderMode("plan", "guided", "first", false);
+readerHelpers.moveReader("plan", 1, false, false, true);
+assert.equal(headingFocusOptions, undefined);
+assert.equal(headingScrolls, 0);
+assert.deepEqual(readerButtons.find((button) => button.dataset.reader === "plan" && button.dataset.readerDestination === "second").focusOptions, { preventScroll: true });
+readerHelpers.renderReader("plan", "first", true);
+assert.deepEqual(headingFocusOptions, { preventScroll: true });
+assert.equal(headingScrolls, 1);
+
+let activeButtonRect = { top: 220, bottom: 250, left: 110, right: 190 };
+const outlineScroller = {
+  scrollHeight: 400,
+  clientHeight: 100,
+  scrollTop: 20,
+  getBoundingClientRect() { return { top: 100, bottom: 200 }; },
+};
+const outlineElement = {
+  scrollWidth: 100,
+  clientWidth: 100,
+  scrollLeft: 0,
+  querySelector() { return outlineScroller; },
+  getBoundingClientRect() { return { left: 100, right: 200 }; },
+};
+const { revealOutlineButton } = new Function(
+  "document",
+  `${helperSource}; return { revealOutlineButton };`,
+)({
+  getElementById(id) {
+    assert.equal(id, "plan-outline");
+    return outlineElement;
+  },
+});
+const activeButton = { getBoundingClientRect() { return activeButtonRect; } };
+revealOutlineButton("plan", activeButton);
+assert.equal(outlineScroller.scrollTop, 70);
+activeButtonRect = { top: 70, bottom: 90, left: 110, right: 190 };
+revealOutlineButton("plan", activeButton);
+assert.equal(outlineScroller.scrollTop, 40);
+outlineScroller.scrollHeight = 100;
+outlineElement.scrollWidth = 400;
+outlineElement.scrollLeft = 10;
+activeButtonRect = { top: 110, bottom: 140, left: 230, right: 270 };
+revealOutlineButton("plan", activeButton);
+assert.equal(outlineElement.scrollLeft, 80);
+activeButtonRect = { top: 110, bottom: 140, left: 70, right: 90 };
+revealOutlineButton("plan", activeButton);
+assert.equal(outlineElement.scrollLeft, 50);
 
 const before = `# Delivery plan
 

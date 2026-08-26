@@ -4,7 +4,6 @@ import { dirname, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { type Message, uuidv7 } from "@earendil-works/pi-ai";
 import {
-	copyToClipboard,
 	SessionManager,
 	withFileMutationQueue,
 	type ExtensionAPI,
@@ -65,7 +64,9 @@ import {
 	registerWorkflowPhaseReminderRenderer,
 	runWorkflowProgress,
 	showWorkflowCompletion,
+	showWorkflowNextNotice,
 	showWorkflowPhaseStatus,
+	workflowNextNoticeText,
 } from "./ui.ts";
 import { transitionWorkflowState, workflowStateName } from "./workflow-state.ts";
 
@@ -189,7 +190,18 @@ export default function implementationWorkflow(
 			(phase === "review" && metadata?.state.phase === "reviewing")
 				? phase
 				: undefined;
+		const reviewTransitionNeedsRetry =
+			metadata?.state.phase === "reviewing" &&
+			(phase === "implementation" ||
+				(phase === "revision" &&
+					sessionReviewRound !== undefined &&
+					metadata.state.round === sessionReviewRound + 1));
+		const codingPhaseNeedsNext =
+			reviewTransitionNeedsRetry ||
+			(phase === "implementation" && metadata?.state.phase === "implementing" && metadata.state.step === "complete") ||
+			(phase === "revision" && metadata?.state.phase === "revising" && metadata.state.step === "complete");
 		showWorkflowPhaseStatus(ctx, phaseReminderVisible ? activePhase : undefined);
+		showWorkflowNextNotice(ctx, codingPhaseNeedsNext);
 	}
 
 	function revealPhaseReminder(ctx: ExtensionContext): void {
@@ -609,6 +621,9 @@ export default function implementationWorkflow(
 							}
 							if (stage === "synthesis-complete") progress.complete("Synthesized overall findings");
 						},
+						onAgentProgress: ({ id, label, status }) => {
+							progress.updateSubstep(id, label, status);
+						},
 					},
 					dependencies.reviewAgentRunner ??
 						createSpawnReviewAgent({
@@ -969,6 +984,14 @@ export default function implementationWorkflow(
 		const workflow = await loadCompletedWorkflow(ctx, identifier);
 		if (!workflow) return;
 		if (
+			workflow.state.phase === "reviewing" &&
+			sessionReviewRound !== undefined &&
+			workflow.state.round === sessionReviewRound + 1
+		) {
+			await transitionToReview(ctx, identifier);
+			return;
+		}
+		if (
 			workflow.state.phase !== "revising" ||
 			workflow.state.round !== sessionReviewRound
 		) {
@@ -1079,7 +1102,7 @@ export default function implementationWorkflow(
 			lastAutomaticFailure = undefined;
 			applyPhaseTools();
 			updatePhaseStatus(ctx);
-			if (automatic) await showCodingCompletion(ctx, workflow, codingPhase);
+			if (automatic) showCodingCompletion(ctx, workflow, codingPhase);
 			return workflow;
 		} catch (error) {
 			ctx.ui.notify(`Could not complete ${codingPhase}: ${errorMessage(error)}`, "error");
@@ -1089,27 +1112,17 @@ export default function implementationWorkflow(
 		}
 	}
 
-	async function showCodingCompletion(
+	function showCodingCompletion(
 		ctx: ExtensionContext,
 		workflow: CompletedWorkflowMetadata,
 		codingPhase: "implementation" | "revision",
-	): Promise<void> {
-		const command = "/workflow-next";
-		let clipboardError: unknown;
-		try {
-			await copyToClipboard(command);
-		} catch (error) {
-			clipboardError = error;
-		}
+	): void {
 		const title = codingPhase === "implementation" ? "Implementation complete" : "Revision complete";
 		showWorkflowCompletion(pi, ctx, {
 			title,
 			details: workflow.pullRequestUrl ? [`Pull request: ${workflow.pullRequestUrl}`] : undefined,
-			command,
-			clipboard: clipboardError ? "failed" : "copied",
-			instruction: clipboardError
-				? `Could not copy the command: ${errorMessage(clipboardError)}. Copy it above and paste it here to start a separate review session.`
-				: "Copied to the clipboard. Paste this command here to start a separate review session.",
+			command: "/workflow-next",
+			instruction: workflowNextNoticeText(),
 		});
 	}
 
@@ -1277,7 +1290,6 @@ export default function implementationWorkflow(
 				`Removed worktree: ${workflow.worktreePath}`,
 				"Retained the branch and saved plan.",
 			],
-			clipboard: "none",
 		});
 	}
 

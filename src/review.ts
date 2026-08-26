@@ -58,6 +58,15 @@ export interface ReviewAgentRequest {
 
 export type ReviewAgentRunner = (request: ReviewAgentRequest) => Promise<unknown>;
 
+export type ReviewAgentProgressStatus = "queued" | "running" | "complete" | "failed" | "reused";
+
+export interface ReviewAgentProgress {
+	id: string;
+	label: string;
+	role: ReviewAgentRole;
+	status: ReviewAgentProgressStatus;
+}
+
 export interface ReviewGenerationInput {
 	pullRequestUrl: string;
 	baseCommit: string;
@@ -74,6 +83,7 @@ export interface ReviewGenerationInput {
 	previousReviewPath?: string;
 	generatedAt?: string;
 	onStage?: (stage: "scope-complete" | "analysis-complete" | "synthesis-complete") => void;
+	onAgentProgress?: (progress: ReviewAgentProgress) => void;
 }
 
 export interface SpawnReviewAgentOptions {
@@ -105,6 +115,12 @@ interface ReviewRoundPaths {
 	synthesis: string;
 }
 
+interface ReviewAgentIdentity {
+	id: string;
+	label: string;
+	role: ReviewAgentRole;
+}
+
 export async function generateWorkflowReview(
 	input: ReviewGenerationInput,
 	runAgent: ReviewAgentRunner,
@@ -116,6 +132,21 @@ export async function generateWorkflowReview(
 	if (input.previousReview && !previousReviewMatches(input.previousReview, input)) {
 		throw new Error("The previous review does not match the current workflow review inputs.");
 	}
+
+	const reportAgentProgress = (agent: ReviewAgentIdentity, status: ReviewAgentProgressStatus): void => {
+		input.onAgentProgress?.({ ...agent, status });
+	};
+	const runTrackedAgent = async <T>(agent: ReviewAgentIdentity, operation: () => Promise<T>): Promise<T> => {
+		reportAgentProgress(agent, "running");
+		try {
+			const result = await operation();
+			reportAgentProgress(agent, "complete");
+			return result;
+		} catch (error) {
+			reportAgentProgress(agent, "failed");
+			throw error;
+		}
+	};
 
 	const paths = reviewRoundPaths(input);
 	const existingManifest = await readJson(paths.manifest, isReviewRoundManifest);
@@ -140,6 +171,13 @@ export async function generateWorkflowReview(
 	const generationAbort = new AbortController();
 	let relevantPlannedChangeIds = input.plannedChanges.map(({ id }) => id);
 	if (input.previousReview) {
+		const previousReview = input.previousReview;
+		const scopeAgent: ReviewAgentIdentity = {
+			id: "incremental-scope",
+			label: "Incremental scope reviewer",
+			role: "incremental-scope",
+		};
+		reportAgentProgress(scopeAgent, "queued");
 		let scope = canReuse ? await readJson(paths.incrementalScope, isIncrementalReviewScope) : undefined;
 		const reusableScope =
 			scope !== undefined &&
@@ -158,37 +196,66 @@ export async function generateWorkflowReview(
 				]);
 				await mkdir(paths.plannedChanges, { recursive: true });
 			}
-			const value = await runAgent({
-				role: "incremental-scope",
-				outputTool: INCREMENTAL_REVIEW_SCOPE_OUTPUT_TOOL,
-				cwd: input.worktreePath,
-				prompt: incrementalReviewScopePrompt({
-					metadataPath: input.metadataPath,
-					clarificationsPath: input.clarificationsPath,
-					planPath: input.planPath,
-					previousReviewPath: input.previousReviewPath!,
-					previousHeadCommit: input.previousReview.headCommit,
-					headCommit: input.headCommit,
-					pullRequestUrl: input.pullRequestUrl,
-				}),
-				signal: generationAbort.signal,
+			scope = await runTrackedAgent(scopeAgent, async () => {
+				const value = await runAgent({
+					role: "incremental-scope",
+					outputTool: INCREMENTAL_REVIEW_SCOPE_OUTPUT_TOOL,
+					cwd: input.worktreePath,
+					prompt: incrementalReviewScopePrompt({
+						metadataPath: input.metadataPath,
+						clarificationsPath: input.clarificationsPath,
+						planPath: input.planPath,
+						previousReviewPath: input.previousReviewPath!,
+						previousHeadCommit: previousReview.headCommit,
+						headCommit: input.headCommit,
+						pullRequestUrl: input.pullRequestUrl,
+					}),
+					signal: generationAbort.signal,
+				});
+				if (!isIncrementalReviewScope(value) || !incrementalReviewScopeIsValid(value, input.plannedChanges)) {
+					throw new Error("The incremental review scope agent returned an invalid result.");
+				}
+				await writeJson(paths.incrementalScope, value);
+				return value;
 			});
-			if (!isIncrementalReviewScope(value) || !incrementalReviewScopeIsValid(value, input.plannedChanges)) {
-				throw new Error("The incremental review scope agent returned an invalid result.");
-			}
-			scope = value;
-			await writeJson(paths.incrementalScope, scope);
 			manifest = {
 				...manifest,
 				status: "in-progress",
 				relevantPlannedChangeIds: scope.relevantPlannedChanges.map(({ id }) => id),
 			};
 			await writeJson(paths.manifest, manifest);
+		} else {
+			reportAgentProgress(scopeAgent, "reused");
 		}
 		relevantPlannedChangeIds = scope!.relevantPlannedChanges.map(({ id }) => id);
 		input.onStage?.("scope-complete");
 	}
 	const relevantPlannedChanges = new Set(relevantPlannedChangeIds);
+	const plannedChangeAgents = new Map(
+		input.plannedChanges
+			.filter((change) => relevantPlannedChanges.has(change.id))
+			.map((change) => [
+				change.id,
+				{
+					id: `planned-change:${change.id}`,
+					label: `${change.id}: ${change.title}`,
+					role: "planned-change" as const,
+				},
+			]),
+	);
+	const holisticAgent: ReviewAgentIdentity = {
+		id: "holistic-review",
+		label: "Holistic reviewer",
+		role: "holistic-review",
+	};
+	const testingCriteriaAgent: ReviewAgentIdentity = {
+		id: "testing-criteria",
+		label: "Testing criteria reviewer",
+		role: "testing-criteria",
+	};
+	for (const agent of [...plannedChangeAgents.values(), holisticAgent, testingCriteriaAgent]) {
+		reportAgentProgress(agent, "queued");
+	}
 
 	let analysisChanged = false;
 	const jobs: Array<
@@ -200,9 +267,11 @@ export async function generateWorkflowReview(
 	> = [
 		...input.plannedChanges.map((change) => async () => {
 			const resultPath = join(paths.plannedChanges, `${safePathSegment(change.id, "planned-change id")}.json`);
+			const agent = plannedChangeAgents.get(change.id);
 			if (canReuse) {
 				const existing = await readJson(resultPath, isPlannedChangeAnalysis);
 				if (existing?.id === change.id && existing.title === change.title) {
+					if (agent) reportAgentProgress(agent, "reused");
 					return { type: "change" as const, value: existing };
 				}
 			}
@@ -214,81 +283,94 @@ export async function generateWorkflowReview(
 				await writeJson(resultPath, previous);
 				return { type: "change" as const, value: previous };
 			}
+			if (!agent) throw new Error(`The review progress identity for ${change.id} is missing.`);
 			analysisChanged = true;
-			const value = await runAgent({
-				role: "planned-change",
-				outputTool: PLANNED_CHANGE_OUTPUT_TOOL,
-				cwd: input.worktreePath,
-				prompt: plannedChangeReviewPrompt({
-					id: change.id,
-					title: change.title,
-					content: change.content,
-					metadataPath: input.metadataPath,
-					clarificationsPath: input.clarificationsPath,
-					planPath: input.planPath,
-					baseCommit: input.baseCommit,
-					headCommit: input.headCommit,
-					pullRequestUrl: input.pullRequestUrl,
-				}),
-				signal: generationAbort.signal,
+			return runTrackedAgent(agent, async () => {
+				const value = await runAgent({
+					role: "planned-change",
+					outputTool: PLANNED_CHANGE_OUTPUT_TOOL,
+					cwd: input.worktreePath,
+					prompt: plannedChangeReviewPrompt({
+						id: change.id,
+						title: change.title,
+						content: change.content,
+						metadataPath: input.metadataPath,
+						clarificationsPath: input.clarificationsPath,
+						planPath: input.planPath,
+						baseCommit: input.baseCommit,
+						headCommit: input.headCommit,
+						pullRequestUrl: input.pullRequestUrl,
+					}),
+					signal: generationAbort.signal,
+				});
+				if (!isPlannedChangeAnalysis(value)) throw new Error(`${change.id} reviewer returned an invalid result.`);
+				if (value.id !== change.id || value.title !== change.title) {
+					throw new Error(`${change.id} reviewer returned the wrong planned-change identity.`);
+				}
+				await writeJson(resultPath, value);
+				return { type: "change" as const, value };
 			});
-			if (!isPlannedChangeAnalysis(value)) throw new Error(`${change.id} reviewer returned an invalid result.`);
-			if (value.id !== change.id || value.title !== change.title) {
-				throw new Error(`${change.id} reviewer returned the wrong planned-change identity.`);
-			}
-			await writeJson(resultPath, value);
-			return { type: "change" as const, value };
 		}),
 		async () => {
 			if (canReuse) {
 				const existing = await readJson(paths.holisticReview, isHolisticReview);
-				if (existing) return { type: "holistic" as const, value: existing };
+				if (existing) {
+					reportAgentProgress(holisticAgent, "reused");
+					return { type: "holistic" as const, value: existing };
+				}
 			}
 			analysisChanged = true;
-			const value = await runAgent({
-				role: "holistic-review",
-				outputTool: HOLISTIC_REVIEW_OUTPUT_TOOL,
-				cwd: input.worktreePath,
-				prompt: holisticReviewPrompt({
-					metadataPath: input.metadataPath,
-					clarificationsPath: input.clarificationsPath,
-					planPath: input.planPath,
-					baseCommit: input.baseCommit,
-					headCommit: input.headCommit,
-					pullRequestUrl: input.pullRequestUrl,
-				}),
-				signal: generationAbort.signal,
+			return runTrackedAgent(holisticAgent, async () => {
+				const value = await runAgent({
+					role: "holistic-review",
+					outputTool: HOLISTIC_REVIEW_OUTPUT_TOOL,
+					cwd: input.worktreePath,
+					prompt: holisticReviewPrompt({
+						metadataPath: input.metadataPath,
+						clarificationsPath: input.clarificationsPath,
+						planPath: input.planPath,
+						baseCommit: input.baseCommit,
+						headCommit: input.headCommit,
+						pullRequestUrl: input.pullRequestUrl,
+					}),
+					signal: generationAbort.signal,
+				});
+				if (!isHolisticReview(value)) throw new Error("The holistic reviewer returned an invalid result.");
+				await writeJson(paths.holisticReview, value);
+				return { type: "holistic" as const, value };
 			});
-			if (!isHolisticReview(value)) throw new Error("The holistic reviewer returned an invalid result.");
-			await writeJson(paths.holisticReview, value);
-			return { type: "holistic" as const, value };
 		},
 		async () => {
 			if (canReuse) {
 				const existing = await readJson(paths.testingCriteriaReview, isTestingCriteriaAnalysis);
-				if (existing) return { type: "testing" as const, value: existing };
+				if (existing) {
+					reportAgentProgress(testingCriteriaAgent, "reused");
+					return { type: "testing" as const, value: existing };
+				}
 			}
 			analysisChanged = true;
-			const value = await runAgent({
-				role: "testing-criteria",
-				outputTool: TESTING_CRITERIA_OUTPUT_TOOL,
-				cwd: input.worktreePath,
-				prompt: testingCriteriaReviewPrompt({
-					testingCriteria: input.testingCriteria,
-					metadataPath: input.metadataPath,
-					clarificationsPath: input.clarificationsPath,
-					planPath: input.planPath,
-					baseCommit: input.baseCommit,
-					headCommit: input.headCommit,
-					pullRequestUrl: input.pullRequestUrl,
-				}),
-				signal: generationAbort.signal,
+			return runTrackedAgent(testingCriteriaAgent, async () => {
+				const value = await runAgent({
+					role: "testing-criteria",
+					outputTool: TESTING_CRITERIA_OUTPUT_TOOL,
+					cwd: input.worktreePath,
+					prompt: testingCriteriaReviewPrompt({
+						testingCriteria: input.testingCriteria,
+						metadataPath: input.metadataPath,
+						clarificationsPath: input.clarificationsPath,
+						planPath: input.planPath,
+						baseCommit: input.baseCommit,
+						headCommit: input.headCommit,
+						pullRequestUrl: input.pullRequestUrl,
+					}),
+					signal: generationAbort.signal,
+				});
+				if (!isTestingCriteriaAnalysis(value)) {
+					throw new Error("The testing criteria reviewer returned an invalid result.");
+				}
+				await writeJson(paths.testingCriteriaReview, value);
+				return { type: "testing" as const, value };
 			});
-			if (!isTestingCriteriaAnalysis(value)) {
-				throw new Error("The testing criteria reviewer returned an invalid result.");
-			}
-			await writeJson(paths.testingCriteriaReview, value);
-			return { type: "testing" as const, value };
 		},
 	];
 
@@ -307,29 +389,39 @@ export async function generateWorkflowReview(
 		if (!analysis) throw new Error(`The review for ${change.id} is missing.`);
 		return analysis;
 	});
+	const synthesisAgent: ReviewAgentIdentity = {
+		id: "synthesizer",
+		label: "Synthesis agent",
+		role: "synthesizer",
+	};
+	reportAgentProgress(synthesisAgent, "queued");
 	let synthesis = !analysisChanged && canReuse ? await readJson(paths.synthesis, isReviewSynthesis) : undefined;
 	if (!synthesis) {
-		const synthesisValue = await runAgent({
-			role: "synthesizer",
-			outputTool: REVIEW_SYNTHESIS_OUTPUT_TOOL,
-			cwd: input.worktreePath,
-			prompt: reviewSynthesisPrompt({
-				metadataPath: input.metadataPath,
-				clarificationsPath: input.clarificationsPath,
-				planPath: input.planPath,
-				pullRequestUrl: input.pullRequestUrl,
-				baseCommit: input.baseCommit,
-				headCommit: input.headCommit,
-				plannedChangeReviewsDirectory: paths.plannedChanges,
-				holisticReviewPath: paths.holisticReview,
-				testingCriteriaReviewPath: paths.testingCriteriaReview,
+		synthesis = await runTrackedAgent(synthesisAgent, async () => {
+			const synthesisValue = await runAgent({
+				role: "synthesizer",
 				outputTool: REVIEW_SYNTHESIS_OUTPUT_TOOL,
-			}),
-			signal: generationAbort.signal,
+				cwd: input.worktreePath,
+				prompt: reviewSynthesisPrompt({
+					metadataPath: input.metadataPath,
+					clarificationsPath: input.clarificationsPath,
+					planPath: input.planPath,
+					pullRequestUrl: input.pullRequestUrl,
+					baseCommit: input.baseCommit,
+					headCommit: input.headCommit,
+					plannedChangeReviewsDirectory: paths.plannedChanges,
+					holisticReviewPath: paths.holisticReview,
+					testingCriteriaReviewPath: paths.testingCriteriaReview,
+					outputTool: REVIEW_SYNTHESIS_OUTPUT_TOOL,
+				}),
+				signal: generationAbort.signal,
+			});
+			if (!isReviewSynthesis(synthesisValue)) throw new Error("The review synthesizer returned an invalid result.");
+			await writeJson(paths.synthesis, synthesisValue);
+			return synthesisValue;
 		});
-		if (!isReviewSynthesis(synthesisValue)) throw new Error("The review synthesizer returned an invalid result.");
-		synthesis = synthesisValue;
-		await writeJson(paths.synthesis, synthesis);
+	} else {
+		reportAgentProgress(synthesisAgent, "reused");
 	}
 	await writeJson(paths.manifest, { ...manifest, status: "complete" });
 	input.onStage?.("synthesis-complete");
