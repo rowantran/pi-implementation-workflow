@@ -7,7 +7,8 @@ Durable sources, in priority order:
 2. Later clarifications: {{{clarificationsPath}}}
 3. Complete approved plan: {{{planPath}}}
 
-Pull request: {{{pullRequestUrl}}}
+Pull request stack (bottom to top):
+{{{pullRequestStack}}}
 Implementation range: {{{baseCommit}}}..{{{headCommit}}}
 
 Read every JSON file in the planned-change review directory, then read the other two result files:

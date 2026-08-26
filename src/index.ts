@@ -23,6 +23,13 @@ import {
 import { writeWorkflowDashboard, writeWorkflowDashboardRedirect } from "./dashboard.ts";
 import { parsePlannedChanges, parseTestingCriteria } from "./planned-changes.ts";
 import { PLAN_TITLE, planningCompletionError } from "./planning.ts";
+import {
+	buildPullRequestStack,
+	formatPullRequestStack,
+	parseOpenPullRequests,
+	toWorkflowPullRequests,
+	type OpenPullRequest,
+} from "./pull-requests.ts";
 import { registerWorkflowPlanTool, WORKFLOW_UPDATE_PLAN_TOOL } from "./plan-tool.ts";
 import {
 	implementationSystemPrompt,
@@ -40,6 +47,7 @@ import {
 	WORKFLOW_QUESTION_TOOL,
 	type WorkflowQuestionnaireResult,
 } from "./questions.ts";
+import { workflowReviewPullRequestUrls } from "./review-report.ts";
 import {
 	createSpawnReviewAgent,
 	generateWorkflowReview,
@@ -92,14 +100,6 @@ interface WorkflowPhaseData {
 interface RepositoryIdentity {
 	root: string;
 	commonDir: string;
-}
-
-interface PullRequestInfo {
-	number: number;
-	url: string;
-	baseRefName: string;
-	headRefName: string;
-	headRefOid: string;
 }
 
 interface CompletionFailure {
@@ -505,8 +505,8 @@ export default function implementationWorkflow(
 			ctx.ui.notify(`Workflow ${requestedIdentifier} is ${stateName}; it cannot enter review.`, "error");
 			return;
 		}
-		if (!workflow.pullRequestUrl) {
-			ctx.ui.notify(`Workflow ${requestedIdentifier} has no recorded pull request.`, "error");
+		if (!workflow.pullRequests?.length) {
+			ctx.ui.notify(`Workflow ${requestedIdentifier} has no recorded pull request delivery.`, "error");
 			return;
 		}
 		if (!(await requireLaunchRepository(ctx, workflow))) return;
@@ -570,6 +570,8 @@ export default function implementationWorkflow(
 		files: WorkflowFiles,
 		reviewRound: number,
 	): Promise<void> {
+		const pullRequests = workflow.pullRequests;
+		if (!pullRequests?.length) throw new Error("The workflow has no recorded pull request delivery.");
 		const [plan, clarifications, headCommit, existing] = await Promise.all([
 			readText(files.plan),
 			readText(files.clarifications),
@@ -584,7 +586,7 @@ export default function implementationWorkflow(
 			.digest("hex");
 		if (
 			existing !== undefined &&
-			existing.pullRequestUrl === workflow.pullRequestUrl &&
+			arraysEqual(workflowReviewPullRequestUrls(existing), pullRequests.map(({ url }) => url)) &&
 			existing.baseCommit === workflow.baseCommit &&
 			existing.headCommit === headCommit &&
 			existing.sourceFingerprint === sourceFingerprint &&
@@ -621,7 +623,7 @@ export default function implementationWorkflow(
 			async (progress) => {
 				const report = await generateWorkflowReview(
 					{
-						pullRequestUrl: workflow.pullRequestUrl!,
+						pullRequests,
 						baseCommit: workflow.baseCommit,
 						headCommit,
 						sourceFingerprint,
@@ -1077,8 +1079,8 @@ export default function implementationWorkflow(
 				}
 			}
 			const completion = await runWorkflowProgress<
-				{ failure: CompletionFailure } | { pullRequest: PullRequestInfo }
-			>(ctx, `Completing ${codingPhase}`, ["Checking worktree", "Checking pull request"], async (progress) => {
+				{ failure: CompletionFailure } | { pullRequests: OpenPullRequest[] }
+			>(ctx, `Completing ${codingPhase}`, ["Checking worktree", "Checking pull request delivery"], async (progress) => {
 				const failure = await implementationCompletionFailure(workflow);
 				if (failure) {
 					progress.fail("Worktree is not ready");
@@ -1094,19 +1096,55 @@ export default function implementationWorkflow(
 					return { failure: { message: "the revision has not created a new commit" } };
 				}
 				progress.complete("Checked clean worktree");
-				const pullRequest = await findPullRequest(workflow);
-				if (!pullRequest) {
-					progress.fail("Open pull request not found");
+				const stack = await findPullRequestStack(workflow);
+				if (!stack) {
+					progress.fail("Could not inspect open pull requests");
+					return { failure: { message: "could not inspect open pull requests" } };
+				}
+				if ("error" in stack) {
+					progress.fail("Open pull request delivery is incomplete");
+					return { failure: { message: stack.error } };
+				}
+				const pullRequests = stack.pullRequests;
+				if (pullRequests[0]?.headRefName !== workflow.workflowBranch) {
+					progress.fail("Pull request stack has the wrong bottom branch");
 					return {
-						failure: { message: `no open pull request from ${workflow.workflowBranch} to ${workflow.baseBranch}` },
+						failure: {
+							message: `the bottom pull request must use workflow branch ${workflow.workflowBranch}`,
+						},
 					};
 				}
-				if (pullRequest.headRefOid !== headCommit) {
-					progress.fail("Pull request does not contain local HEAD");
-					return { failure: { message: "the local HEAD commit has not been pushed to the pull request branch" } };
+				const tip = pullRequests.at(-1)!;
+				if (tip.headRefOid !== headCommit) {
+					progress.fail("Pull request stack does not contain local HEAD");
+					return { failure: { message: "the local HEAD commit has not been pushed to the stack tip branch" } };
 				}
-				progress.complete(`Checked pull request #${pullRequest.number}`);
-				return { pullRequest };
+				let previousCommit = workflow.baseCommit;
+				for (const pullRequest of pullRequests) {
+					const ancestor = await pi.exec("git", [
+						"-C",
+						workflow.worktreePath,
+						"merge-base",
+						"--is-ancestor",
+						previousCommit,
+						pullRequest.headRefOid,
+					]);
+					if (ancestor.code !== 0) {
+						progress.fail("Pull request branches are not restacked");
+						return {
+							failure: {
+								message: `pull request #${pullRequest.number} does not contain the current branch below it`,
+							},
+						};
+					}
+					previousCommit = pullRequest.headRefOid;
+				}
+				progress.complete(
+					pullRequests.length === 1
+						? `Checked pull request #${tip.number}`
+						: `Checked ${pullRequests.length}-pull-request stack`,
+				);
+				return { pullRequests };
 			});
 			if ("failure" in completion) {
 				const message = completion.failure.message;
@@ -1123,8 +1161,7 @@ export default function implementationWorkflow(
 			});
 			if (codingPhase === "implementation") workflow.implementationCompletedAt = new Date().toISOString();
 			else workflow.revisionCompletedAt = new Date().toISOString();
-			workflow.pullRequestUrl = completion.pullRequest.url;
-			workflow.pullRequestNumber = completion.pullRequest.number;
+			workflow.pullRequests = toWorkflowPullRequests(completion.pullRequests);
 			await writeCompletedWorkflowMetadata(workflow);
 			metadata = workflow;
 			lastAutomaticFailure = undefined;
@@ -1146,9 +1183,13 @@ export default function implementationWorkflow(
 		codingPhase: "implementation" | "revision",
 	): void {
 		const title = codingPhase === "implementation" ? "Implementation complete" : "Revision complete";
+		const pullRequests = workflow.pullRequests ?? [];
 		showWorkflowCompletion(pi, ctx, {
 			title,
-			details: workflow.pullRequestUrl ? [`Pull request: ${workflow.pullRequestUrl}`] : undefined,
+			details: pullRequests.map(
+				(pullRequest, index) =>
+					`${pullRequests.length === 1 ? "Pull request" : `Pull request ${index + 1}`}: ${pullRequest.url}`,
+			),
 			command: "/workflow-next",
 			instruction: workflowNextNoticeText(),
 		});
@@ -1163,28 +1204,30 @@ export default function implementationWorkflow(
 		return undefined;
 	}
 
-	async function findPullRequest(workflow: CompletedWorkflowMetadata): Promise<PullRequestInfo | undefined> {
-		const result = await pi.exec(
-			"gh",
-			[
-				"pr",
-				"list",
-				"--state",
-				"open",
-				"--head",
-				workflow.workflowBranch,
-				"--json",
-				"number,url,baseRefName,headRefName,headRefOid",
-			],
-			{ cwd: workflow.worktreePath, timeout: 15_000 },
-		);
-		if (result.code !== 0) return undefined;
+	async function findPullRequestStack(workflow: CompletedWorkflowMetadata) {
+		const [branch, result] = await Promise.all([
+			gitValue(workflow.worktreePath, ["branch", "--show-current"]),
+			pi.exec(
+				"gh",
+				[
+					"pr",
+					"list",
+					"--state",
+					"open",
+					"--limit",
+					"100",
+					"--json",
+					"number,url,baseRefName,headRefName,headRefOid",
+				],
+				{ cwd: workflow.worktreePath, timeout: 15_000 },
+			),
+		]);
+		if (!branch || result.code !== 0) return undefined;
 		try {
-			const pullRequests = JSON.parse(result.stdout) as PullRequestInfo[];
-			return pullRequests.find(
-				(pullRequest) =>
-					pullRequest.baseRefName === workflow.baseBranch && pullRequest.headRefName === workflow.workflowBranch,
-			);
+			const pullRequests = parseOpenPullRequests(JSON.parse(result.stdout));
+			return pullRequests
+				? buildPullRequestStack(pullRequests, branch, workflow.baseBranch)
+				: undefined;
 		} catch {
 			return undefined;
 		}
@@ -1323,15 +1366,25 @@ export default function implementationWorkflow(
 
 	async function validateWorktree(workflow: CompletedWorkflowMetadata): Promise<CompletionFailure | undefined> {
 		if (!(await pathExists(workflow.worktreePath))) return { message: `worktree is missing: ${workflow.worktreePath}` };
-		const [branch, commonDir] = await Promise.all([
+		const [branch, commonDir, containsBaseCommit] = await Promise.all([
 			gitValue(workflow.worktreePath, ["branch", "--show-current"]),
 			gitValue(workflow.worktreePath, ["rev-parse", "--path-format=absolute", "--git-common-dir"]),
+			pi.exec("git", [
+				"-C",
+				workflow.worktreePath,
+				"merge-base",
+				"--is-ancestor",
+				workflow.baseCommit,
+				"HEAD",
+			]),
 		]);
-		if (branch !== workflow.workflowBranch) {
-			return { message: `expected branch ${workflow.workflowBranch}, found ${branch ?? "none"}` };
-		}
+		if (!branch) return { message: "the workflow worktree has no checked-out branch" };
+		if (branch === workflow.baseBranch) return { message: `the workflow worktree is on base branch ${branch}` };
 		if (!commonDir || resolve(commonDir) !== resolve(workflow.gitCommonDir)) {
 			return { message: "the recorded worktree belongs to a different Git repository" };
+		}
+		if (containsBaseCommit.code !== 0) {
+			return { message: "the checked-out branch does not contain the recorded base commit" };
 		}
 		return undefined;
 	}
@@ -1437,7 +1490,9 @@ export default function implementationWorkflow(
 		if (phase === "review") {
 			instructions = reviewSystemPrompt({
 				identifier,
-				pullRequestUrl: metadata?.pullRequestUrl,
+				pullRequestStack: metadata?.pullRequests?.length
+					? formatPullRequestStack(metadata.pullRequests)
+					: undefined,
 				metadataPath: activeFiles.metadata,
 				planPath: activeFiles.plan,
 				clarificationsPath: activeFiles.clarifications,
@@ -1588,6 +1643,10 @@ function workflowSessionName(phase: string, identifier?: string, description?: s
 	const summary = description?.trim();
 	const details = slug && summary ? `${slug} · ${summary}` : slug ?? summary;
 	return details ? `${phase}: ${details}` : phase;
+}
+
+function arraysEqual(left: readonly string[], right: readonly string[]): boolean {
+	return left.length === right.length && left.every((value, index) => value === right[index]);
 }
 
 function errorMessage(error: unknown): string {

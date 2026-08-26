@@ -22,7 +22,7 @@ const data = {
   reviewStale: false,
   review: {
     version: 1,
-    pullRequestUrl: "https://example.test/pull/1",
+    pullRequestUrls: ["https://example.test/pull/1", "https://example.test/pull/2"],
     baseCommit: "abc123",
     headCommit: "def456",
     sourceFingerprint: "source789",
@@ -118,6 +118,8 @@ assert.ok(html.includes("originalAskText.textContent=dashboard.ask"));
 assert.equal(data.versions[0].content.includes(data.ask), false);
 assert.ok(html.includes('const dashboardSnapshot = dashboardDataElement.content.textContent;'));
 assert.ok(html.includes("const dashboard = JSON.parse(dashboardSnapshot);"));
+assert.ok(html.includes('id="review-pull-requests"'));
+assert.ok(html.includes("pullRequestUrls.length===1 ? \"Open pull request\" : \"Open PR \"+(index+1)"));
 assert.ok(html.includes("async function refreshDashboardIfChanged()"));
 assert.ok(html.includes('fetch(location.href,{method:"HEAD",cache:"no-store"})'));
 assert.ok(html.includes('head.headers.get("x-implementation-workflow-revision")'));

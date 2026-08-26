@@ -64,7 +64,7 @@ export function startPlanningUserMessage(ask: string): string {
 
 export function reviewSystemPrompt(values: {
 	identifier: string | undefined;
-	pullRequestUrl: string | undefined;
+	pullRequestStack: string | undefined;
 	metadataPath: string;
 	planPath: string;
 	clarificationsPath: string;
@@ -106,7 +106,7 @@ export function plannedChangeReviewPrompt(values: {
 	planPath: string;
 	baseCommit: string;
 	headCommit: string;
-	pullRequestUrl: string;
+	pullRequestStack: string;
 }): string {
 	return render(REVIEW_PLANNED_CHANGE_TEMPLATE, values);
 }
@@ -118,7 +118,7 @@ export function incrementalReviewScopePrompt(values: {
 	previousReviewPath: string;
 	previousHeadCommit: string;
 	headCommit: string;
-	pullRequestUrl: string;
+	pullRequestStack: string;
 }): string {
 	return render(REVIEW_INCREMENTAL_SCOPE_TEMPLATE, values);
 }
@@ -129,7 +129,7 @@ export function holisticReviewPrompt(values: {
 	planPath: string;
 	baseCommit: string;
 	headCommit: string;
-	pullRequestUrl: string;
+	pullRequestStack: string;
 }): string {
 	return render(REVIEW_HOLISTIC_TEMPLATE, values);
 }
@@ -141,7 +141,7 @@ export function testingCriteriaReviewPrompt(values: {
 	planPath: string;
 	baseCommit: string;
 	headCommit: string;
-	pullRequestUrl: string;
+	pullRequestStack: string;
 }): string {
 	return render(REVIEW_TESTING_CRITERIA_TEMPLATE, values);
 }
@@ -150,7 +150,7 @@ export function reviewSynthesisPrompt(values: {
 	metadataPath: string;
 	clarificationsPath: string;
 	planPath: string;
-	pullRequestUrl: string;
+	pullRequestStack: string;
 	baseCommit: string;
 	headCommit: string;
 	plannedChangeReviewsDirectory: string;

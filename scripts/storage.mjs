@@ -110,6 +110,30 @@ try {
 	assert.equal((await readWorkflowMetadata(completedFiles)).ask, ask);
 	assert.equal(await exists(completedFiles.workingPlan), false);
 
+	const legacyPullRequestIdentifier = "legacy-single-pull-request";
+	const legacyFiles = filesAt(join(temporaryRoot, legacyPullRequestIdentifier));
+	await mkdir(legacyFiles.root, { recursive: true });
+	await writeFile(legacyFiles.metadata, `${JSON.stringify({
+		...completedMetadata,
+		version: 2,
+		identifier: legacyPullRequestIdentifier,
+		state: { phase: "implementing", step: "complete" },
+		workflowBranch: `workflow/${legacyPullRequestIdentifier}`,
+		pullRequestUrl: "https://example.test/pull/9",
+		pullRequestNumber: 9,
+	})}\n`, "utf8");
+	const migratedLegacy = await readWorkflowMetadata(legacyFiles);
+	assert.equal(migratedLegacy.version, WORKFLOW_STATE_VERSION);
+	assert.deepEqual(migratedLegacy.pullRequests, [{
+		number: 9,
+		url: "https://example.test/pull/9",
+		baseRefName: "main",
+		headRefName: `workflow/${legacyPullRequestIdentifier}`,
+	}]);
+	const storedLegacy = JSON.parse(await readFile(legacyFiles.metadata, "utf8"));
+	assert.equal("pullRequestUrl" in storedLegacy, false);
+	assert.equal("pullRequestNumber" in storedLegacy, false);
+
 	const implementing = {
 		...completedMetadata,
 		state: { phase: "implementing", step: "active" },
@@ -119,8 +143,12 @@ try {
 	const implementationComplete = {
 		...implementing,
 		state: { phase: "implementing", step: "complete" },
-		pullRequestUrl: "https://example.test/pull/1",
-		pullRequestNumber: 1,
+		pullRequests: [{
+			number: 1,
+			url: "https://example.test/pull/1",
+			baseRefName: "main",
+			headRefName: `workflow/${identifier}`,
+		}],
 	};
 	await writeWorkflowMetadata(completedFiles, implementationComplete);
 	let lifecycleMetadata = implementationComplete;

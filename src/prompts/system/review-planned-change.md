@@ -1,5 +1,5 @@
 <!-- Usage: Appended to the system prompt for an agent that reviews one approved planned change. -->
-Review exactly this approved planned change against the implemented pull request.
+Review exactly this approved planned change against the implemented delivery.
 
 Planned change identity: {{{id}}}: {{{title}}}
 
@@ -13,7 +13,8 @@ Durable sources, in priority order:
 3. Complete approved plan: {{{planPath}}}
 
 Implementation range: {{{baseCommit}}}..{{{headCommit}}}
-Pull request: {{{pullRequestUrl}}}
+Pull request stack (bottom to top):
+{{{pullRequestStack}}}
 
 Review the planned design against the implementation.
 
