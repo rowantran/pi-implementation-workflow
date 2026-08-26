@@ -48,7 +48,7 @@ The extension saves the submitted ask verbatim as immutable workflow metadata, s
 
 - a concise plain-English plan description as the main document title, beside its prominent current version number;
 - a **Plan** view with a guided, change-by-change reader, a full-document fallback, the immutable original ask, and structured user clarifications;
-- an automatically generated plan outline, top-anchored previous/next navigation, `P`/`N` and arrow-key shortcuts, and direct links to individual planned changes;
+- an automatically generated plan outline, top-anchored previous/next navigation, `P`/`N` and arrow-key shortcuts, `S`/`C` controls for the navigation and workflow-context sidebars, and direct links to individual planned changes;
 - a **Compare versions** view with two version selectors and a rich, formatted plan diff with green additions and red deletions;
 - light and dark themes;
 - automatic change detection when the browser regains focus, with a reload only when dashboard content changed.

@@ -139,8 +139,18 @@ assert.ok(html.includes('data-reader="review" data-reader-destination="testing"'
 assert.ok(html.includes('class="plan-outline-button plan-outline-button--section"'));
 assert.equal(html.match(/aria-keyshortcuts="P"/g)?.length, 2);
 assert.equal(html.match(/aria-keyshortcuts="N"/g)?.length, 2);
+assert.equal(html.match(/aria-keyshortcuts="S"/g)?.length, 2);
+assert.equal(html.match(/aria-keyshortcuts="C"/g)?.length, 1);
+assert.ok(html.includes('id="plan-navigation-sidebar-button"'));
+assert.ok(html.includes('id="review-navigation-sidebar-button"'));
+assert.ok(html.includes('id="context-sidebar-button"'));
+assert.ok(html.includes('id="workflow-context-sidebar"'));
+assert.ok(html.includes('<kbd class="shortcut-key">S</kbd>'));
+assert.ok(html.includes('<kbd class="shortcut-key">C</kbd>'));
 assert.ok(html.includes('key==="p"'));
 assert.ok(html.includes('key==="n"'));
+assert.ok(html.includes('key==="s"'));
+assert.ok(html.includes('key==="c"'));
 assert.ok(html.indexOf('id="plan-pagination"') < html.indexOf('id="plan-content"'));
 assert.ok(html.indexOf('id="review-pagination"') < html.indexOf('id="review-content"'));
 assert.ok(html.includes("function renderReader(name,destination,focusContent,scrollContent)"));
@@ -152,6 +162,9 @@ assert.ok(html.includes("heading.focus({preventScroll:true})"));
 assert.ok(html.includes('if(scrollContent!==false)heading.scrollIntoView({block:"start"})'));
 assert.ok(html.includes(".plan-card{overflow:clip}"));
 assert.ok(html.includes(".review-card{overflow:clip}"));
+assert.ok(html.includes(".plan-layout--context-collapsed{grid-template-columns:minmax(0,1fr)}"));
+assert.ok(html.includes(".plan-reader--sidebar-collapsed{grid-template-columns:minmax(0,1fr)}"));
+assert.ok(html.includes(".sidebar-toggle{gap:7px}"));
 assert.ok(html.includes(".plan-outline-sticky{position:sticky;top:84px"));
 assert.ok(html.includes(".plan-outline{position:sticky;top:60px;z-index:10;align-self:start;overflow:auto"));
 assert.ok(html.includes(".plan-outline-sticky{position:static;max-height:none;overflow:visible;padding:10px}"));
@@ -205,6 +218,7 @@ assert.ok(testingReview.includes("Run the dashboard test and inspect the report.
 assert.ok(testingReview.includes("scripts/dashboard-test.mjs:1"));
 
 function readerElement() {
+  const classes = new Set();
   return {
     className: "",
     innerHTML: "",
@@ -212,15 +226,28 @@ function readerElement() {
     hidden: true,
     disabled: false,
     dataset: {},
-    classList: { toggle() {} },
-    setAttribute() {},
-    removeAttribute() {},
-    querySelector(selector) { return selector === "h2" ? this.heading || null : null; },
+    attributes: {},
+    sidebarLabel: { textContent: "" },
+    classList: {
+      toggle(name, force) {
+        const enabled = force === undefined ? !classes.has(name) : force;
+        if (enabled) classes.add(name); else classes.delete(name);
+        return enabled;
+      },
+      contains(name) { return classes.has(name); },
+    },
+    setAttribute(name, value) { this.attributes[name] = value; },
+    removeAttribute(name) { delete this.attributes[name]; },
+    querySelector(selector) {
+      if (selector === "h2") return this.heading || null;
+      if (selector === ".sidebar-toggle-label") return this.sidebarLabel;
+      return null;
+    },
   };
 }
 const readerElements = {};
 for (const name of ["plan", "review"]) {
-  for (const suffix of ["content", "previous-section", "next-section", "position", "pagination", "reader", "outline", "guided-mode-button", "full-mode-button"]) {
+  for (const suffix of ["content", "previous-section", "next-section", "position", "pagination", "reader", "outline", "guided-mode-button", "full-mode-button", "navigation-sidebar-button"]) {
     readerElements[`${name}-${suffix}`] = readerElement();
   }
 }
@@ -251,7 +278,7 @@ const readerHelpers = new Function(
   "history",
   "requestAnimationFrame",
   "window",
-  `${helperSource}; return { configureReader, moveReader, renderReader, setReaderMode };`,
+  `let navigationSidebarCollapsed=false,contextSidebarCollapsed=false;${helperSource}; return { configureReader, moveReader, renderReader, setNavigationSidebarCollapsed, setReaderMode };`,
 )(readerStore, fakeReaderDocument, fakeLocation, fakeHistory, (callback) => callback(), fakeWindow);
 for (const name of ["plan", "review"]) {
   readerHelpers.configureReader(name, [
@@ -290,6 +317,44 @@ assert.deepEqual(pageScrolls, [{ top: 0, left: 0, behavior: "auto" }]);
 readerHelpers.renderReader("plan", "first", true);
 assert.deepEqual(headingFocusOptions, { preventScroll: true });
 assert.equal(headingScrolls, 1);
+readerHelpers.setNavigationSidebarCollapsed(true);
+assert.equal(readerElements["plan-outline"].hidden, true);
+assert.equal(readerElements["plan-reader"].classList.contains("plan-reader--sidebar-collapsed"), true);
+assert.equal(readerElements["plan-navigation-sidebar-button"].attributes["aria-expanded"], "false");
+assert.equal(readerElements["plan-navigation-sidebar-button"].sidebarLabel.textContent, "Show navigation");
+readerHelpers.setNavigationSidebarCollapsed(false);
+assert.equal(readerElements["plan-outline"].hidden, false);
+assert.equal(readerElements["plan-reader"].classList.contains("plan-reader--sidebar-collapsed"), false);
+assert.equal(readerElements["plan-navigation-sidebar-button"].attributes["aria-expanded"], "true");
+assert.equal(readerElements["plan-navigation-sidebar-button"].sidebarLabel.textContent, "Hide navigation");
+
+const contextLayout = readerElement();
+const contextSidebar = readerElement();
+const contextButton = readerElement();
+const { setContextSidebarCollapsed } = new Function(
+  "document",
+  `let navigationSidebarCollapsed=false,contextSidebarCollapsed=false;${helperSource}; return { setContextSidebarCollapsed };`,
+)({
+  querySelector(selector) {
+    assert.equal(selector, ".plan-layout");
+    return contextLayout;
+  },
+  getElementById(id) {
+    if (id === "workflow-context-sidebar") return contextSidebar;
+    if (id === "context-sidebar-button") return contextButton;
+    throw new Error(`Unexpected context sidebar element: ${id}`);
+  },
+});
+setContextSidebarCollapsed(true);
+assert.equal(contextSidebar.hidden, true);
+assert.equal(contextLayout.classList.contains("plan-layout--context-collapsed"), true);
+assert.equal(contextButton.attributes["aria-expanded"], "false");
+assert.equal(contextButton.sidebarLabel.textContent, "Show context");
+setContextSidebarCollapsed(false);
+assert.equal(contextSidebar.hidden, false);
+assert.equal(contextLayout.classList.contains("plan-layout--context-collapsed"), false);
+assert.equal(contextButton.attributes["aria-expanded"], "true");
+assert.equal(contextButton.sidebarLabel.textContent, "Hide context");
 
 let activeButtonRect = { top: 220, bottom: 250, left: 110, right: 190 };
 const outlineScroller = {
