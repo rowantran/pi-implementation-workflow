@@ -3,6 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="implementation-workflow-revision" content="{{dashboardRevision}}">
 <title>Implementation workflow{{#slug}} · {{slug}}{{/slug}}</title>
 <style>
 /* Isara design-system semantic tokens and component geometry. */
@@ -97,7 +98,10 @@
   </section>
 </main>
 <script>
-const dashboard = JSON.parse(document.getElementById("dashboard-data").content.textContent);
+const dashboardDataElement = document.getElementById("dashboard-data");
+const dashboardSnapshot = dashboardDataElement.content.textContent;
+const dashboardRevision = document.querySelector('meta[name="implementation-workflow-revision"]').content;
+const dashboard = JSON.parse(dashboardSnapshot);
 const stateKey = "isara-workflow-dashboard:" + location.pathname;
 let latestPlan = null, planStructure = null;
 const readers = {};
@@ -321,7 +325,20 @@ function initialize() {
   const unseenReview=dashboard.review && state.reviewHead !== dashboard.review.headCommit, initialHash=location.hash, planHashDestination=hashReaderDestination(initialHash,"plan"), reviewHashDestination=hashReaderDestination(initialHash,"review"), savedView=initialViewForHash(initialHash,state.view,Boolean(dashboard.review)), initialView=unseenReview ? "review" : savedView, requestedPlanMode=planHashDestination ? (planHashDestination==="full" ? "full" : "guided") : (state.planMode || (guidedAvailable ? "guided" : "full")), requestedPlanDestination=planHashDestination && planHashDestination!=="full" ? planHashDestination : state.planDestination, requestedReviewMode=unseenReview ? "guided" : (reviewHashDestination ? (reviewHashDestination==="full" ? "full" : "guided") : (state.reviewMode || "guided")), requestedReviewDestination=unseenReview ? "overall" : (reviewHashDestination && reviewHashDestination!=="full" ? reviewHashDestination : state.reviewDestination);
   setReaderMode("plan",requestedPlanMode,requestedPlanDestination); if(dashboard.review)setReaderMode("review",requestedReviewMode,requestedReviewDestination); setView(initialView); if (dashboard.review) saveState({reviewHead:dashboard.review.headCommit}); renderDiff(); const scroll=Number(sessionStorage.getItem(stateKey+":scroll")); if(scroll){scrollTo(0,scroll);sessionStorage.removeItem(stateKey+":scroll");}
 }
-let blurredAt=0; window.addEventListener("blur",function(){blurredAt=Date.now();}); window.addEventListener("focus",function(){if(blurredAt && Date.now()-blurredAt>500){try{sessionStorage.setItem(stateKey+":scroll",String(scrollY));}catch{} location.reload();}});
+function reloadDashboard() { try{sessionStorage.setItem(stateKey+":scroll",String(scrollY));}catch{} location.reload(); }
+let dashboardRefreshRunning=false;
+async function refreshDashboardIfChanged() {
+  if (dashboardRefreshRunning) return; dashboardRefreshRunning=true;
+  try {
+    const head=await fetch(location.href,{method:"HEAD",cache:"no-store"}); if(!head.ok)return;
+    const latestRevision=head.headers.get("x-implementation-workflow-revision");
+    if(latestRevision){if(latestRevision!==dashboardRevision)reloadDashboard();return;}
+    const response=await fetch(location.href,{cache:"no-store"}); if(!response.ok)return;
+    const latestDocument=new DOMParser().parseFromString(await response.text(),"text/html"), latestMeta=latestDocument.querySelector('meta[name="implementation-workflow-revision"]'), latestData=latestDocument.getElementById("dashboard-data");
+    const changed=latestMeta ? latestMeta.content!==dashboardRevision : Boolean(latestData && latestData.content.textContent!==dashboardSnapshot); if(changed)reloadDashboard();
+  } catch {} finally { dashboardRefreshRunning=false; }
+}
+let blurredAt=0; window.addEventListener("blur",function(){blurredAt=Date.now();}); window.addEventListener("focus",function(){const elapsed=blurredAt ? Date.now()-blurredAt : 0;blurredAt=0;if(elapsed>500)void refreshDashboardIfChanged();});
 initialize();
 </script>
 </body>

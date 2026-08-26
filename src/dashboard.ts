@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { basename, dirname } from "node:path";
 import Mustache from "mustache";
@@ -55,8 +56,16 @@ export async function writeWorkflowDashboardRedirect(from: string, destinationUr
 }
 
 export function renderWorkflowDashboard(data: WorkflowDashboardData): string {
+	const dashboardData = JSON.stringify(data);
+	const { generatedAt: _generatedAt, ...visibleData } = data;
+	const dashboardRevision = createHash("sha256")
+		.update(DASHBOARD_TEMPLATE)
+		.update("\0")
+		.update(JSON.stringify(visibleData))
+		.digest("hex");
 	return Mustache.render(DASHBOARD_TEMPLATE, {
-		dashboardData: JSON.stringify(data),
+		dashboardData,
+		dashboardRevision,
 		slug: data.slug,
 	});
 }

@@ -82,8 +82,22 @@ const data = {
 };
 
 const html = renderWorkflowDashboard(data);
+const revision = /<meta name="implementation-workflow-revision" content="([a-f0-9]{64})">/.exec(html)?.[1];
+const timestampOnlyUpdate = renderWorkflowDashboard({ ...data, generatedAt: "2025-01-02T03:05:05.000Z" });
+const contentUpdate = renderWorkflowDashboard({ ...data, description: "Updated dashboard content" });
 
 assert.ok(html.startsWith("<!doctype html>"));
+assert.equal(revision?.length, 64);
+assert.equal(
+  /<meta name="implementation-workflow-revision" content="([a-f0-9]{64})">/.exec(timestampOnlyUpdate)?.[1],
+  revision,
+  "regenerating unchanged visible data keeps the same revision",
+);
+assert.notEqual(
+  /<meta name="implementation-workflow-revision" content="([a-f0-9]{64})">/.exec(contentUpdate)?.[1],
+  revision,
+  "visible dashboard changes create a new revision",
+);
 assert.ok(
   html.includes(
     "<title>Implementation workflow · example&lt;&#x2F;title&gt;&lt;script&gt;alert(&quot;unsafe&quot;)&lt;&#x2F;script&gt;</title>",
@@ -102,11 +116,12 @@ assert.ok(
 );
 assert.ok(html.includes("originalAskText.textContent=dashboard.ask"));
 assert.equal(data.versions[0].content.includes(data.ask), false);
-assert.ok(
-  html.includes(
-    'const dashboard = JSON.parse(document.getElementById("dashboard-data").content.textContent);',
-  ),
-);
+assert.ok(html.includes('const dashboardSnapshot = dashboardDataElement.content.textContent;'));
+assert.ok(html.includes("const dashboard = JSON.parse(dashboardSnapshot);"));
+assert.ok(html.includes("async function refreshDashboardIfChanged()"));
+assert.ok(html.includes('fetch(location.href,{method:"HEAD",cache:"no-store"})'));
+assert.ok(html.includes('head.headers.get("x-implementation-workflow-revision")'));
+assert.ok(html.includes("if(latestRevision!==dashboardRevision)reloadDashboard()"));
 assert.ok(!html.includes("{{dashboard"));
 assert.ok(!html.includes("</title><script>"));
 assert.ok(!html.includes("</template><script>"));
