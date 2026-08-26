@@ -4,9 +4,10 @@ import {
 	type ExtensionContext,
 	type Theme,
 } from "@earendil-works/pi-coding-agent";
-import { Box, type Component, Text, truncateToWidth, type TUI } from "@earendil-works/pi-tui";
+import { Box, type Component, Container, Text, truncateToWidth, type TUI } from "@earendil-works/pi-tui";
 
 const COMPLETION_ENTRY = "implementation-workflow-completion";
+export const PHASE_REMINDER_ENTRY = "implementation-workflow-phase-reminder";
 const PHASE_STATUS_ID = "implementation-workflow-phase";
 const WORKFLOW_NEXT_NOTICE_ID = "implementation-workflow-next-notice";
 const SPINNER_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
@@ -40,6 +41,19 @@ export interface WorkflowCompletionData {
 	details?: string[];
 	command?: string;
 	instruction?: string;
+}
+
+export interface WorkflowPhaseReminderData {
+	phase: WorkflowStatusPhase;
+	draftId?: string;
+	identifier?: string;
+}
+
+export interface WorkflowReviewTranscriptCardContent {
+	title: string;
+	description: string;
+	guidance: string;
+	actions: Array<{ label: string; command: string }>;
 }
 
 type ProgressResult<T> = { ok: true; value: T } | { ok: false; error: unknown };
@@ -179,6 +193,48 @@ export function workflowPhaseStatusText(phase: WorkflowStatusPhase | undefined):
 export function showWorkflowPhaseStatus(ctx: ExtensionContext, phase: WorkflowStatusPhase | undefined): void {
 	const status = workflowPhaseStatusText(phase);
 	ctx.ui.setStatus(PHASE_STATUS_ID, status ? ctx.ui.theme.fg("dim", status) : undefined);
+}
+
+export function workflowReviewTranscriptCardContent(
+	phase: WorkflowStatusPhase | undefined,
+): WorkflowReviewTranscriptCardContent | undefined {
+	if (phase !== "review") return undefined;
+	return {
+		title: "Review ready · Read-only session",
+		description: "The generated review is open in the workflow dashboard.",
+		guidance: "Ask me to explain a finding, inspect its cited code, or assess whether a concern is valid.",
+		actions: [
+			{ label: "Request changes", command: "/workflow-revise <changes>" },
+			{ label: "Accept and clean up", command: "/workflow-next" },
+		],
+	};
+}
+
+export function registerWorkflowPhaseReminderRenderer(pi: ExtensionAPI): void {
+	pi.registerEntryRenderer<WorkflowPhaseReminderData>(PHASE_REMINDER_ENTRY, (entry, _options, theme) => {
+		const content = workflowReviewTranscriptCardContent(entry.data?.phase);
+		if (!content) return new Container();
+
+		const box = new Box(1, 1, (text) => theme.bg("customMessageBg", text));
+		const borderColor = (text: string) => theme.fg("accent", text);
+		box.addChild(new DynamicBorder(borderColor));
+		box.addChild(new Text(theme.fg("accent", theme.bold(content.title)), 0, 1));
+		box.addChild(new Text(`${content.description}\n\n${content.guidance}`, 0, 0));
+		box.addChild(
+			new Text(
+				content.actions
+					.map(
+						(action) =>
+							`${theme.fg("muted", `${action.label}:`)} ${theme.fg("accent", theme.bold(action.command))}`,
+					)
+					.join("\n"),
+				0,
+				1,
+			),
+		);
+		box.addChild(new DynamicBorder(borderColor));
+		return box;
+	});
 }
 
 export function workflowNextNoticeText(): string {

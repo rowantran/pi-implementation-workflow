@@ -477,6 +477,13 @@ try {
 		]);
 		await reviewHarness.emit("session_start", reviewCtx);
 		assert.equal(reviewHarness.getActiveTools().includes("edit"), false, "review remains read-only");
+		assert.deepEqual(
+			reviewHarness.entries.find(
+				(entry) => entry.customType === "implementation-workflow-phase-reminder",
+			)?.data,
+			{ phase: "review", draftId: undefined, identifier: workflow.metadata.identifier },
+			"review persists the transcript card entry",
+		);
 		reviewHarness.setWorktreeStatus(" M src/index.ts\n");
 		await reviewHarness.commands.get("workflow-revise")("Finish and review my worktree changes.", reviewCtx);
 		assert.deepEqual((await readMetadata(workflow.metadata.identifier)).state, {

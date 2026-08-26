@@ -69,7 +69,9 @@ import {
 	writeWorkflowReview,
 } from "./storage.ts";
 import {
+	PHASE_REMINDER_ENTRY,
 	registerWorkflowCompletionRenderer,
+	registerWorkflowPhaseReminderRenderer,
 	runWorkflowProgress,
 	showWorkflowCompletion,
 	showWorkflowNextNotice,
@@ -105,7 +107,6 @@ interface CompletionFailure {
 }
 
 const PHASE_ENTRY = "implementation-workflow-phase";
-const PHASE_REMINDER_ENTRY = "implementation-workflow-phase-reminder";
 const DASHBOARD_SHORTCUT = "ctrl+alt+d";
 const WORKFLOW_BRANCH_PREFIX = "workflow/";
 const REVIEW_DISABLED_TOOLS = new Set(["edit", "write"]);
@@ -119,6 +120,7 @@ export default function implementationWorkflow(
 	dependencies: ImplementationWorkflowDependencies = {},
 ): void {
 	registerWorkflowCompletionRenderer(pi);
+	registerWorkflowPhaseReminderRenderer(pi);
 
 	let phase: SessionWorkflowPhase | undefined;
 	let draftId: string | undefined;
