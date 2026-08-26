@@ -51,7 +51,7 @@ The extension saves the submitted ask verbatim as immutable workflow metadata, s
 - an automatically generated plan outline, top-anchored previous/next navigation, `P`/`N` and arrow-key shortcuts, and direct links to individual planned changes;
 - a **Compare versions** view with two version selectors and a rich, formatted plan diff with green additions and red deletions;
 - light and dark themes;
-- automatic refresh when the browser regains focus.
+- automatic change detection when the browser regains focus, with a reload only when dashboard content changed.
 
 Press `Ctrl+Alt+D` or run `/workflow-dashboard` to regenerate the dashboard and show its link again.
 

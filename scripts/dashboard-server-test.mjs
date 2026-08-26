@@ -213,6 +213,19 @@ try {
 		(await rawRequest(port, "/implementation-workflow/workflows/created-after-start")).body,
 		"second version",
 	);
+	const revisionedDashboard = dashboard.renderWorkflowDashboard({
+		slug: "created-after-start",
+		description: "Revision one",
+		generatedAt: "2026-01-01T00:00:00.000Z",
+		versions: [],
+		clarifications: [],
+	});
+	await writeFile(liveDashboard, revisionedDashboard, "utf8");
+	const revisionedResponse = await rawRequest(port, "/implementation-workflow/workflows/created-after-start");
+	const revisionedHead = await rawRequest(port, "/implementation-workflow/workflows/created-after-start", "HEAD");
+	const embeddedRevision = /<meta name="implementation-workflow-revision" content="([a-f0-9]{64})">/.exec(revisionedDashboard)?.[1];
+	assert.equal(revisionedResponse.body, revisionedDashboard, "revision scanning does not truncate the response body");
+	assert.equal(revisionedHead.headers["x-implementation-workflow-revision"], embeddedRevision);
 
 	const redirectPath = join(workflowsRoot, ".drafts", "promoted", "dashboard.html");
 	const destinationUrl = `http://127.0.0.1:${port}/implementation-workflow/workflows/workflow-one`;

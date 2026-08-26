@@ -11,9 +11,12 @@ import {
 export const DEFAULT_DASHBOARD_PORT = 43121;
 export const DASHBOARD_SERVER_PROTOCOL_VERSION = 1;
 export const DASHBOARD_HEALTH_PATH = "/implementation-workflow/health";
+export const DASHBOARD_REVISION_HEADER = "X-Implementation-Workflow-Revision";
 const PROCESS_SERVER_KEY = Symbol.for("pi-implementation-workflow.dashboard-server.v1");
 const PROBE_TIMEOUT_MS = 750;
 const MAX_HEALTH_RESPONSE_BYTES = 8 * 1024;
+const MAX_DASHBOARD_REVISION_SCAN_BYTES = 8 * 1024;
+const DASHBOARD_REVISION_PATTERN = /<meta name="implementation-workflow-revision" content="([a-f0-9]{64})">/;
 
 export type DashboardScope = "draft" | "workflow";
 
@@ -271,6 +274,8 @@ async function handleDashboardRequest(
 		return;
 	}
 
+	const dashboardRevision = await readDashboardRevision(dashboardFile, fileInfo.size);
+	if (dashboardRevision) response.setHeader(DASHBOARD_REVISION_HEADER, dashboardRevision);
 	response.statusCode = 200;
 	response.setHeader("Content-Type", "text/html; charset=utf-8");
 	response.setHeader("Cache-Control", "no-store");
@@ -290,6 +295,17 @@ async function handleDashboardRequest(
 	} finally {
 		await dashboardFile.close();
 	}
+}
+
+async function readDashboardRevision(
+	dashboardFile: Awaited<ReturnType<typeof open>>,
+	fileSize: number,
+): Promise<string | undefined> {
+	const scanLength = Math.min(fileSize, MAX_DASHBOARD_REVISION_SCAN_BYTES);
+	if (!scanLength) return undefined;
+	const buffer = Buffer.allocUnsafe(scanLength);
+	const { bytesRead } = await dashboardFile.read(buffer, 0, scanLength, 0);
+	return DASHBOARD_REVISION_PATTERN.exec(buffer.toString("utf8", 0, bytesRead))?.[1];
 }
 
 function parseDashboardRoute(rawPath: string): Pick<DashboardReference, "scope" | "id"> | undefined {
