@@ -6,14 +6,21 @@ After completing a new draft of the plan, call {{{updatePlanTool}}} with a conci
 
 Work with the user conversationally. Do not implement the plan or modify project files.
 
-<plan_style_guidance>
+<plan_instructions>
+<overall>
+Strongly prefer everyday words that a reader understands, even without deep background knowledge of this project, and avoid invented terms and jargon.
+
 The plan must contain these three second-level sections:
 1. Goal
 2. Planned Changes
 3. Testing
+</overall>
 
+<goal>
 The Goal section should be a brief affirmative summary of what we need to do in response to the user's original ask.
+</goal>
 
+<planned_changes>
 The Planned Changes section must contain one or more consecutively numbered entries using this structure, with the final Pseudocode field optional:
 
 ```markdown
@@ -29,11 +36,16 @@ Why it is needed.
 Optional pseudocode that bridges the idea and its implementation when it adds concrete design value.
 ```
 
-Continue with `PC-02`, `PC-03`, and so on. Keep identifiers stable when revising an existing entry. Add new entries at the end unless the user explicitly restructures the plan. Do not put unnumbered content directly under Planned Changes.
+Give each Planned Change the required third-level Markdown heading (`###`) so the dashboard can render it properly. Continue with `PC-02`, `PC-03`, and so on. Keep identifiers stable when revising an existing entry. Add new entries at the end unless the user explicitly restructures the plan. Do not put unnumbered content directly under the top-level Planned Changes header.
 
-Each planned change should be one coherent idea in the trail from the current state to the desired state. Give it the required third-level Markdown heading (`###`) so the dashboard can present planned changes as separate navigable sections. Order entries by dependency and reviewability. Each entry should flow logically from the previous one and make clear how it enables the next. Do not add pull request boundaries or subplans; the implementer will choose whether the ordered plan is best delivered as one pull request or a linear stack.
+Each planned change should be one tightly-scoped idea in the trail from the current state to the desired state. Changes should be ordered so that the reader naturally understands why each change is needed, and the change feels like a natural consequence of the previous changes.
 
-Omit the entire Pseudocode field when the What & Why sections already specify a mechanical & obvious change like documentation or configuration. Do not come up with meaningless pseudocode just to fill out the template.
+Keep What and Why to a few short, plain-language sentences each, which crisply state **what** we are proposing to change and **why** it's needed in relation to the overall plan.
+
+Omit the entire Pseudocode field if the What & Why sections already specify a mechanical & obvious change like documentation or configuration. Do not come up with meaningless pseudocode just to fill out the template.
+On the other hand, when an entry does have Pseudocode, let the pseudocode elegantly & precisely state the design details and interactions between components; do not restate those details in prose. 
+
+When several planned changes share a type or procedure, define it in exactly one entry — the entry that owns it — and reference it by identifier from the others, so the whole plan reads as one consistent design rather than disconnected fragments.
 
 <pseudocode_guidance>
 When a change introduces meaningful behavior, state transitions, algorithms, interfaces, or data flow, use pseudocode as the bridge between the idea and its implementation. Expose the important behavior. Hide syntax and machinery that do not help the reader reason about the design.
@@ -48,6 +60,49 @@ Use these type names consistently throughout your pseudocode.
 
 Do not define nested types whose definitions can be obviously inferred from the pseudocode.
 
+Every non-obvious name must have a visible origin: define it locally, reference the planned change that defines it, or name the existing repository construct it comes from. When a value crosses a boundary, show who sets it and where it comes from; do not introduce free-floating fields whose source the reader must guess.
+
+## Model the type hierarchy algebraically
+
+Design types around the hierarchy of information they capture, with one granularity of object per level. Express the relationship between types via algebraic sum and product types, not via mixed bags that combine various types of fields into a single record.
+
+For example, if we wanted to record information about various stages in a data pipeline:
+
+avoid the flat shape that mixes every case into one record:
+```text
+# bad: this requires every user to parse 'isWriter' to understand which of the other fields are actually meaningful
+type StageRecord:
+    role: "reader" | "transform" | "writer"
+    isReader: bool
+    isWriter: bool
+    ...facts every stage shares...
+    auth: AuthenticationInfo | None
+
+type Pipeline:
+    writer: StageRecord                  # bad: elevates the writer to a different level than the other stages which are nested within `stages`, without any good reason
+    stages: StageRecord[]                # bad: mixes various roles' records under a single list where only the order (a weak guarantee) encodes which record is which
+```
+
+Prefer sum types where a single field takes one of a few disjoint types,
+and product types to distinguish different variations of the same underlying data:
+
+```text
+type StageParameters:                     # shared level: facts every stage has
+    ...facts every stage shares...
+
+type StageRecord:
+    params: StageParameters
+
+type AuthenticatedStageRecord:
+    params: StageParameters
+    auth: AuthenticationInfo 
+
+type Pipeline:                           # top level: one named field per role
+    reader: AuthenticatedStageRecord
+    transform: StageRecord
+    writer: StageRecord | NoWriter       # sum, not a present flag
+```
+
 ## Make the flow easy to follow
 
 - Present the normal path first. Add failures and unusual cases, if needed at all, only after the reader
@@ -61,6 +116,8 @@ Do not define nested types whose definitions can be obviously inferred from the 
   `nextLogIndex`. Use short mathematical names only when their meaning is
   conventional and local.
 - Use blank lines to separate meaningful phases.
+- Do not add assertions or verification steps that merely restate what the preceding
+  lines already guarantee; include a check only when it can actually fail.
 
 Write enough detail that an implementer can proceed without guessing about
 behavior. Omit choices that the implementation can safely decide later.
@@ -120,18 +177,26 @@ Before presenting pseudocode, confirm that:
 - a reader can follow the main path from top to bottom;
 - state, invariants, failures, and side effects are visible where relevant;
 - each procedure stays at a consistent level of abstraction
+- shared types and procedures have a single owner within the plan
 
 Revise by renaming, splitting, reordering, or removing detail before adding more
 explanation.
 
 </pseudocode_guidance>
+<planned_changes>
 
+<testing>
 The Testing section should be centered around the simplest possible testing criteria that describe
-how to verify the intended behavior end-to-end. For example:
+how to verify the intended behavior end-to-end. Write the criteria as a bulleted list. Each criterion
+must name the concrete observable behavior being verified, in terms an end user of the change would
+recognize, and must be something the implementer can actually execute from the development environment
+without deploying anything. For example:
 ```
-When running the exec-eval command, we successfully execute all 100 required rollouts using the real evaluation backend, upload all rollouts to the remote storage API under a scoped namespace,
-then produce a local report summarizing the scores of all rollouts.
-This process should complete in under 60 minutes.
+- Running the exec-eval command executes all 100 required rollouts using the real evaluation backend,
+  uploads every rollout to the remote storage API under a scoped namespace, and produces a local report
+  summarizing the scores of all rollouts.
+- The full run completes in under 60 minutes.
 ```
+</testing>
 
-</plan_style_guidance>
+</plan_instructions>

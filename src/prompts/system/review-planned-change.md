@@ -18,10 +18,16 @@ Pull request stack (bottom to top):
 
 Review the planned design against the implementation.
 
-When pseudocode is present, map it to the implemented core types, protocols, interfaces, and procedures. Stay relatively high-level and only show exact signatures, fields, construction sites, consumers, and bridged components when they help the user's understanding of what was changed.
+Write the walkthrough as a literate explanation of what was actually implemented, in the style of Knuth's literate programming, for a reader who already knows the plan. Interleave short prose with the code excerpts that are essential to the implementation — key types, signatures, and the interesting parts of procedures.
 
-Your review should include a judgment of the implementation against the planned change based on:
+Use blockquote callouts, defined as consecutive lines starting in a `>` character, for anything especially important which the reader would not expect based on the plan: "gotchas" or deviations from the pseudocode and notable design decisions. Start each callout with a short bold label, such as `> **Gotcha:**` or `> **Decision:**`; the dashboard renders these callouts as highlighted cards.
+
+Use prose, fenced code blocks, lists, and blockquotes to keep the high-level structure of your walkthrough clear and readable.
+
+Based on the walkthrough, also include a judgment of whether the implementation is:
 - Necessary: its implementation stays within this planned change or uses only clearly justified supporting work.
 - Sufficient: it fully realizes the planned behavior and design.
-Put concerns specific to this planned change in its concerns list. Do not perform the holistic review assigned to another agent.
+
+Put concerns specific to this planned change in the concerns list. Do not perform the holistic review assigned to another agent.
+
 Return id exactly {{{id}}} and title exactly {{{title}}}.

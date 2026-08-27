@@ -52,7 +52,6 @@ import {
 	WORKFLOW_QUESTION_TOOL,
 	type WorkflowQuestionnaireResult,
 } from "./questions.ts";
-import { workflowReviewPullRequestUrls } from "./review-report.ts";
 import {
 	createSpawnReviewAgent,
 	generateWorkflowReview,
@@ -637,7 +636,7 @@ export default function implementationWorkflow(
 			.digest("hex");
 		if (
 			existing !== undefined &&
-			arraysEqual(workflowReviewPullRequestUrls(existing), pullRequests.map(({ url }) => url)) &&
+			arraysEqual(existing.pullRequestUrls, pullRequests.map(({ url }) => url)) &&
 			existing.baseCommit === workflow.baseCommit &&
 			existing.headCommit === headCommit &&
 			existing.sourceFingerprint === sourceFingerprint &&

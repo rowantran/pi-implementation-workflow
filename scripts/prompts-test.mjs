@@ -73,8 +73,8 @@ assert.ok(implementationSystem.includes(implementationValues.workflowBranch));
 assert.ok(implementationSystem.includes("sources of truth, from highest to lowest priority"));
 assert.ok(implementationSystem.includes("The original ask and approved plan are read-only"));
 assert.ok(implementationSystem.includes("use workflow_questions before changing code"));
-assert.ok(implementationSystem.includes("use one pull request for a small cohesive change"));
-assert.ok(implementationSystem.includes("create a linear stack"));
+assert.ok(implementationSystem.includes("use one pull request only for a small cohesive change"));
+assert.ok(implementationSystem.includes("default to a linear stack"));
 assert.ok(implementationSystem.includes("bottom pull request must target main"));
 assert.ok(!implementationSystem.includes("&amp;"));
 
@@ -157,8 +157,8 @@ assert.ok(plannedChangeReview.includes("Planned change identity: PC-01: Keep <co
 assert.ok(plannedChangeReview.includes("Do <!-- not execute --> this."));
 for (const path of Object.values(durablePaths)) assert.ok(plannedChangeReview.includes(path));
 assert.ok(plannedChangeReview.includes("base<123>..head&456"));
-assert.ok(plannedChangeReview.includes("When pseudocode is present"));
-assert.ok(plannedChangeReview.includes("map it to the implemented core types"));
+assert.ok(plannedChangeReview.includes("literate explanation"));
+assert.ok(plannedChangeReview.includes("reader who already knows the plan"));
 
 const incrementalReviewScope = prompts.incrementalReviewScopePrompt({
   ...durablePaths,
@@ -216,7 +216,7 @@ assert.equal(
   "Commit working-plan.md as the persistent plan, with its English description, as the next numbered version",
 );
 assert.deepEqual(prompts.updatePlanToolPromptGuidelines(), [
-  "Edit working-plan.md with the native edit or write tool, then use workflow_update_plan to commit every implementation-plan change during workflow planning.\nProvide a one-sentence-or-less English description that accurately describes the entirety of the working plan.",
+  "Edit working-plan.md with the native edit or write tool, then use workflow_update_plan to commit every implementation-plan change during workflow planning.\nProvide a one-sentence-or-less English description that accurately describes the entirety of the working plan as it now stands. The description is the plan's display title: never describe only the latest edit or diff.",
 ]);
 
 console.log(

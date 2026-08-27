@@ -65,21 +65,17 @@ function analysis(id, title) {
   return {
     id,
     title,
-    summary: `${id} is implemented by one durable contract.`,
+    walkthrough: [
+      `${id} is implemented by one durable contract.`,
+      "",
+      "```ts",
+      id === "PC-01" ? "interface WorkflowReviewReport { findings: Finding[] }" : "renderReview(report): string",
+      "```",
+      "",
+      "> The implementation follows the planned pseudocode.",
+    ].join("\n"),
     necessary: { status: "yes", explanation: "The implementation maps directly to the planned change." },
     sufficient: { status: id === "PC-01" ? "yes" : "partial", explanation: "The core behavior exists." },
-    contracts: [
-      {
-        name: id === "PC-01" ? "WorkflowReviewReport" : "renderReview",
-        kind: id === "PC-01" ? "interface" : "function",
-        signature: id === "PC-01" ? "interface WorkflowReviewReport { findings: Finding[] }" : "renderReview(report): string",
-        fields: id === "PC-01" ? ["findings: Finding[]"] : [],
-        constructionSites: [evidence("src/review.ts:20", "Creates the report.")],
-        consumers: [evidence("src/dashboard.ts:30", "Renders the report.")],
-        bridges: ["review orchestration → dashboard"],
-        assessment: "The contract follows the planned pseudocode.",
-      },
-    ],
     concerns: id === "PC-02" ? [{ severity: "warning", title: "Partial rendering", details: "One view is missing.", evidence: [] }] : [],
   };
 }
