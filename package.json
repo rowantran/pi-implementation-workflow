@@ -65,11 +65,10 @@
     "test:prompts": "node ./scripts/prompts-test.mjs",
     "test:review": "node ./scripts/review-test.mjs",
     "test:storage": "node ./scripts/storage.mjs",
-    "test:state": "node ./scripts/state-test.mjs",
-    "test:transitions": "node ./scripts/transitions-test.mjs",
+    "test:verbs": "node ./scripts/verbs-test.mjs",
     "test:ui": "node ./scripts/ui-test.mjs",
     "typecheck": "tsc --noEmit",
-    "test": "npm run typecheck && npm run smoke && npm run test:command-flow && npm run test:config && npm run test:dashboard && npm run test:dashboard-server && npm run test:dashboard-notification && npm run test:planning && npm run test:prompts && npm run test:review && npm run test:storage && npm run test:state && npm run test:transitions && npm run test:ui"
+    "test": "npm run typecheck && npm run smoke && npm run test:command-flow && npm run test:config && npm run test:dashboard && npm run test:dashboard-server && npm run test:dashboard-notification && npm run test:planning && npm run test:prompts && npm run test:review && npm run test:storage && npm run test:verbs && npm run test:ui"
   },
   "devDependencies": {
     "@earendil-works/pi-ai": "0.84.2",

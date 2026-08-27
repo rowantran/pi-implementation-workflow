@@ -5,21 +5,27 @@ const jiti = createJiti(import.meta.url, { moduleCache: false });
 const {
 	PHASE_REMINDER_ENTRY,
 	registerWorkflowPhaseReminderRenderer,
-	showWorkflowNextNotice,
+	showReviewReadyNotice,
 	WorkflowProgressComponent,
-	workflowNextNoticeText,
+	reviewReadyNoticeText,
 	workflowPhaseStatusText,
 	workflowReviewTranscriptCardContent,
 } = await jiti.import(new URL("../src/ui.ts", import.meta.url).pathname);
 
-assert.equal(workflowPhaseStatusText("planning"), "/workflow-next when ready");
-assert.equal(workflowPhaseStatusText("implementation"), "/workflow-next when ready");
-assert.equal(workflowPhaseStatusText("revision"), "/workflow-next when ready");
-assert.equal(workflowPhaseStatusText("review"), "/workflow-next when ready");
+assert.equal(workflowPhaseStatusText("planning"), "/workflow-implement when the plan is ready");
+assert.equal(workflowPhaseStatusText("implementation"), "/workflow-review when ready");
+assert.equal(workflowPhaseStatusText("revision"), "/workflow-review when ready");
+assert.equal(
+	workflowPhaseStatusText("review"),
+	"/workflow-revise to request changes · /workflow-cleanup to finish",
+);
 assert.equal(workflowPhaseStatusText("cleanup"), undefined);
 assert.equal(workflowPhaseStatusText("complete"), undefined);
 assert.equal(workflowPhaseStatusText(undefined), undefined);
-assert.equal(workflowNextNoticeText(), "Send /workflow-next here to start a separate review session.");
+assert.equal(
+	reviewReadyNoticeText(),
+	"Run /workflow-review here to generate the implementation review in a separate session.",
+);
 
 assert.equal(PHASE_REMINDER_ENTRY, "implementation-workflow-phase-reminder");
 assert.deepEqual(workflowReviewTranscriptCardContent("review"), {
@@ -27,8 +33,8 @@ assert.deepEqual(workflowReviewTranscriptCardContent("review"), {
 	description: "The generated review is open in the workflow dashboard.",
 	guidance: "Ask me to explain a finding, inspect its cited code, or assess whether a concern is valid.",
 	actions: [
-		{ label: "Request changes", command: "/workflow-revise <changes>" },
-		{ label: "Accept and clean up", command: "/workflow-next" },
+		{ label: "Request changes", command: "/workflow-revise" },
+		{ label: "Accept and clean up", command: "/workflow-cleanup" },
 	],
 });
 for (const phase of ["planning", "implementation", "revision", "cleanup", "complete", undefined]) {
@@ -51,8 +57,8 @@ const cardTheme = {
 const rendered = renderer({ data: { phase: "review" } }, {}, cardTheme).render(100).join("\n");
 assert.match(rendered, /Review ready · Read-only session/);
 assert.match(rendered, /Ask me to explain a finding/);
-assert.match(rendered, /\/workflow-revise <changes>/);
-assert.match(rendered, /\/workflow-next/);
+assert.match(rendered, /\/workflow-revise/);
+assert.match(rendered, /\/workflow-cleanup/);
 assert.deepEqual(renderer({ data: { phase: "planning" } }, {}, cardTheme).render(100), []);
 
 const widgetCalls = [];
@@ -61,11 +67,11 @@ const ctx = {
 		setWidget: (...args) => widgetCalls.push(args),
 	},
 };
-showWorkflowNextNotice(ctx, true);
+showReviewReadyNotice(ctx, true);
 assert.equal(widgetCalls.length, 1);
 assert.equal(widgetCalls[0][2].placement, "belowEditor");
-assert.deepEqual(widgetCalls[0][1], ["/workflow-next — send here to start a separate review session"]);
-showWorkflowNextNotice(ctx, false);
+assert.deepEqual(widgetCalls[0][1], ["/workflow-review — run here to generate the implementation review"]);
+showReviewReadyNotice(ctx, false);
 assert.equal(widgetCalls.at(-1)[1], undefined);
 
 const renderRequests = [];

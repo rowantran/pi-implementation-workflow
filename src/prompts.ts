@@ -76,21 +76,29 @@ export function reviewSystemPrompt(values: {
 
 export function revisionSystemPrompt(values: {
 	identifier: string | undefined;
-	reviewRound: number | undefined;
 	metadataPath: string;
 	planPath: string;
 	clarificationsPath: string;
-	reviewPath: string;
+	/** Omitted when the workflow has no saved review yet. */
+	reviewPath?: string;
 	questionTool: string;
 	worktreePath: string;
 	workflowBranch: string;
 	baseBranch: string;
 }): string {
-	return render(REVISION_SYSTEM_TEMPLATE, stringifyUndefined(values));
+	const { reviewPath, ...required } = values;
+	return render(REVISION_SYSTEM_TEMPLATE, {
+		...stringifyUndefined(required),
+		...(reviewPath === undefined ? {} : { reviewPath }),
+	});
 }
 
-export function revisionUserMessage(values: { request: string; reviewPath: string }): string {
-	return render(REVISION_USER_TEMPLATE, values);
+export function revisionUserMessage(values: { request: string; reviewPath?: string }): string {
+	const { reviewPath, ...required } = values;
+	return render(REVISION_USER_TEMPLATE, {
+		...required,
+		...(reviewPath === undefined ? {} : { reviewPath }),
+	});
 }
 
 export function reviewAgentSystemPrompt(outputTool: string): string {

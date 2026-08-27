@@ -9,7 +9,7 @@ import { Box, type Component, Container, Text, truncateToWidth, type TUI } from 
 const COMPLETION_ENTRY = "implementation-workflow-completion";
 export const PHASE_REMINDER_ENTRY = "implementation-workflow-phase-reminder";
 const PHASE_STATUS_ID = "implementation-workflow-phase";
-const WORKFLOW_NEXT_NOTICE_ID = "implementation-workflow-next-notice";
+const REVIEW_READY_NOTICE_ID = "implementation-workflow-review-ready-notice";
 const SPINNER_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 const COMPLETION_DELAY_MS = 300;
 const FAILURE_DELAY_MS = 600;
@@ -184,9 +184,9 @@ const NOOP_PROGRESS: WorkflowProgress = {
 };
 
 export function workflowPhaseStatusText(phase: WorkflowStatusPhase | undefined): string | undefined {
-	if (phase === "planning" || phase === "implementation" || phase === "revision" || phase === "review") {
-		return "/workflow-next when ready";
-	}
+	if (phase === "planning") return "/workflow-implement when the plan is ready";
+	if (phase === "implementation" || phase === "revision") return "/workflow-review when ready";
+	if (phase === "review") return "/workflow-revise to request changes · /workflow-cleanup to finish";
 	return undefined;
 }
 
@@ -204,8 +204,8 @@ export function workflowReviewTranscriptCardContent(
 		description: "The generated review is open in the workflow dashboard.",
 		guidance: "Ask me to explain a finding, inspect its cited code, or assess whether a concern is valid.",
 		actions: [
-			{ label: "Request changes", command: "/workflow-revise <changes>" },
-			{ label: "Accept and clean up", command: "/workflow-next" },
+			{ label: "Request changes", command: "/workflow-revise" },
+			{ label: "Accept and clean up", command: "/workflow-cleanup" },
 		],
 	};
 }
@@ -237,18 +237,18 @@ export function registerWorkflowPhaseReminderRenderer(pi: ExtensionAPI): void {
 	});
 }
 
-export function workflowNextNoticeText(): string {
-	return "Send /workflow-next here to start a separate review session.";
+export function reviewReadyNoticeText(): string {
+	return "Run /workflow-review here to generate the implementation review in a separate session.";
 }
 
-export function showWorkflowNextNotice(ctx: ExtensionContext, visible: boolean): void {
+export function showReviewReadyNotice(ctx: ExtensionContext, visible: boolean): void {
 	if (!visible) {
-		ctx.ui.setWidget(WORKFLOW_NEXT_NOTICE_ID, undefined);
+		ctx.ui.setWidget(REVIEW_READY_NOTICE_ID, undefined);
 		return;
 	}
 	ctx.ui.setWidget(
-		WORKFLOW_NEXT_NOTICE_ID,
-		["/workflow-next — send here to start a separate review session"],
+		REVIEW_READY_NOTICE_ID,
+		["/workflow-review — run here to generate the implementation review"],
 		{ placement: "belowEditor" },
 	);
 }

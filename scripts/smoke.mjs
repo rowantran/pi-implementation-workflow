@@ -34,7 +34,14 @@ const implementationWorkflow = await jiti.import(
 implementationWorkflow(pi);
 
 const expected = {
-  commands: ["workflow-plan", "workflow-revise", "workflow-next", "workflow-dashboard"],
+  commands: [
+    "workflow-plan",
+    "workflow-implement",
+    "workflow-review",
+    "workflow-revise",
+    "workflow-cleanup",
+    "workflow-dashboard",
+  ],
   events: ["before_agent_start", "tool_call", "agent_settled", "session_start", "session_shutdown"],
   renderers: ["implementation-workflow-completion"],
   shortcuts: ["ctrl+alt+d"],

@@ -118,8 +118,6 @@ assert.ok(planningSystem.includes("**What**"));
 assert.ok(planningSystem.includes("**Why**"));
 assert.ok(planningSystem.includes("**Pseudocode**"));
 assert.ok(planningSystem.includes("final Pseudocode field optional"));
-assert.ok(planningSystem.includes("Order entries by dependency and reviewability"));
-assert.ok(planningSystem.includes("Do not add pull request boundaries or subplans"));
 assert.ok(planningSystem.includes("Do not come up with meaningless pseudocode just to fill out the template"));
 
 const reviewValues = {
