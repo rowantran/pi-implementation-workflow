@@ -16,6 +16,7 @@ import {
 	reviewSynthesisPrompt,
 	testingCriteriaReviewPrompt,
 } from "./prompts.ts";
+import { reviewCanSeedIncremental, type ReviewInputsSnapshot } from "./review-selection.ts";
 import {
 	HOLISTIC_REVIEW_OUTPUT_TOOL,
 	INCREMENTAL_REVIEW_SCOPE_OUTPUT_TOOL,
@@ -130,8 +131,10 @@ export async function generateWorkflowReview(
 	if ((input.previousReview === undefined) !== (input.previousReviewPath === undefined)) {
 		throw new Error("An incremental review requires both the previous review and its path.");
 	}
-	if (input.previousReview && !previousReviewMatches(input.previousReview, input)) {
-		throw new Error("The previous review does not match the current workflow review inputs.");
+	if (input.previousReview && !reviewCanSeedIncremental(input.previousReview, reviewInputsSnapshot(input))) {
+		throw new Error(
+			"The previous review cannot seed an incremental re-review of the current inputs; generate a full review instead.",
+		);
 	}
 
 	if (input.pullRequests.length === 0) throw new Error("The workflow has no pull requests to review.");
@@ -521,23 +524,15 @@ function isReviewRoundManifest(value: unknown): value is ReviewRoundManifest {
 	);
 }
 
-function previousReviewMatches(previous: WorkflowReviewReport, input: ReviewGenerationInput): boolean {
-	return (
-		arraysEqual(previous.pullRequestUrls, input.pullRequests.map(({ url }) => url)) &&
-		previous.baseCommit === input.baseCommit &&
-		previous.headCommit !== input.headCommit &&
-		previous.testingCriteria.originalCriteria === input.testingCriteria &&
-		previous.plannedChanges.length === input.plannedChanges.length &&
-		previous.plannedChanges.every((change, index) => {
-			const expected = input.plannedChanges[index];
-			return (
-				change.id === expected?.id &&
-				change.title === expected.title &&
-				change.review.id === expected.id &&
-				change.review.title === expected.title
-			);
-		})
-	);
+function reviewInputsSnapshot(input: ReviewGenerationInput): ReviewInputsSnapshot {
+	return {
+		pullRequestUrls: input.pullRequests.map(({ url }) => url),
+		baseCommit: input.baseCommit,
+		headCommit: input.headCommit,
+		sourceFingerprint: input.sourceFingerprint,
+		testingCriteria: input.testingCriteria,
+		plannedChanges: input.plannedChanges.map(({ id, title }) => ({ id, title })),
+	};
 }
 
 function incrementalReviewScopeIsValid(scope: IncrementalReviewScope, plannedChanges: PlannedChange[]): boolean {

@@ -4,20 +4,26 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createJiti } from "jiti/static";
 
+const temporaryRoot = await mkdtemp(join(tmpdir(), "pi-workflow-storage-"));
+process.env.PI_CODING_AGENT_DIR = join(temporaryRoot, "agent");
+
 const jiti = createJiti(import.meta.url, { moduleCache: false });
 const {
-	WORKFLOW_STATE_VERSION,
+	WORKFLOW_METADATA_VERSION,
+	appendWorkflowReview,
 	createDraft,
 	ensureWorkflowFiles,
+	listCompletedWorkflows,
+	listSavedReviews,
 	promoteDraft,
 	readWorkflowMetadata,
 	readWorkflowReview,
+	workflowFiles,
 	writeDraftWorkflowMetadata,
 	writeWorkflowMetadata,
-	writeWorkflowReview,
 } = await jiti.import(new URL("../src/storage.ts", import.meta.url).pathname);
 
-const temporaryRoot = await mkdtemp(join(tmpdir(), "pi-workflow-storage-"));
+const workflowsRoot = join(temporaryRoot, "agent", "workflows");
 
 function filesAt(root) {
 	return {
@@ -30,9 +36,8 @@ function filesAt(root) {
 		metadata: join(root, "metadata.json"),
 		review: join(root, "review.json"),
 		reviewMarkdown: join(root, "review.md"),
+		reviews: join(root, "reviews"),
 		reviewRuns: join(root, "review-runs"),
-		legacyDescription: join(root, "description.txt"),
-		previousPlan: join(root, "plan.previous.md"),
 	};
 }
 
@@ -45,123 +50,8 @@ async function exists(path) {
 	}
 }
 
-try {
-	const ask = 'Preserve this ask exactly.\n\n- Keep <markup> & "quotes".\n';
-	const draftId = "new-draft";
-	const draftFiles = filesAt(join(temporaryRoot, ".drafts", draftId));
-	const draftMetadata = {
-		version: WORKFLOW_STATE_VERSION,
-		state: { phase: "planning", step: "draft" },
-		draftId,
-		description: "",
-		ask,
-		createdAt: "2026-01-01T00:00:00.000Z",
-	};
-	await createDraft(draftFiles, "# Implementation plan\n", draftMetadata);
-	assert.deepEqual(JSON.parse(await readFile(draftFiles.metadata, "utf8")), draftMetadata);
-	assert.equal(await readFile(draftFiles.plan, "utf8"), "# Implementation plan\n");
-	assert.equal(await readFile(draftFiles.workingPlan, "utf8"), "# Implementation plan\n");
-	assert.ok(!(await readFile(draftFiles.plan, "utf8")).includes(ask));
-	assert.equal(await exists(draftFiles.legacyDescription), false);
-
-	await writeFile(draftFiles.plan, "# Uncommitted direct change\n", "utf8");
-	await ensureWorkflowFiles(draftFiles);
-	assert.equal(await readFile(draftFiles.plan, "utf8"), "# Implementation plan\n");
-	assert.deepEqual(await readdir(draftFiles.versions), ["0001.md"]);
-
-	const missingAskFiles = filesAt(join(temporaryRoot, ".drafts", "missing-ask"));
-	await assert.rejects(
-		createDraft(missingAskFiles, "# Implementation plan\n", {
-			...draftMetadata,
-			draftId: "missing-ask",
-			ask: null,
-		}),
-		/non-empty original ask/,
-	);
-	assert.equal(await exists(missingAskFiles.root), false);
-
-	const describedDraft = { ...draftMetadata, description: "Store workflow asks in metadata" };
-	await writeDraftWorkflowMetadata(draftFiles, describedDraft);
-	assert.deepEqual(await readWorkflowMetadata(draftFiles), describedDraft);
-	await assert.rejects(
-		writeDraftWorkflowMetadata(draftFiles, { ...describedDraft, ask: "A replacement ask" }),
-		/original ask is immutable/,
-	);
-	assert.equal((await readWorkflowMetadata(draftFiles)).ask, ask);
-
-	const identifier = "promoted-workflow";
-	const completedFiles = filesAt(join(temporaryRoot, identifier));
-	const completedMetadata = {
-		version: WORKFLOW_STATE_VERSION,
-		identifier,
-		description: describedDraft.description,
-		ask,
-		state: { phase: "planning", step: "ready" },
-		repositoryRoot: "/repository",
-		gitCommonDir: "/repository/.git",
-		baseBranch: "main",
-		baseCommit: "abc123",
-		workflowBranch: `workflow/${identifier}`,
-		worktreePath: `/repository/.worktrees/${identifier}`,
-		createdAt: describedDraft.createdAt,
-	};
-	await writeWorkflowMetadata(draftFiles, completedMetadata);
-	await promoteDraft(draftFiles, completedFiles);
-	assert.equal((await readWorkflowMetadata(completedFiles)).ask, ask);
-	assert.equal(await exists(completedFiles.workingPlan), false);
-
-	const legacyPullRequestIdentifier = "legacy-single-pull-request";
-	const legacyFiles = filesAt(join(temporaryRoot, legacyPullRequestIdentifier));
-	await mkdir(legacyFiles.root, { recursive: true });
-	await writeFile(legacyFiles.metadata, `${JSON.stringify({
-		...completedMetadata,
-		version: 2,
-		identifier: legacyPullRequestIdentifier,
-		state: { phase: "implementing", step: "complete" },
-		workflowBranch: `workflow/${legacyPullRequestIdentifier}`,
-		pullRequestUrl: "https://example.test/pull/9",
-		pullRequestNumber: 9,
-	})}\n`, "utf8");
-	const migratedLegacy = await readWorkflowMetadata(legacyFiles);
-	assert.equal(migratedLegacy.version, WORKFLOW_STATE_VERSION);
-	assert.deepEqual(migratedLegacy.pullRequests, [{
-		number: 9,
-		url: "https://example.test/pull/9",
-		baseRefName: "main",
-		headRefName: `workflow/${legacyPullRequestIdentifier}`,
-	}]);
-	const storedLegacy = JSON.parse(await readFile(legacyFiles.metadata, "utf8"));
-	assert.equal("pullRequestUrl" in storedLegacy, false);
-	assert.equal("pullRequestNumber" in storedLegacy, false);
-
-	const implementing = {
-		...completedMetadata,
-		state: { phase: "implementing", step: "active" },
-		implementationStartedAt: "2026-01-02T00:00:00.000Z",
-	};
-	await writeWorkflowMetadata(completedFiles, implementing);
-	const implementationComplete = {
-		...implementing,
-		state: { phase: "implementing", step: "complete" },
-		pullRequests: [{
-			number: 1,
-			url: "https://example.test/pull/1",
-			baseRefName: "main",
-			headRefName: `workflow/${identifier}`,
-		}],
-	};
-	await writeWorkflowMetadata(completedFiles, implementationComplete);
-	let lifecycleMetadata = implementationComplete;
-	for (const state of [
-		{ phase: "reviewing", step: "active", round: 1 },
-		{ phase: "complete", step: "cleanup_pending" },
-		{ phase: "complete", step: "complete" },
-	]) {
-		lifecycleMetadata = { ...lifecycleMetadata, state };
-		await writeWorkflowMetadata(completedFiles, lifecycleMetadata);
-		assert.equal((await readWorkflowMetadata(completedFiles)).ask, ask);
-	}
-	const review = {
+function sampleReview(overrides = {}) {
+	return {
 		version: 2,
 		pullRequestUrls: ["https://example.test/pull/1"],
 		baseCommit: "abc123",
@@ -209,136 +99,155 @@ try {
 				concerns: [],
 			},
 		},
+		...overrides,
 	};
-	await writeWorkflowReview(completedFiles, review);
-	assert.deepEqual(await readWorkflowReview(completedFiles), review);
-	assert.match(await readFile(completedFiles.reviewMarkdown, "utf8"), /## Review of planned changes/);
-	assert.match(await readFile(completedFiles.reviewMarkdown, "utf8"), /## Testing criteria/);
-	await writeFile(completedFiles.review, "{}\n", "utf8");
-	await assert.rejects(readWorkflowReview(completedFiles), /invalid structure/);
-	await writeWorkflowReview(completedFiles, review);
-	await assert.rejects(
-		writeWorkflowMetadata(completedFiles, { ...lifecycleMetadata, ask: "changed" }),
-		/original ask is immutable/,
-	);
+}
 
-	const invalidCompletedFiles = filesAt(join(temporaryRoot, "invalid-current-workflow"));
+try {
+	const ask = 'Preserve this ask exactly.\n\n- Keep <markup> & "quotes".\n';
+	const draftId = "new-draft";
+	const draftFiles = filesAt(join(workflowsRoot, ".drafts", draftId));
+	const draftMetadata = {
+		version: WORKFLOW_METADATA_VERSION,
+		draftId,
+		description: "",
+		ask,
+		createdAt: "2026-01-01T00:00:00.000Z",
+	};
+	await createDraft(draftFiles, "# Implementation plan\n", draftMetadata);
+	assert.deepEqual(JSON.parse(await readFile(draftFiles.metadata, "utf8")), draftMetadata);
+	assert.equal(await readFile(draftFiles.plan, "utf8"), "# Implementation plan\n");
+	assert.equal(await readFile(draftFiles.workingPlan, "utf8"), "# Implementation plan\n");
+	assert.ok(!(await readFile(draftFiles.plan, "utf8")).includes(ask));
+
+	// A direct plan edit is repaired back to the committed version history.
+	await writeFile(draftFiles.plan, "# Uncommitted direct change\n", "utf8");
+	await ensureWorkflowFiles(draftFiles);
+	assert.equal(await readFile(draftFiles.plan, "utf8"), "# Implementation plan\n");
+	assert.deepEqual(await readdir(draftFiles.versions), ["0001.md"]);
+
+	const missingAskFiles = filesAt(join(workflowsRoot, ".drafts", "missing-ask"));
 	await assert.rejects(
-		writeWorkflowMetadata(invalidCompletedFiles, {
-			...completedMetadata,
-			identifier: "invalid-current-workflow",
-			ask: null,
+		createDraft(missingAskFiles, "# Implementation plan\n", {
+			...draftMetadata,
+			draftId: "missing-ask",
+			ask: "  ",
 		}),
 		/non-empty original ask/,
 	);
+	assert.equal(await exists(missingAskFiles.root), false);
 
-	const legacyDraftId = "legacy-draft";
-	const legacyDraftFiles = filesAt(join(temporaryRoot, ".drafts", legacyDraftId));
-	await mkdir(legacyDraftFiles.root, { recursive: true });
-	await writeFile(legacyDraftFiles.plan, "# Legacy draft\n", "utf8");
-	await writeFile(legacyDraftFiles.legacyDescription, "Migrated draft description\n", "utf8");
-	const migratedDraft = await ensureWorkflowFiles(legacyDraftFiles);
-	assert.deepEqual(migratedDraft.state, { phase: "planning", step: "draft" });
-	assert.equal(await readFile(legacyDraftFiles.workingPlan, "utf8"), "# Legacy draft\n");
-	assert.equal(migratedDraft.description, "Migrated draft description");
-	assert.equal(migratedDraft.ask, null);
-	const migratedDraftJson = JSON.parse(await readFile(legacyDraftFiles.metadata, "utf8"));
-	assert.equal(migratedDraftJson.ask, null);
-	assert.deepEqual(migratedDraftJson.state, { phase: "planning", step: "draft" });
-	assert.equal("status" in migratedDraftJson, false);
-	assert.equal(await exists(legacyDraftFiles.legacyDescription), false);
-
-	const legacyIdentifier = "legacy-completed-workflow";
-	const legacyCompletedFiles = filesAt(join(temporaryRoot, legacyIdentifier));
-	await mkdir(legacyCompletedFiles.root, { recursive: true });
-	await writeFile(legacyCompletedFiles.plan, "# Completed plan\n", "utf8");
-	await writeFile(legacyCompletedFiles.legacyDescription, "Migrated completed description\n", "utf8");
-	await writeFile(
-		legacyCompletedFiles.metadata,
-		`${JSON.stringify(
-			{
-				version: 1,
-				identifier: legacyIdentifier,
-				state: { phase: "planning", step: "ready" },
-				repositoryRoot: "/repository",
-				gitCommonDir: "/repository/.git",
-				baseBranch: "main",
-				baseCommit: "abc123",
-				workflowBranch: `workflow/${legacyIdentifier}`,
-				worktreePath: `/repository/.worktrees/${legacyIdentifier}`,
-				createdAt: "2026-01-01T00:00:00.000Z",
-			},
-			null,
-			2,
-		)}\n`,
-		"utf8",
+	const describedDraft = { ...draftMetadata, description: "Store workflow asks in metadata" };
+	await writeDraftWorkflowMetadata(draftFiles, describedDraft);
+	assert.deepEqual(await readWorkflowMetadata(draftFiles), describedDraft);
+	await assert.rejects(
+		writeDraftWorkflowMetadata(draftFiles, { ...describedDraft, ask: "A replacement ask" }),
+		/original ask is immutable/,
 	);
-	const migratedCompleted = await ensureWorkflowFiles(legacyCompletedFiles);
-	assert.deepEqual(migratedCompleted.state, { phase: "planning", step: "ready" });
-	assert.equal(migratedCompleted.description, "Migrated completed description");
-	assert.equal(migratedCompleted.ask, null);
-	assert.equal(await exists(legacyCompletedFiles.legacyDescription), false);
-	const migratedCompletedJson = JSON.parse(await readFile(legacyCompletedFiles.metadata, "utf8"));
-	assert.equal(migratedCompletedJson.description, "Migrated completed description");
-	assert.equal(migratedCompletedJson.ask, null);
-	assert.deepEqual(migratedCompletedJson.state, { phase: "planning", step: "ready" });
-	assert.equal("status" in migratedCompletedJson, false);
+	assert.equal((await readWorkflowMetadata(draftFiles)).ask, ask);
 
-	const descriptionlessIdentifier = "descriptionless-legacy-workflow";
-	const descriptionlessFiles = filesAt(join(temporaryRoot, descriptionlessIdentifier));
-	await mkdir(descriptionlessFiles.root, { recursive: true });
-	await writeFile(descriptionlessFiles.plan, "# Descriptionless plan\n", "utf8");
-	await writeFile(
-		descriptionlessFiles.metadata,
-		`${JSON.stringify(
-			{
-				version: 1,
-				identifier: descriptionlessIdentifier,
-				state: { phase: "complete", step: "complete" },
-				repositoryRoot: "/repository",
-				gitCommonDir: "/repository/.git",
-				baseBranch: "main",
-				baseCommit: "def456",
-				workflowBranch: `workflow/${descriptionlessIdentifier}`,
-				worktreePath: `/repository/.worktrees/${descriptionlessIdentifier}`,
-				createdAt: "2025-01-01T00:00:00.000Z",
-			},
-			null,
-			2,
-		)}\n`,
-		"utf8",
+	// Planning completion writes completed metadata into the draft directory and promotes it.
+	const identifier = "promoted-workflow";
+	const completedFiles = workflowFiles(identifier);
+	const completedMetadata = {
+		version: WORKFLOW_METADATA_VERSION,
+		identifier,
+		description: describedDraft.description,
+		ask,
+		repositoryRoot: "/repository",
+		gitCommonDir: "/repository/.git",
+		baseBranch: "main",
+		baseCommit: "abc123",
+		workflowBranch: `workflow/${identifier}`,
+		worktreePath: `/repository/.worktrees/${identifier}`,
+		createdAt: describedDraft.createdAt,
+	};
+	await writeWorkflowMetadata(draftFiles, completedMetadata);
+	await promoteDraft(draftFiles, completedFiles);
+	assert.equal((await readWorkflowMetadata(completedFiles)).ask, ask);
+	assert.equal(await exists(completedFiles.workingPlan), false);
+
+	// The pull request cache and the ask immutability guard.
+	const withPullRequests = {
+		...completedMetadata,
+		pullRequests: [{
+			number: 1,
+			url: "https://example.test/pull/1",
+			baseRefName: "main",
+			headRefName: `workflow/${identifier}`,
+		}],
+	};
+	await writeWorkflowMetadata(completedFiles, withPullRequests);
+	assert.deepEqual((await readWorkflowMetadata(completedFiles)).pullRequests, withPullRequests.pullRequests);
+	await assert.rejects(
+		writeWorkflowMetadata(completedFiles, { ...withPullRequests, ask: "changed" }),
+		/original ask is immutable/,
 	);
-	const descriptionless = await ensureWorkflowFiles(descriptionlessFiles);
-	assert.equal(descriptionless.description, "");
-	assert.equal(descriptionless.ask, null);
-	assert.deepEqual(descriptionless.state, { phase: "complete", step: "complete" });
-	assert.equal((await readWorkflowMetadata(descriptionlessFiles)).description, "");
 
-	const statusOnlyIdentifier = "status-only-workflow";
-	const statusOnlyFiles = filesAt(join(temporaryRoot, statusOnlyIdentifier));
-	await mkdir(statusOnlyFiles.root, { recursive: true });
-	await writeFile(statusOnlyFiles.plan, "# Status-only plan\n", "utf8");
+	// Reviews are an append-only numbered history plus a latest export.
+	const firstReview = sampleReview();
+	const firstSaved = await appendWorkflowReview(completedFiles, firstReview);
+	assert.equal(firstSaved.number, 1);
+	assert.deepEqual(await readWorkflowReview(completedFiles), firstReview);
+	assert.match(await readFile(completedFiles.reviewMarkdown, "utf8"), /## Review of planned changes/);
+	const secondReview = sampleReview({ headCommit: "fed654", generatedAt: "2026-01-04T00:00:00.000Z" });
+	const secondSaved = await appendWorkflowReview(completedFiles, secondReview);
+	assert.equal(secondSaved.number, 2);
+	assert.deepEqual(await readWorkflowReview(completedFiles), secondReview);
+	assert.deepEqual(
+		(await readdir(completedFiles.reviews)).sort(),
+		["0001.json", "0001.md", "0002.json", "0002.md"],
+	);
+
+	// Unreadable saved reviews are skipped; unreadable latest reviews are surfaced.
+	await writeFile(join(completedFiles.reviews, "0003.json"), "{}\n", "utf8");
+	const savedReviews = await listSavedReviews(completedFiles);
+	assert.deepEqual(savedReviews.map(({ number }) => number), [1, 2]);
+	assert.deepEqual(savedReviews.map(({ report }) => report.headCommit), ["def456", "fed654"]);
+	await writeFile(completedFiles.review, "{}\n", "utf8");
+	await assert.rejects(readWorkflowReview(completedFiles), /invalid structure/);
+
+	// Listing skips drafts, invalid directories, and unsupported metadata versions.
+	const legacyIdentifier = "legacy-workflow";
+	const legacyFiles = workflowFiles(legacyIdentifier);
+	await mkdir(legacyFiles.root, { recursive: true });
 	await writeFile(
-		statusOnlyFiles.metadata,
+		legacyFiles.metadata,
 		`${JSON.stringify({
-			version: 2,
-			identifier: statusOnlyIdentifier,
-			description: "Unsupported status metadata",
-			ask: "Reject status-only workflow metadata.",
-			status: "reviewing",
-			repositoryRoot: "/repository",
-			gitCommonDir: "/repository/.git",
-			baseBranch: "main",
-			baseCommit: "def456",
-			workflowBranch: `workflow/${statusOnlyIdentifier}`,
-			worktreePath: `/repository/.worktrees/${statusOnlyIdentifier}`,
-			createdAt: "2025-01-01T00:00:00.000Z",
-		}, null, 2)}\n`,
+			...completedMetadata,
+			version: 3,
+			identifier: legacyIdentifier,
+			state: { phase: "reviewing", step: "active", round: 1 },
+			workflowBranch: `workflow/${legacyIdentifier}`,
+			worktreePath: `/repository/.worktrees/${legacyIdentifier}`,
+		})}\n`,
 		"utf8",
 	);
-	await assert.rejects(readWorkflowMetadata(statusOnlyFiles), /invalid metadata/);
+	await assert.rejects(readWorkflowMetadata(legacyFiles), /unsupported metadata version 3/);
+	assert.deepEqual(
+		(await listCompletedWorkflows()).map(({ identifier: id }) => id),
+		[identifier],
+	);
+
+	// Metadata with a blank ask is rejected outright.
+	const statefulIdentifier = "blank-ask-workflow";
+	const statefulFiles = workflowFiles(statefulIdentifier);
+
+	await mkdir(statefulFiles.root, { recursive: true });
+	await writeFile(
+		statefulFiles.metadata,
+		`${JSON.stringify({
+			...completedMetadata,
+			identifier: statefulIdentifier,
+			ask: "  ",
+			workflowBranch: `workflow/${statefulIdentifier}`,
+			worktreePath: `/repository/.worktrees/${statefulIdentifier}`,
+		})}\n`,
+		"utf8",
+	);
+	await assert.rejects(readWorkflowMetadata(statefulFiles), /invalid metadata/);
 } finally {
 	await rm(temporaryRoot, { recursive: true, force: true });
 }
 
-console.log("Storage test passed: typed workflow states are required and original asks remain immutable.");
+console.log("Storage test passed: version-4 metadata stays fact-only, asks remain immutable, and reviews append.");

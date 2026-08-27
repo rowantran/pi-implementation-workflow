@@ -1,4 +1,4 @@
-<!-- Usage: Sent as the initial user message after /workflow-next switches to the implementation phase session. -->
+<!-- Usage: Sent as the initial user message after /workflow-implement switches to an implementation session. -->
 Implement the plan.
 
 First inspect the immutable original ask in {{{metadataPath}}}, the frozen plan in {{{planPath}}}, and relevant existing code from the repository.

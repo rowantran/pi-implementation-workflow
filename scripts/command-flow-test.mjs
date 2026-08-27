@@ -133,7 +133,7 @@ async function scenario({ args = "", editorResult, planningModel, planningThinki
 			await afterFirstStart({
 				ctx,
 				command: commands.get("workflow-plan"),
-				nextCommand: commands.get("workflow-next"),
+				implementCommand: commands.get("workflow-implement"),
 				editorCalls,
 				notifications,
 				phaseEntries,
@@ -255,9 +255,9 @@ assert.equal(started.sentMessages.length, 1);
 
 await scenario({
 	editorResult: "Leave a working plan uncommitted",
-	afterFirstStart: async ({ ctx, draftRoot, nextCommand, notifications }) => {
+	afterFirstStart: async ({ ctx, draftRoot, implementCommand, notifications }) => {
 		await writeFile(join(draftRoot, "working-plan.md"), "# Implementation plan\n\nUncommitted.\n", "utf8");
-		await nextCommand.handler("", ctx);
+		await implementCommand.handler("", ctx);
 		assert.match(notifications.at(-1).message, /working plan has uncommitted changes/);
 	},
 });

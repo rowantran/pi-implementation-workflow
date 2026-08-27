@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { appendFile, mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { type Message, uuidv7 } from "@earendil-works/pi-ai";
 import {
@@ -26,15 +26,20 @@ import {
 	type DashboardServerConfig,
 } from "./dashboard-server.ts";
 import { writeWorkflowDashboard, writeWorkflowDashboardRedirect } from "./dashboard.ts";
+import { checkDelivery } from "./delivery.ts";
+import {
+	gitValue,
+	installWorktreeExclude,
+	isAncestor,
+	isPathInside,
+	repositoryIdentity,
+	validateWorktree,
+	worktreeStatus,
+	type ExecFn,
+} from "./git.ts";
 import { parsePlannedChanges, parseTestingCriteria } from "./planned-changes.ts";
 import { PLAN_TITLE, planningCompletionError } from "./planning.ts";
-import {
-	buildPullRequestStack,
-	formatPullRequestStack,
-	parseOpenPullRequests,
-	toWorkflowPullRequests,
-	type OpenPullRequest,
-} from "./pull-requests.ts";
+import { formatPullRequestStack, toWorkflowPullRequests } from "./pull-requests.ts";
 import { registerWorkflowPlanTool, WORKFLOW_UPDATE_PLAN_TOOL } from "./plan-tool.ts";
 import {
 	implementationSystemPrompt,
@@ -57,20 +62,30 @@ import {
 	generateWorkflowReview,
 	type ReviewAgentRunner,
 } from "./review.ts";
+import type { WorkflowReviewReport } from "./review-report.ts";
+import {
+	reviewCanSeedIncremental,
+	reviewIsCurrent,
+	type ReviewInputsSnapshot,
+} from "./review-selection.ts";
 import {
 	appendClarifications,
+	appendWorkflowReview,
 	createDraft,
 	draftFiles,
 	ensureWorkflowFiles,
+	isDraftWorkflowMetadata,
+	listSavedReviews,
 	pathExists,
 	promoteDraft,
 	readCompletedWorkflowMetadata,
 	readText,
 	readWorkflowReview,
 	savePlanVersion,
-	WORKFLOW_STATE_VERSION,
+	WORKFLOW_METADATA_VERSION,
 	type CompletedWorkflowMetadata,
 	type DraftWorkflowMetadata,
+	type SavedWorkflowReview,
 	type WorkflowClarification,
 	type WorkflowFiles,
 	workflowFiles,
@@ -78,19 +93,17 @@ import {
 	writeCompletedWorkflowMetadata,
 	writeDraftWorkflowMetadata,
 	writeWorkflowMetadata,
-	writeWorkflowReview,
 } from "./storage.ts";
 import {
 	PHASE_REMINDER_ENTRY,
 	registerWorkflowCompletionRenderer,
 	registerWorkflowPhaseReminderRenderer,
 	runWorkflowProgress,
+	showReviewReadyNotice,
 	showWorkflowCompletion,
-	showWorkflowNextNotice,
 	showWorkflowPhaseStatus,
-	workflowNextNoticeText,
 } from "./ui.ts";
-import { transitionWorkflowState, workflowStateName } from "./workflow-state.ts";
+import { resolveWorkflow, workflowIdentifierCompletions } from "./workflow-select.ts";
 
 type SessionWorkflowPhase = "planning" | "implementation" | "review" | "revision" | "cleanup" | "complete";
 
@@ -98,22 +111,16 @@ interface WorkflowPhaseData {
 	phase: SessionWorkflowPhase;
 	draftId?: string;
 	identifier?: string;
-	reviewRound?: number;
-}
-
-interface RepositoryIdentity {
-	root: string;
-	commonDir: string;
-}
-
-interface CompletionFailure {
-	message: string;
+	/** Cleanup sessions: remove the worktree with --force after the user confirmed discarding changes. */
+	force?: boolean;
 }
 
 const PHASE_ENTRY = "implementation-workflow-phase";
 const DASHBOARD_SHORTCUT = "ctrl+alt+d";
 const WORKFLOW_BRANCH_PREFIX = "workflow/";
 const REVIEW_DISABLED_TOOLS = new Set(["edit", "write"]);
+
+type WorktreeVerb = "implement" | "review" | "revise" | "cleanup";
 
 export interface ImplementationWorkflowDependencies {
 	reviewAgentRunner?: ReviewAgentRunner;
@@ -126,10 +133,12 @@ export default function implementationWorkflow(
 	registerWorkflowCompletionRenderer(pi);
 	registerWorkflowPhaseReminderRenderer(pi);
 
+	const exec: ExecFn = (command, args, options) => pi.exec(command, args, options);
+
 	let phase: SessionWorkflowPhase | undefined;
 	let draftId: string | undefined;
 	let identifier: string | undefined;
-	let sessionReviewRound: number | undefined;
+	let cleanupForce = false;
 	let metadata: CompletedWorkflowMetadata | undefined;
 	let draftMetadata: DraftWorkflowMetadata | undefined;
 	let activeFiles: WorkflowFiles | undefined;
@@ -138,8 +147,7 @@ export default function implementationWorkflow(
 	let dashboardAnnounced = false;
 	let workflowConfigPromise: Promise<ImplementationWorkflowConfig> | undefined;
 	let dashboardConfigPromise: Promise<DashboardServerConfig> | undefined;
-	let completionInFlight = false;
-	let lastAutomaticFailure: string | undefined;
+	let readinessCheckInFlight = false;
 	let phaseReminderVisible = false;
 
 	registerWorkflowPlanTool(pi, async (rawDescription) => {
@@ -193,31 +201,17 @@ export default function implementationWorkflow(
 		phase = data.phase;
 		draftId = data.draftId;
 		identifier = data.identifier;
-		sessionReviewRound = data.reviewRound;
+		cleanupForce = data.force ?? false;
 		phaseReminderVisible = false;
 		pi.appendEntry(PHASE_ENTRY, data);
 	}
 
 	function updatePhaseStatus(ctx: ExtensionContext): void {
 		const activePhase =
-			phase === "planning" ||
-			(phase === "implementation" && metadata?.state.phase === "implementing" && metadata.state.step === "active") ||
-			(phase === "revision" && metadata?.state.phase === "revising" && metadata.state.step === "active") ||
-			(phase === "review" && metadata?.state.phase === "reviewing")
+			phase === "planning" || phase === "implementation" || phase === "revision" || phase === "review"
 				? phase
 				: undefined;
-		const reviewTransitionNeedsRetry =
-			metadata?.state.phase === "reviewing" &&
-			(phase === "implementation" ||
-				(phase === "revision" &&
-					sessionReviewRound !== undefined &&
-					metadata.state.round === sessionReviewRound + 1));
-		const codingPhaseNeedsNext =
-			reviewTransitionNeedsRetry ||
-			(phase === "implementation" && metadata?.state.phase === "implementing" && metadata.state.step === "complete") ||
-			(phase === "revision" && metadata?.state.phase === "revising" && metadata.state.step === "complete");
 		showWorkflowPhaseStatus(ctx, phaseReminderVisible ? activePhase : undefined);
-		showWorkflowNextNotice(ctx, codingPhaseNeedsNext);
 	}
 
 	function revealPhaseReminder(ctx: ExtensionContext): void {
@@ -236,10 +230,7 @@ export default function implementationWorkflow(
 			pi.setActiveTools([...new Set([...withoutWorkflowTools, WORKFLOW_UPDATE_PLAN_TOOL])]);
 			return;
 		}
-		if (
-			(phase === "implementation" && metadata?.state.phase === "implementing" && metadata.state.step === "active") ||
-			(phase === "revision" && metadata?.state.phase === "revising" && metadata.state.step === "active")
-		) {
+		if (phase === "implementation" || phase === "revision") {
 			pi.setActiveTools([...new Set([...withoutWorkflowTools, WORKFLOW_QUESTION_TOOL])]);
 			return;
 		}
@@ -333,7 +324,7 @@ export default function implementationWorkflow(
 			ctx.ui.notify("No workflow dashboard is available in this session.", "info");
 			return;
 		}
-		const currentHead = metadata ? await gitValue(metadata.worktreePath, ["rev-parse", "HEAD"]) : undefined;
+		const currentHead = metadata ? await gitValue(exec, metadata.worktreePath, ["rev-parse", "HEAD"]) : undefined;
 		await writeWorkflowDashboard(activeFiles, currentHead);
 		if (dashboardAnnounced && !force) return;
 
@@ -359,31 +350,8 @@ export default function implementationWorkflow(
 		dashboardAnnounced = true;
 	}
 
-	async function repositoryIdentity(cwd: string): Promise<RepositoryIdentity | undefined> {
-		const [rootResult, commonResult] = await Promise.all([
-			pi.exec("git", ["-C", cwd, "rev-parse", "--show-toplevel"]),
-			pi.exec("git", ["-C", cwd, "rev-parse", "--path-format=absolute", "--git-common-dir"]),
-		]);
-		if (rootResult.code !== 0 || commonResult.code !== 0) return undefined;
-		return {
-			root: resolve(rootResult.stdout.trim()),
-			commonDir: resolve(commonResult.stdout.trim()),
-		};
-	}
-
-	async function gitOutput(cwd: string, args: string[]): Promise<string | undefined> {
-		const result = await pi.exec("git", ["-C", cwd, ...args]);
-		if (result.code !== 0) return undefined;
-		return result.stdout.trim();
-	}
-
-	async function gitValue(cwd: string, args: string[]): Promise<string | undefined> {
-		const output = await gitOutput(cwd, args);
-		return output || undefined;
-	}
-
 	async function requireLaunchRepository(ctx: ExtensionContext, workflow: CompletedWorkflowMetadata): Promise<boolean> {
-		const current = await repositoryIdentity(ctx.cwd);
+		const current = await repositoryIdentity(exec, ctx.cwd);
 		const allowedLaunchRoots = new Set([resolve(workflow.repositoryRoot), resolve(workflow.worktreePath)]);
 		if (
 			current?.commonDir === resolve(workflow.gitCommonDir) &&
@@ -414,7 +382,7 @@ export default function implementationWorkflow(
 		const workflowMetadata = await ensureWorkflowFiles(files);
 		activeFiles = files;
 		planDescription = workflowMetadata.description?.trim() ?? "";
-		if ("draftId" in workflowMetadata) {
+		if (isDraftWorkflowMetadata(workflowMetadata)) {
 			draftMetadata = workflowMetadata;
 			metadata = undefined;
 		} else {
@@ -422,6 +390,32 @@ export default function implementationWorkflow(
 			draftMetadata = undefined;
 		}
 		await writeWorkflowDashboard(files);
+	}
+
+	/**
+	 * Resolves the workflow a verb targets and verifies the Isara sandbox was
+	 * launched in its repository. Returns undefined after notifying the user.
+	 */
+	async function resolveTargetWorkflow(
+		ctx: ExtensionCommandContext,
+		argument: string,
+		verb: WorktreeVerb,
+	): Promise<CompletedWorkflowMetadata | undefined> {
+		const result = await resolveWorkflow({
+			exec,
+			cwd: ctx.cwd,
+			argument,
+			sessionIdentifier: identifier,
+			verb,
+			select: (title, options) => ctx.ui.select(title, options),
+		});
+		if (result.status === "cancelled") return undefined;
+		if (result.status === "error") {
+			ctx.ui.notify(result.message, "error");
+			return undefined;
+		}
+		if (!(await requireLaunchRepository(ctx, result.workflow))) return undefined;
+		return result.workflow;
 	}
 
 	pi.registerCommand("workflow-plan", {
@@ -437,8 +431,15 @@ export default function implementationWorkflow(
 				);
 				return;
 			}
+			if (identifier) {
+				ctx.ui.notify(
+					`This session belongs to workflow ${identifier}. Start planning from a fresh session (/new).`,
+					"error",
+				);
+				return;
+			}
 
-			const repository = await repositoryIdentity(ctx.cwd);
+			const repository = await repositoryIdentity(exec, ctx.cwd);
 			if (!repository) {
 				ctx.ui.notify("Workflow planning must start inside a Git repository.", "error");
 				return;
@@ -454,7 +455,7 @@ export default function implementationWorkflow(
 			const files = draftFiles(nextDraftId);
 			if (await pathExists(files.root)) {
 				const existing = await ensureWorkflowFiles(files);
-				if (!("draftId" in existing) || existing.ask !== ask) {
+				if (!isDraftWorkflowMetadata(existing) || existing.ask !== ask) {
 					ctx.ui.notify(
 						"Planning did not start because this session already has a draft with a different immutable original ask.",
 						"error",
@@ -463,8 +464,7 @@ export default function implementationWorkflow(
 				}
 			} else {
 				const initialMetadata: DraftWorkflowMetadata = {
-					version: WORKFLOW_STATE_VERSION,
-					state: { phase: "planning", step: "draft" },
+					version: WORKFLOW_METADATA_VERSION,
 					draftId: nextDraftId,
 					description: "",
 					ask,
@@ -489,46 +489,42 @@ export default function implementationWorkflow(
 		},
 	});
 
-	async function loadCompletedWorkflow(
-		ctx: ExtensionContext,
-		requestedIdentifier: string,
-	): Promise<CompletedWorkflowMetadata | undefined> {
-		try {
-			return await readCompletedWorkflowMetadata(requestedIdentifier);
-		} catch (error) {
-			ctx.ui.notify(errorMessage(error), "error");
-			return undefined;
-		}
-	}
+	pi.registerCommand("workflow-implement", {
+		description: "Freeze the current plan into a worktree, or start an implementation session for a workflow",
+		getArgumentCompletions: (prefix) => workflowIdentifierCompletions(prefix),
+		handler: async (args, ctx) => {
+			await ctx.waitForIdle();
+			if (phase === "planning" && draftId && activeFiles) {
+				if (args.trim()) {
+					ctx.ui.notify(
+						"This planning session freezes its own plan. Run /workflow-implement without an identifier.",
+						"error",
+					);
+					return;
+				}
+				await freezePlanAndImplement(ctx);
+				return;
+			}
+			const workflow = await resolveTargetWorkflow(ctx, args, "implement");
+			if (!workflow) return;
+			const validation = await validateWorktree(exec, workflow);
+			if (validation) {
+				ctx.ui.notify(`Cannot start implementation: ${validation}.`, "error");
+				return;
+			}
+			await enterImplementationSession(ctx, workflow);
+		},
+	});
 
-	async function transitionToImplementation(
+	async function enterImplementationSession(
 		ctx: ExtensionCommandContext,
-		requestedIdentifier: string,
+		workflow: CompletedWorkflowMetadata,
 	): Promise<void> {
-		const workflow = await loadCompletedWorkflow(ctx, requestedIdentifier);
-		if (!workflow) return;
-		const stateName = workflowStateName(workflow.state);
-		if (stateName !== "planning.ready" && stateName !== "implementing.active") {
-			ctx.ui.notify(`Workflow ${requestedIdentifier} is ${stateName}; it cannot enter implementation.`, "error");
-			return;
-		}
-		if (!(await requireLaunchRepository(ctx, workflow))) return;
-		const validation = await validateWorktree(workflow);
-		if (validation) {
-			ctx.ui.notify(validation.message, "error");
-			return;
-		}
-
+		const files = workflowFiles(workflow.identifier);
 		const sessionFile = await createPhaseSession(workflow.worktreePath, {
 			phase: "implementation",
-			identifier: requestedIdentifier,
+			identifier: workflow.identifier,
 		});
-		if (workflow.state.phase === "planning") {
-			workflow.state = transitionWorkflowState(workflow.state, { phase: "implementing", step: "active" });
-		}
-		workflow.implementationStartedAt ??= new Date().toISOString();
-		await writeCompletedWorkflowMetadata(workflow);
-		const files = workflowFiles(requestedIdentifier);
 		await ctx.switchSession(sessionFile, {
 			withSession: async (replacementCtx) => {
 				await replacementCtx.sendUserMessage(
@@ -543,356 +539,12 @@ export default function implementationWorkflow(
 		});
 	}
 
-	async function transitionToReview(ctx: ExtensionCommandContext, requestedIdentifier: string): Promise<void> {
-		const workflow = await loadCompletedWorkflow(ctx, requestedIdentifier);
-		if (!workflow) return;
-		const stateName = workflowStateName(workflow.state);
-		if (
-			stateName !== "implementing.complete" &&
-			stateName !== "revising.complete" &&
-			stateName !== "reviewing.active"
-		) {
-			ctx.ui.notify(`Workflow ${requestedIdentifier} is ${stateName}; it cannot enter review.`, "error");
-			return;
-		}
-		if (!workflow.pullRequests?.length) {
-			ctx.ui.notify(`Workflow ${requestedIdentifier} has no recorded pull request delivery.`, "error");
-			return;
-		}
-		if (!(await requireLaunchRepository(ctx, workflow))) return;
-		const validation = await validateWorktree(workflow);
-		if (validation) {
-			ctx.ui.notify(validation.message, "error");
-			return;
-		}
-
-		const files = workflowFiles(requestedIdentifier);
-		if (workflow.state.phase === "reviewing") {
-			const [existingReport, currentHead] = await Promise.all([
-				readWorkflowReview(files),
-				gitValue(workflow.worktreePath, ["rev-parse", "HEAD"]),
-			]);
-			if (existingReport && currentHead && existingReport.headCommit !== currentHead) {
-				ctx.ui.notify(
-					"The branch changed after this review. Return to the review session and run /workflow-revise.",
-					"error",
-				);
-				return;
-			}
-		}
-		const reviewRound =
-			workflow.state.phase === "reviewing"
-				? workflow.state.round
-				: workflow.state.phase === "revising"
-					? workflow.state.round + 1
-					: 1;
-		try {
-			await ensureWorkflowReview(ctx, workflow, files, reviewRound);
-		} catch (error) {
-			ctx.ui.notify(`Could not generate the implementation review: ${errorMessage(error)}`, "error");
-			return;
-		}
-
-		const sessionFile = await createPhaseSession(workflow.worktreePath, {
-			phase: "review",
-			identifier: requestedIdentifier,
-			reviewRound,
-		});
-		if (workflow.state.phase !== "reviewing") {
-			workflow.state = transitionWorkflowState(workflow.state, {
-				phase: "reviewing",
-				step: "active",
-				round: reviewRound,
-			});
-		}
-		workflow.reviewStartedAt ??= new Date().toISOString();
-		await writeCompletedWorkflowMetadata(workflow);
-		await ctx.switchSession(sessionFile, {
-			withSession: async (replacementCtx) => {
-				replacementCtx.ui.notify("The implementation review is ready in the workflow dashboard.", "info");
-			},
-		});
-	}
-
-	async function ensureWorkflowReview(
-		ctx: ExtensionContext,
-		workflow: CompletedWorkflowMetadata,
-		files: WorkflowFiles,
-		reviewRound: number,
-	): Promise<void> {
-		const pullRequests = workflow.pullRequests;
-		if (!pullRequests?.length) throw new Error("The workflow has no recorded pull request delivery.");
-		const [plan, clarifications, headCommit, existing] = await Promise.all([
-			readText(files.plan),
-			readText(files.clarifications),
-			gitValue(workflow.worktreePath, ["rev-parse", "HEAD"]),
-			readWorkflowReview(files),
-		]);
-		if (!headCommit) throw new Error("Could not identify the pull request head commit.");
-		const plannedChanges = parsePlannedChanges(plan);
-		const testingCriteria = parseTestingCriteria(plan);
-		const sourceFingerprint = createHash("sha256")
-			.update(JSON.stringify([workflow.ask, plan, clarifications]))
-			.digest("hex");
-		if (
-			existing !== undefined &&
-			arraysEqual(existing.pullRequestUrls, pullRequests.map(({ url }) => url)) &&
-			existing.baseCommit === workflow.baseCommit &&
-			existing.headCommit === headCommit &&
-			existing.sourceFingerprint === sourceFingerprint &&
-			existing.testingCriteria.originalCriteria === testingCriteria &&
-			existing.plannedChanges.length === plannedChanges.length &&
-			existing.plannedChanges.every((change, index) => change.id === plannedChanges[index]?.id)
-		) {
-			await writeWorkflowReview(files, existing, reviewRound);
-			await writeWorkflowDashboard(files, headCommit);
-			return;
-		}
-
-		const previousReviewedHeadCommit =
-			workflow.state.phase === "revising" ? workflow.state.reviewedHeadCommit : undefined;
-		const previousReview = previousReviewedHeadCommit ? existing : undefined;
-		if (
-			reviewRound > 1 &&
-			(!previousReview || previousReview.headCommit !== previousReviewedHeadCommit)
-		) {
-			throw new Error("Could not identify the previous review for this revision.");
-		}
-		const progressSteps = previousReview
-			? [
-					"Identifying planned changes affected by the revision",
-					"Reviewing affected planned changes, full plan, and testing criteria",
-					"Synthesizing overall findings",
-					"Saving review report",
-				]
-			: ["Reviewing planned changes, full plan, and testing criteria", "Synthesizing overall findings", "Saving review report"];
-		const reviewOverride = await configuredPhaseOverride(ctx, "reviewing");
-		await runWorkflowProgress(
-			ctx,
-			previousReview ? "Generating incremental implementation re-review" : "Generating implementation review",
-			progressSteps,
-			async (progress) => {
-				const report = await generateWorkflowReview(
-					{
-						pullRequests,
-						baseCommit: workflow.baseCommit,
-						headCommit,
-						sourceFingerprint,
-						worktreePath: workflow.worktreePath,
-						metadataPath: files.metadata,
-						planPath: files.plan,
-						clarificationsPath: files.clarifications,
-						reviewRunsPath: files.reviewRuns,
-						plannedChanges,
-						testingCriteria,
-						previousReview,
-						previousReviewPath: previousReview ? files.review : undefined,
-						onStage: (stage) => {
-							if (stage === "scope-complete") {
-								progress.complete("Identified planned changes affected by the revision");
-							}
-							if (stage === "analysis-complete") {
-								progress.complete(
-									previousReview
-										? "Reviewed affected planned changes, full plan, and testing criteria"
-										: "Reviewed planned changes, full plan, and testing criteria",
-								);
-							}
-							if (stage === "synthesis-complete") progress.complete("Synthesized overall findings");
-						},
-						onAgentProgress: ({ id, label, status }) => {
-							progress.updateSubstep(id, label, status);
-						},
-					},
-					dependencies.reviewAgentRunner ??
-						createSpawnReviewAgent({
-							model: reviewOverride?.model
-								? `${reviewOverride.model.provider}/${reviewOverride.model.id}`
-								: ctx.model
-									? `${ctx.model.provider}/${ctx.model.id}`
-									: undefined,
-							thinkingLevel: reviewOverride?.thinkingLevel ?? ctx.thinkingLevel,
-							signal: ctx.signal,
-						}),
-				);
-				await writeWorkflowReview(files, report, reviewRound);
-				await writeWorkflowDashboard(files, headCommit);
-				progress.complete("Saved review report");
-			},
-		);
-	}
-
-	pi.registerCommand("workflow-revise", {
-		description: "Start a separate implementation revision from the current review",
-		getArgumentCompletions: () => null,
-		handler: async (args, ctx) => {
-			await ctx.waitForIdle();
-			if (phase !== "review" || !identifier || !activeFiles) {
-				ctx.ui.notify("Revisions can only start from an active workflow review session.", "error");
-				return;
-			}
-			if (await completeExistingRevisionIfConfirmed(ctx)) return;
-			const request = await ctx.ui.editor("Describe the implementation changes to make", args);
-			if (request === undefined || !request.trim()) {
-				ctx.ui.notify("Revision did not start because no change request was submitted.", "info");
-				return;
-			}
-			await beginRevision(ctx, request);
-		},
-	});
-
-	async function completeExistingRevisionIfConfirmed(ctx: ExtensionCommandContext): Promise<boolean> {
-		if (!identifier || !activeFiles) return true;
-		const workflow = await loadCompletedWorkflow(ctx, identifier);
-		if (!workflow) return true;
-		const currentRound =
-			workflow.state.phase === "reviewing" || workflow.state.phase === "revising"
-				? workflow.state.round
-				: undefined;
-		if (
-			currentRound === undefined ||
-			(sessionReviewRound !== currentRound && !(sessionReviewRound === undefined && currentRound === 1))
-		) {
-			ctx.ui.notify(
-				`This review session cannot start a revision while the workflow is ${workflowStateName(workflow.state)}.`,
-				"error",
-			);
-			return true;
-		}
-		const [report, headCommit] = await Promise.all([
-			readWorkflowReview(activeFiles),
-			gitValue(workflow.worktreePath, ["rev-parse", "HEAD"]),
-		]);
-		if (!report || !headCommit || report.headCommit === headCommit) return false;
-		const confirmed = await ctx.ui.confirm(
-			"Use the existing commits as the completed revision?",
-			`The worktree HEAD changed from ${report.headCommit} to ${headCommit} after review round ${currentRound}. Confirm to validate those commits and immediately generate review round ${currentRound + 1}.`,
-		);
-		if (!confirmed) return false;
-		if (workflow.state.phase === "reviewing") {
-			workflow.state = transitionWorkflowState(workflow.state, {
-				phase: "revising",
-				step: "active",
-				round: currentRound,
-				reviewedHeadCommit: report.headCommit,
-			});
-			workflow.revisionStartedAt = new Date().toISOString();
-			workflow.revisionCompletedAt = undefined;
-			await writeWorkflowReview(activeFiles, report, currentRound);
-			await writeCompletedWorkflowMetadata(workflow);
-			metadata = workflow;
-		}
-		const completedWorkflow = await completeCodingPhase(ctx, false, "revision");
-		if (completedWorkflow) await transitionToReview(ctx, identifier);
-		return true;
-	}
-
-	async function beginRevision(ctx: ExtensionCommandContext, request: string): Promise<void> {
-		if (!identifier || !activeFiles) return;
-		const workflow = await loadCompletedWorkflow(ctx, identifier);
-		if (!workflow) return;
-		const reviewingCurrentRound =
-			workflow.state.phase === "reviewing" &&
-			(sessionReviewRound === workflow.state.round || (sessionReviewRound === undefined && workflow.state.round === 1));
-		const retryingCancelledSwitch =
-			workflow.state.phase === "revising" &&
-			workflow.state.step === "active" &&
-			(sessionReviewRound === workflow.state.round || (sessionReviewRound === undefined && workflow.state.round === 1));
-		if (!reviewingCurrentRound && !retryingCancelledSwitch) {
-			ctx.ui.notify(
-				`This review session cannot start a revision while the workflow is ${workflowStateName(workflow.state)}.`,
-				"error",
-			);
-			return;
-		}
-		if (!(await requireLaunchRepository(ctx, workflow))) return;
-		const validation = await validateWorktree(workflow);
-		if (validation) {
-			ctx.ui.notify(`Revision cannot start: ${validation.message}.`, "error");
-			return;
-		}
-		const report = await readWorkflowReview(activeFiles);
-		if (!report) {
-			ctx.ui.notify("Revision cannot start because the workflow has no saved review report.", "error");
-			return;
-		}
-		if (workflow.state.phase !== "reviewing" && workflow.state.phase !== "revising") return;
-		const reviewRound = workflow.state.round;
-		await writeWorkflowReview(activeFiles, report, reviewRound);
-		const sessionFile = await createPhaseSession(workflow.worktreePath, {
-			phase: "revision",
-			identifier,
-			reviewRound,
-		});
-		if (workflow.state.phase === "reviewing") {
-			workflow.state = transitionWorkflowState(workflow.state, {
-				phase: "revising",
-				step: "active",
-				round: reviewRound,
-				reviewedHeadCommit: report.headCommit,
-			});
-			workflow.revisionStartedAt = new Date().toISOString();
-			workflow.revisionCompletedAt = undefined;
-			await writeCompletedWorkflowMetadata(workflow);
-		}
-		metadata = workflow;
-		await ctx.switchSession(sessionFile, {
-			withSession: async (replacementCtx) => {
-				await replacementCtx.sendUserMessage(revisionUserMessage({ request, reviewPath: activeFiles!.review }));
-			},
-		});
-	}
-
-	pi.registerCommand("workflow-next", {
-		description: "Advance the active workflow to its next phase",
-		handler: async (_args, ctx) => {
-			await ctx.waitForIdle();
-			if (phase === "planning") {
-				await completePlanning(ctx);
-				return;
-			}
-			if (phase === "implementation") {
-				await advanceImplementation(ctx);
-				return;
-			}
-			if (phase === "revision") {
-				await advanceRevision(ctx);
-				return;
-			}
-			if (phase === "review") {
-				if (await blockStaleReviewCleanup(ctx)) return;
-				await beginReviewCleanup(ctx);
-				return;
-			}
-			if (phase === "cleanup" && identifier) {
-				await finishReviewCleanup(ctx, identifier);
-				return;
-			}
-			if (phase === "complete" && identifier) {
-				const workflow = await loadCompletedWorkflow(ctx, identifier);
-				if (
-					workflow &&
-					(workflowStateName(workflow.state) === "planning.ready" ||
-						workflowStateName(workflow.state) === "implementing.active")
-				) {
-					await transitionToImplementation(ctx, identifier);
-					return;
-				}
-			}
-			ctx.ui.notify("No active workflow phase can advance in this session.", "error");
-		},
-	});
-
-	async function completePlanning(ctx: ExtensionCommandContext): Promise<void> {
+	async function freezePlanAndImplement(ctx: ExtensionCommandContext): Promise<void> {
 		if (!draftId || !activeFiles || !draftMetadata) {
 			ctx.ui.notify("This planning session has no workflow draft metadata.", "error");
 			return;
 		}
 		const currentDraftMetadata = draftMetadata;
-		if (currentDraftMetadata.version === WORKFLOW_STATE_VERSION && !currentDraftMetadata.ask?.trim()) {
-			ctx.ui.notify("Planning cannot complete without the immutable original ask.", "error");
-			return;
-		}
 		const draft = activeFiles;
 		const [plan, workingPlan] = await Promise.all([readText(draft.plan), readText(draft.workingPlan)]);
 		if (workingPlan !== plan) {
@@ -908,14 +560,14 @@ export default function implementationWorkflow(
 			return;
 		}
 		const description = planDescription.trim();
-		const repository = await repositoryIdentity(ctx.cwd);
+		const repository = await repositoryIdentity(exec, ctx.cwd);
 		if (!repository) {
 			ctx.ui.notify("The planning session is no longer inside a Git repository.", "error");
 			return;
 		}
 		const [baseBranch, baseCommit] = await Promise.all([
-			gitValue(repository.root, ["branch", "--show-current"]),
-			gitValue(repository.root, ["rev-parse", "HEAD"]),
+			gitValue(exec, repository.root, ["branch", "--show-current"]),
+			gitValue(exec, repository.root, ["rev-parse", "HEAD"]),
 		]);
 		if (!baseBranch || !baseCommit) {
 			ctx.ui.notify("Planning completion requires a named branch with a valid HEAD.", "error");
@@ -967,7 +619,6 @@ export default function implementationWorkflow(
 						identifier: nextIdentifier,
 						description,
 						ask: currentDraftMetadata.ask,
-						state: transitionWorkflowState(currentDraftMetadata.state, { phase: "planning", step: "ready" }),
 						repositoryRoot: repository.root,
 						gitCommonDir: repository.commonDir,
 						baseBranch,
@@ -1046,416 +697,360 @@ export default function implementationWorkflow(
 		updatePhaseStatus(ctx);
 		pi.setSessionName(workflowSessionName("Planning", nextIdentifier, nextMetadata.description));
 		if (dashboardWarnings.length > 0) ctx.ui.notify(dashboardWarnings.join("\n"), "warning");
-		await transitionToImplementation(ctx, nextIdentifier);
+		await enterImplementationSession(ctx, nextMetadata);
 	}
 
-	async function advanceImplementation(ctx: ExtensionCommandContext): Promise<void> {
-		if (!identifier) return;
-		const workflow = await loadCompletedWorkflow(ctx, identifier);
-		if (!workflow) return;
-		if (
-			workflowStateName(workflow.state) === "implementing.complete" ||
-			workflowStateName(workflow.state) === "reviewing.active"
-		) {
-			await transitionToReview(ctx, identifier);
-			return;
-		}
-		const completedWorkflow = await completeCodingPhase(ctx, false, "implementation");
-		if (completedWorkflow) await transitionToReview(ctx, identifier);
-	}
-
-	async function advanceRevision(ctx: ExtensionCommandContext): Promise<void> {
-		if (!identifier) return;
-		const workflow = await loadCompletedWorkflow(ctx, identifier);
-		if (!workflow) return;
-		if (
-			workflow.state.phase === "reviewing" &&
-			sessionReviewRound !== undefined &&
-			workflow.state.round === sessionReviewRound + 1
-		) {
-			await transitionToReview(ctx, identifier);
-			return;
-		}
-		if (
-			workflow.state.phase !== "revising" ||
-			workflow.state.round !== sessionReviewRound
-		) {
-			ctx.ui.notify(`This revision session cannot advance workflow state ${workflowStateName(workflow.state)}.`, "error");
-			return;
-		}
-		if (workflow.state.step === "complete") {
-			await transitionToReview(ctx, identifier);
-			return;
-		}
-		const completedWorkflow = await completeCodingPhase(ctx, false, "revision");
-		if (completedWorkflow) await transitionToReview(ctx, identifier);
-	}
-
-	async function completeImplementation(
-		ctx: ExtensionContext,
-		automatic: boolean,
-	): Promise<CompletedWorkflowMetadata | undefined> {
-		return completeCodingPhase(ctx, automatic, "implementation");
-	}
-
-	async function completeRevision(
-		ctx: ExtensionContext,
-		automatic: boolean,
-	): Promise<CompletedWorkflowMetadata | undefined> {
-		return completeCodingPhase(ctx, automatic, "revision");
-	}
-
-	async function completeCodingPhase(
-		ctx: ExtensionContext,
-		automatic: boolean,
-		codingPhase: "implementation" | "revision",
-	): Promise<CompletedWorkflowMetadata | undefined> {
-		if (!identifier || completionInFlight) return undefined;
-		completionInFlight = true;
-		const phaseLabel = codingPhase === "implementation" ? "Implementation" : "Revision";
-		try {
-			const workflow = await readCompletedWorkflowMetadata(identifier);
-			metadata = workflow;
-			if (codingPhase === "implementation") {
-				if (workflow.state.phase === "implementing" && workflow.state.step === "complete") return workflow;
-				if (workflow.state.phase !== "implementing" || workflow.state.step !== "active") {
-					if (!automatic) ctx.ui.notify(`Workflow ${identifier} is ${workflowStateName(workflow.state)}.`, "error");
-					return undefined;
-				}
-			} else {
-				if (workflow.state.phase === "revising" && workflow.state.step === "complete") return workflow;
-				if (
-					workflow.state.phase !== "revising" ||
-					workflow.state.step !== "active" ||
-					workflow.state.round !== sessionReviewRound
-				) {
-					if (!automatic) ctx.ui.notify(`Workflow ${identifier} is ${workflowStateName(workflow.state)}.`, "error");
-					return undefined;
-				}
-			}
-			const completion = await runWorkflowProgress<
-				{ failure: CompletionFailure } | { pullRequests: OpenPullRequest[] }
-			>(ctx, `Completing ${codingPhase}`, ["Checking worktree", "Checking pull request delivery"], async (progress) => {
-				const failure = await implementationCompletionFailure(workflow);
-				if (failure) {
-					progress.fail("Worktree is not ready");
-					return { failure };
-				}
-				const headCommit = await gitValue(workflow.worktreePath, ["rev-parse", "HEAD"]);
-				if (!headCommit) {
-					progress.fail("Could not identify the branch head");
-					return { failure: { message: "could not identify the branch head commit" } };
-				}
-				if (workflow.state.phase === "revising" && headCommit === workflow.state.reviewedHeadCommit) {
-					progress.fail("Revision has no new commit");
-					return { failure: { message: "the revision has not created a new commit" } };
-				}
-				progress.complete("Checked clean worktree");
-				const stack = await findPullRequestStack(workflow);
-				if (!stack) {
-					progress.fail("Could not inspect open pull requests");
-					return { failure: { message: "could not inspect open pull requests" } };
-				}
-				if ("error" in stack) {
-					progress.fail("Open pull request delivery is incomplete");
-					return { failure: { message: stack.error } };
-				}
-				const pullRequests = stack.pullRequests;
-				if (pullRequests[0]?.headRefName !== workflow.workflowBranch) {
-					progress.fail("Pull request stack has the wrong bottom branch");
-					return {
-						failure: {
-							message: `the bottom pull request must use workflow branch ${workflow.workflowBranch}`,
-						},
-					};
-				}
-				const tip = pullRequests.at(-1)!;
-				if (tip.headRefOid !== headCommit) {
-					progress.fail("Pull request stack does not contain local HEAD");
-					return { failure: { message: "the local HEAD commit has not been pushed to the stack tip branch" } };
-				}
-				let previousCommit = workflow.baseCommit;
-				for (const pullRequest of pullRequests) {
-					const ancestor = await pi.exec("git", [
-						"-C",
-						workflow.worktreePath,
-						"merge-base",
-						"--is-ancestor",
-						previousCommit,
-						pullRequest.headRefOid,
-					]);
-					if (ancestor.code !== 0) {
-						progress.fail("Pull request branches are not restacked");
-						return {
-							failure: {
-								message: `pull request #${pullRequest.number} does not contain the current branch below it`,
-							},
-						};
-					}
-					previousCommit = pullRequest.headRefOid;
-				}
-				progress.complete(
-					pullRequests.length === 1
-						? `Checked pull request #${tip.number}`
-						: `Checked ${pullRequests.length}-pull-request stack`,
-				);
-				return { pullRequests };
-			});
-			if ("failure" in completion) {
-				const message = completion.failure.message;
-				if (!automatic || lastAutomaticFailure !== message) {
-					ctx.ui.notify(`${phaseLabel} is not complete: ${message}.`, automatic ? "warning" : "error");
-				}
-				lastAutomaticFailure = message;
-				return undefined;
+	pi.registerCommand("workflow-review", {
+		description: "Review the workflow's current delivery and open a read-only review session",
+		getArgumentCompletions: (prefix) => workflowIdentifierCompletions(prefix),
+		handler: async (args, ctx) => {
+			await ctx.waitForIdle();
+			const workflow = await resolveTargetWorkflow(ctx, args, "review");
+			if (!workflow) return;
+			const validation = await validateWorktree(exec, workflow);
+			if (validation) {
+				ctx.ui.notify(`Cannot review: ${validation}.`, "error");
+				return;
 			}
 
-			workflow.state = transitionWorkflowState(workflow.state, {
-				...workflow.state,
-				step: "complete",
-			});
-			if (codingPhase === "implementation") workflow.implementationCompletedAt = new Date().toISOString();
-			else workflow.revisionCompletedAt = new Date().toISOString();
-			workflow.pullRequests = toWorkflowPullRequests(completion.pullRequests);
-			await writeCompletedWorkflowMetadata(workflow);
-			metadata = workflow;
-			lastAutomaticFailure = undefined;
-			applyPhaseTools();
-			updatePhaseStatus(ctx);
-			if (automatic) showCodingCompletion(ctx, workflow, codingPhase);
-			return workflow;
-		} catch (error) {
-			ctx.ui.notify(`Could not complete ${codingPhase}: ${errorMessage(error)}`, "error");
-			return undefined;
-		} finally {
-			completionInFlight = false;
-		}
-	}
+			const files = workflowFiles(workflow.identifier);
+			let outcome: { report: WorkflowReviewReport; reused: boolean };
+			try {
+				outcome = await ensureWorkflowReview(ctx, workflow, files);
+			} catch (error) {
+				ctx.ui.notify(`Could not generate the implementation review: ${errorMessage(error)}`, "error");
+				return;
+			}
 
-	function showCodingCompletion(
+			if (outcome.reused && phase === "review" && identifier === workflow.identifier) {
+				ctx.ui.notify("The saved review already covers the current commits.", "info");
+				return;
+			}
+			const sessionFile = await createPhaseSession(workflow.worktreePath, {
+				phase: "review",
+				identifier: workflow.identifier,
+			});
+			await ctx.switchSession(sessionFile, {
+				withSession: async (replacementCtx) => {
+					replacementCtx.ui.notify("The implementation review is ready in the workflow dashboard.", "info");
+				},
+			});
+		},
+	});
+
+	async function ensureWorkflowReview(
 		ctx: ExtensionContext,
 		workflow: CompletedWorkflowMetadata,
-		codingPhase: "implementation" | "revision",
-	): void {
-		const title = codingPhase === "implementation" ? "Implementation complete" : "Revision complete";
-		const pullRequests = workflow.pullRequests ?? [];
-		showWorkflowCompletion(pi, ctx, {
-			title,
-			details: pullRequests.map(
-				(pullRequest, index) =>
-					`${pullRequests.length === 1 ? "Pull request" : `Pull request ${index + 1}`}: ${pullRequest.url}`,
-			),
-			command: "/workflow-next",
-			instruction: workflowNextNoticeText(),
-		});
+		files: WorkflowFiles,
+	): Promise<{ report: WorkflowReviewReport; reused: boolean }> {
+		const delivery = await runWorkflowProgress(
+			ctx,
+			"Checking implementation delivery",
+			["Checking worktree", "Checking pull request delivery"],
+			async (progress) => {
+				const result = await checkDelivery(exec, workflow);
+				if (!result.ok) {
+					progress.fail(result.stage === "worktree" ? "Worktree is not ready" : "Pull request delivery is incomplete");
+					throw new Error(`The delivery is not ready for review: ${result.message}.`);
+				}
+				progress.complete("Checked clean worktree");
+				progress.complete(
+					result.pullRequests.length === 1
+						? `Checked pull request #${result.pullRequests[0]!.number}`
+						: `Checked ${result.pullRequests.length}-pull-request stack`,
+				);
+				return result;
+			},
+		);
+		workflow.pullRequests = toWorkflowPullRequests(delivery.pullRequests);
+		await writeCompletedWorkflowMetadata(workflow);
+		if (identifier === workflow.identifier) metadata = workflow;
+
+		const [plan, clarifications, existing, savedReviews] = await Promise.all([
+			readText(files.plan),
+			readText(files.clarifications),
+			readWorkflowReview(files).catch(() => undefined),
+			listSavedReviews(files),
+		]);
+		const inputs: ReviewInputsSnapshot = {
+			pullRequestUrls: delivery.pullRequests.map(({ url }) => url),
+			baseCommit: workflow.baseCommit,
+			headCommit: delivery.headCommit,
+			sourceFingerprint: createHash("sha256")
+				.update(JSON.stringify([workflow.ask, plan, clarifications]))
+				.digest("hex"),
+			testingCriteria: parseTestingCriteria(plan),
+			plannedChanges: parsePlannedChanges(plan).map(({ id, title }) => ({ id, title })),
+		};
+		if (existing && reviewIsCurrent(existing, inputs)) {
+			await writeWorkflowDashboard(files, delivery.headCommit);
+			return { report: existing, reused: true };
+		}
+
+		const seed = await findIncrementalSeed(workflow, savedReviews, inputs);
+		if (!seed && savedReviews.length > 0) {
+			ctx.ui.notify(
+				"No earlier review can seed an incremental re-review of these commits; generating a full review.",
+				"info",
+			);
+		}
+
+		const plannedChanges = parsePlannedChanges(plan);
+		const progressSteps = seed
+			? [
+					"Identifying planned changes affected by the revision",
+					"Reviewing affected planned changes, full plan, and testing criteria",
+					"Synthesizing overall findings",
+					"Saving review report",
+				]
+			: ["Reviewing planned changes, full plan, and testing criteria", "Synthesizing overall findings", "Saving review report"];
+		const reviewOverride = await configuredPhaseOverride(ctx, "reviewing");
+		return runWorkflowProgress(
+			ctx,
+			seed ? "Generating incremental implementation re-review" : "Generating implementation review",
+			progressSteps,
+			async (progress) => {
+				const report = await generateWorkflowReview(
+					{
+						pullRequests: workflow.pullRequests!,
+						baseCommit: workflow.baseCommit,
+						headCommit: delivery.headCommit,
+						sourceFingerprint: inputs.sourceFingerprint,
+						worktreePath: workflow.worktreePath,
+						metadataPath: files.metadata,
+						planPath: files.plan,
+						clarificationsPath: files.clarifications,
+						reviewRunsPath: files.reviewRuns,
+						plannedChanges,
+						testingCriteria: inputs.testingCriteria,
+						previousReview: seed?.report,
+						previousReviewPath: seed?.path,
+						onStage: (stage) => {
+							if (stage === "scope-complete") {
+								progress.complete("Identified planned changes affected by the revision");
+							}
+							if (stage === "analysis-complete") {
+								progress.complete(
+									seed
+										? "Reviewed affected planned changes, full plan, and testing criteria"
+										: "Reviewed planned changes, full plan, and testing criteria",
+								);
+							}
+							if (stage === "synthesis-complete") progress.complete("Synthesized overall findings");
+						},
+						onAgentProgress: ({ id, label, status }) => {
+							progress.updateSubstep(id, label, status);
+						},
+					},
+					dependencies.reviewAgentRunner ??
+						createSpawnReviewAgent({
+							model: reviewOverride?.model
+								? `${reviewOverride.model.provider}/${reviewOverride.model.id}`
+								: ctx.model
+									? `${ctx.model.provider}/${ctx.model.id}`
+									: undefined,
+							thinkingLevel: reviewOverride?.thinkingLevel ?? ctx.thinkingLevel,
+							signal: ctx.signal,
+						}),
+				);
+				await appendWorkflowReview(files, report);
+				await writeWorkflowDashboard(files, delivery.headCommit);
+				progress.complete("Saved review report");
+				return { report, reused: false };
+			},
+		);
 	}
 
-	async function implementationCompletionFailure(workflow: CompletedWorkflowMetadata): Promise<CompletionFailure | undefined> {
-		const validation = await validateWorktree(workflow);
-		if (validation) return validation;
-		const status = await gitOutput(workflow.worktreePath, ["status", "--porcelain"]);
-		if (status === undefined) return { message: "could not inspect the worktree" };
-		if (status !== "") return { message: "the worktree has uncommitted changes" };
+	/**
+	 * Finds the newest saved review that can seed an incremental re-review:
+	 * same plan sources and base, with its head commit an ancestor of the
+	 * current head. Derived entirely from saved artifacts and Git history.
+	 */
+	async function findIncrementalSeed(
+		workflow: CompletedWorkflowMetadata,
+		savedReviews: SavedWorkflowReview[],
+		inputs: ReviewInputsSnapshot,
+	): Promise<SavedWorkflowReview | undefined> {
+		for (let index = savedReviews.length - 1; index >= 0; index--) {
+			const candidate = savedReviews[index]!;
+			if (!reviewCanSeedIncremental(candidate.report, inputs)) continue;
+			if (await isAncestor(exec, workflow.worktreePath, candidate.report.headCommit, inputs.headCommit)) {
+				return candidate;
+			}
+		}
 		return undefined;
 	}
 
-	async function findPullRequestStack(workflow: CompletedWorkflowMetadata) {
-		const [branch, result] = await Promise.all([
-			gitValue(workflow.worktreePath, ["branch", "--show-current"]),
-			pi.exec(
-				"gh",
-				[
-					"pr",
-					"list",
-					"--state",
-					"open",
-					"--limit",
-					"100",
-					"--json",
-					"number,url,baseRefName,headRefName",
-				],
-				{ cwd: workflow.worktreePath, timeout: 15_000 },
-			),
-		]);
-		if (!branch || result.code !== 0) return undefined;
-		try {
-			const openPullRequests = parseOpenPullRequests(JSON.parse(result.stdout));
-			if (!openPullRequests) return undefined;
-			const stack = buildPullRequestStack(openPullRequests, branch, workflow.baseBranch);
-			if ("error" in stack) return stack;
-
-			const pullRequests: OpenPullRequest[] = [];
-			for (const pullRequest of stack.pullRequests) {
-				// Older gh releases do not expose headRefOid through `pr list`; the REST field is stable.
-				const head = await pi.exec(
-					"gh",
-					["api", `repos/{owner}/{repo}/pulls/${pullRequest.number}`, "--jq", ".head.sha"],
-					{ cwd: workflow.worktreePath, timeout: 15_000 },
-				);
-				const headRefOid = head.code === 0 ? head.stdout.trim() : "";
-				if (!headRefOid) return undefined;
-				pullRequests.push({ ...pullRequest, headRefOid });
-			}
-			return { pullRequests };
-		} catch {
-			return undefined;
-		}
-	}
-
-	async function blockStaleReviewCleanup(ctx: ExtensionCommandContext): Promise<boolean> {
-		if (!identifier || !activeFiles) return false;
-		const workflow = await readCompletedWorkflowMetadata(identifier);
-		if (
-			workflow.state.phase !== "reviewing" ||
-			(sessionReviewRound !== workflow.state.round && !(sessionReviewRound === undefined && workflow.state.round === 1))
-		) {
-			ctx.ui.notify(`This review session cannot advance workflow state ${workflowStateName(workflow.state)}.`, "error");
-			return true;
-		}
-		const report = await readWorkflowReview(activeFiles);
-		if (!report) return false;
-		const headCommit = await gitValue(workflow.worktreePath, ["rev-parse", "HEAD"]);
-		if (!headCommit || report.headCommit === headCommit) return false;
-		ctx.ui.notify(
-			"The branch changed after this review. Run /workflow-revise to enter the revision phase before generating another review.",
-			"warning",
-		);
-		return true;
-	}
-
-	async function beginReviewCleanup(ctx: ExtensionCommandContext): Promise<void> {
-		if (!identifier) return;
-		let preparation:
-			| { workflow: CompletedWorkflowMetadata; sessionFile: string }
-			| { failure: CompletionFailure };
-		try {
-			const workflow = await readCompletedWorkflowMetadata(identifier);
-			if (
-				workflow.state.phase !== "reviewing" ||
-				(sessionReviewRound !== workflow.state.round && !(sessionReviewRound === undefined && workflow.state.round === 1))
-			) {
-				ctx.ui.notify(`This review session cannot complete workflow state ${workflowStateName(workflow.state)}.`, "error");
+	pi.registerCommand("workflow-revise", {
+		description: "Start a revision session in the workflow worktree from a change request",
+		getArgumentCompletions: (prefix) => workflowIdentifierCompletions(prefix),
+		handler: async (args, ctx) => {
+			await ctx.waitForIdle();
+			const workflow = await resolveTargetWorkflow(ctx, args, "revise");
+			if (!workflow) return;
+			const validation = await validateWorktree(exec, workflow);
+			if (validation) {
+				ctx.ui.notify(`Revision cannot start: ${validation}.`, "error");
 				return;
 			}
-			preparation = await runWorkflowProgress(
-				ctx,
-				"Completing review",
-				["Checking review worktree", "Preparing original checkout"],
-				async (progress) => {
-					const validation = await validateWorktree(workflow);
-					if (validation) {
-						progress.fail("Review worktree is not ready");
-						return { failure: validation };
-					}
-					const status = await gitOutput(workflow.worktreePath, ["status", "--porcelain"]);
-					if (status === undefined) {
-						progress.fail("Could not inspect review worktree");
-						return { failure: { message: "Could not inspect the review worktree." } };
-					}
-					if (status !== "") {
-						progress.fail("Review worktree has uncommitted changes");
-						return {
-							failure: { message: "Review cleanup refused because the worktree has uncommitted changes." },
-						};
-					}
-					progress.complete("Checked clean review worktree");
-
-					workflow.state = transitionWorkflowState(workflow.state, {
-						phase: "complete",
-						step: "cleanup_pending",
-					});
-					await writeCompletedWorkflowMetadata(workflow);
-					const sessionFile = await createPhaseSession(workflow.repositoryRoot, {
-						phase: "cleanup",
-						identifier: workflow.identifier,
-					});
-					progress.complete("Prepared original checkout");
-					return { workflow, sessionFile };
+			const request = await ctx.ui.editor("Describe the implementation changes to make");
+			if (request === undefined || !request.trim()) {
+				ctx.ui.notify("Revision did not start because no change request was submitted.", "info");
+				return;
+			}
+			const files = workflowFiles(workflow.identifier);
+			let review: WorkflowReviewReport | undefined;
+			try {
+				review = await readWorkflowReview(files);
+			} catch (error) {
+				ctx.ui.notify(`Ignoring the unreadable saved review: ${errorMessage(error)}`, "warning");
+			}
+			const sessionFile = await createPhaseSession(workflow.worktreePath, {
+				phase: "revision",
+				identifier: workflow.identifier,
+			});
+			await ctx.switchSession(sessionFile, {
+				withSession: async (replacementCtx) => {
+					await replacementCtx.sendUserMessage(
+						revisionUserMessage({ request, ...(review ? { reviewPath: files.review } : {}) }),
+					);
 				},
-			);
+			});
+		},
+	});
+
+	pi.registerCommand("workflow-cleanup", {
+		description: "Remove the workflow worktree and return to the original checkout",
+		getArgumentCompletions: (prefix) => workflowIdentifierCompletions(prefix),
+		handler: async (args, ctx) => {
+			await ctx.waitForIdle();
+			const workflow = await resolveTargetWorkflow(ctx, args, "cleanup");
+			if (!workflow) return;
+			const status = await worktreeStatus(exec, workflow.worktreePath);
+			if (status === undefined) {
+				ctx.ui.notify("Could not inspect the workflow worktree.", "error");
+				return;
+			}
+			let force = false;
+			if (status !== "") {
+				const confirmed = await ctx.ui.confirm(
+					"Worktree has uncommitted changes",
+					`Removing ${workflow.worktreePath} will discard them. Continue?`,
+				);
+				if (!confirmed) return;
+				force = true;
+			}
+			const files = workflowFiles(workflow.identifier);
+			const [review, headCommit] = await Promise.all([
+				readWorkflowReview(files).catch(() => undefined),
+				gitValue(exec, workflow.worktreePath, ["rev-parse", "HEAD"]),
+			]);
+			if (!review || !headCommit || review.headCommit !== headCommit) {
+				const confirmed = await ctx.ui.confirm(
+					"No up-to-date review",
+					review
+						? "The branch changed after the latest review. Clean up without re-reviewing?"
+						: "This workflow has no saved review. Clean up anyway?",
+				);
+				if (!confirmed) return;
+			}
+			if (isPathInside(ctx.cwd, workflow.worktreePath)) {
+				const sessionFile = await createPhaseSession(workflow.repositoryRoot, {
+					phase: "cleanup",
+					identifier: workflow.identifier,
+					force,
+				});
+				await ctx.switchSession(sessionFile);
+				return;
+			}
+			await removeWorktree(ctx, workflow, force);
+		},
+	});
+
+	async function finishCleanup(ctx: ExtensionContext, workflowIdentifier: string, force: boolean): Promise<void> {
+		let workflow: CompletedWorkflowMetadata;
+		try {
+			workflow = await readCompletedWorkflowMetadata(workflowIdentifier);
 		} catch (error) {
-			ctx.ui.notify(`Could not prepare review cleanup: ${errorMessage(error)}`, "error");
+			ctx.ui.notify(errorMessage(error), "error");
 			return;
 		}
-		if ("failure" in preparation) {
-			ctx.ui.notify(preparation.failure.message, "error");
+		if (!(await pathExists(workflow.worktreePath))) {
+			appendPhase({ phase: "complete", identifier: workflowIdentifier });
+			updatePhaseStatus(ctx);
 			return;
 		}
-		await ctx.switchSession(preparation.sessionFile);
+		if (await removeWorktree(ctx, workflow, force)) {
+			appendPhase({ phase: "complete", identifier: workflowIdentifier });
+			updatePhaseStatus(ctx);
+		}
 	}
 
-	async function finishReviewCleanup(ctx: ExtensionContext, workflowIdentifier: string): Promise<void> {
-		const workflow = await readCompletedWorkflowMetadata(workflowIdentifier);
-		if (workflowStateName(workflow.state) !== "complete.cleanup_pending") return;
+	async function removeWorktree(
+		ctx: ExtensionContext,
+		workflow: CompletedWorkflowMetadata,
+		force: boolean,
+	): Promise<boolean> {
 		let removeFailure: string | undefined;
 		try {
-			removeFailure = await runWorkflowProgress(
-				ctx,
-				"Cleaning up review",
-				["Removing worktree"],
-				async (progress) => {
-					const result = await pi.exec("git", [
-						"-C",
-						workflow.repositoryRoot,
-						"worktree",
-						"remove",
-						workflow.worktreePath,
-					]);
-					if (result.code !== 0) {
-						progress.fail("Could not remove worktree");
-						return result.stderr || result.stdout || "Git did not explain why worktree removal failed.";
-					}
-					progress.complete("Removed worktree");
-					return undefined;
-				},
-			);
+			removeFailure = await runWorkflowProgress(ctx, "Cleaning up workflow", ["Removing worktree"], async (progress) => {
+				const result = await pi.exec("git", [
+					"-C",
+					workflow.repositoryRoot,
+					"worktree",
+					"remove",
+					...(force ? ["--force"] : []),
+					workflow.worktreePath,
+				]);
+				if (result.code !== 0) {
+					progress.fail("Could not remove worktree");
+					return result.stderr || result.stdout || "Git did not explain why worktree removal failed.";
+				}
+				progress.complete("Removed worktree");
+				return undefined;
+			});
 		} catch (error) {
 			ctx.ui.notify(`Could not remove the worktree: ${errorMessage(error)}`, "error");
-			return;
+			return false;
 		}
 		if (removeFailure) {
 			ctx.ui.notify(`Could not remove the worktree: ${removeFailure}`, "error");
-			return;
+			return false;
 		}
-
-		workflow.state = transitionWorkflowState(workflow.state, { phase: "complete", step: "complete" });
-		workflow.reviewCompletedAt = new Date().toISOString();
-		await writeCompletedWorkflowMetadata(workflow);
-		metadata = workflow;
-		appendPhase({ phase: "complete", identifier: workflowIdentifier });
-		updatePhaseStatus(ctx);
 		showWorkflowCompletion(pi, ctx, {
-			title: "Review complete",
+			title: "Workflow cleanup complete",
 			details: [
 				`Removed worktree: ${workflow.worktreePath}`,
-				"Retained the branch and saved plan.",
+				"Kept the branches, pull requests, and saved workflow state.",
 			],
 		});
+		return true;
 	}
 
-	async function validateWorktree(workflow: CompletedWorkflowMetadata): Promise<CompletionFailure | undefined> {
-		if (!(await pathExists(workflow.worktreePath))) return { message: `worktree is missing: ${workflow.worktreePath}` };
-		const [branch, commonDir, containsBaseCommit] = await Promise.all([
-			gitValue(workflow.worktreePath, ["branch", "--show-current"]),
-			gitValue(workflow.worktreePath, ["rev-parse", "--path-format=absolute", "--git-common-dir"]),
-			pi.exec("git", [
-				"-C",
-				workflow.worktreePath,
-				"merge-base",
-				"--is-ancestor",
-				workflow.baseCommit,
-				"HEAD",
-			]),
-		]);
-		if (!branch) return { message: "the workflow worktree has no checked-out branch" };
-		if (branch === workflow.baseBranch) return { message: `the workflow worktree is on base branch ${branch}` };
-		if (!commonDir || resolve(commonDir) !== resolve(workflow.gitCommonDir)) {
-			return { message: "the recorded worktree belongs to a different Git repository" };
+	async function updateReviewReadiness(ctx: ExtensionContext): Promise<void> {
+		if ((phase !== "implementation" && phase !== "revision") || !metadata || !activeFiles || readinessCheckInFlight) {
+			return;
 		}
-		if (containsBaseCommit.code !== 0) {
-			return { message: "the checked-out branch does not contain the recorded base commit" };
+		readinessCheckInFlight = true;
+		try {
+			const [status, headCommit] = await Promise.all([
+				worktreeStatus(exec, metadata.worktreePath),
+				gitValue(exec, metadata.worktreePath, ["rev-parse", "HEAD"]),
+			]);
+			let ready = status === "" && headCommit !== undefined;
+			if (ready && phase === "revision") {
+				const review = await readWorkflowReview(activeFiles).catch(() => undefined);
+				ready = !review || review.headCommit !== headCommit;
+			}
+			if (ready && phase === "implementation") {
+				ready = headCommit !== metadata.baseCommit;
+			}
+			showReviewReadyNotice(ctx, ready);
+		} catch {
+			// Readiness is a suggestion; never surface a failure for it.
+		} finally {
+			readinessCheckInFlight = false;
 		}
-		return undefined;
 	}
 
 	async function uniqueIdentifier(plan: string, ctx: ExtensionCommandContext): Promise<string> {
@@ -1492,20 +1087,6 @@ export default function implementationWorkflow(
 		return normalizePlanSlug(text);
 	}
 
-	async function installWorktreeExclude(commonDir: string): Promise<void> {
-		const excludePath = join(commonDir, "info", "exclude");
-		await mkdir(dirname(excludePath), { recursive: true });
-		let content = "";
-		try {
-			content = await readFile(excludePath, "utf8");
-		} catch (error) {
-			if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
-		}
-		if (content.split("\n").some((line) => line.trim() === "/.worktrees/")) return;
-		const prefix = content && !content.endsWith("\n") ? "\n" : "";
-		await appendFile(excludePath, `${prefix}/.worktrees/\n`, "utf8");
-	}
-
 	pi.registerCommand("workflow-dashboard", {
 		description: "Show the active implementation workflow dashboard link",
 		handler: async (_args, ctx) => {
@@ -1530,7 +1111,7 @@ export default function implementationWorkflow(
 				updatePlanTool: WORKFLOW_UPDATE_PLAN_TOOL,
 			});
 		}
-		if (phase === "implementation" && metadata?.state.phase === "implementing" && metadata.state.step === "active") {
+		if (phase === "implementation" && metadata) {
 			instructions = implementationSystemPrompt({
 				identifier,
 				metadataPath: activeFiles.metadata,
@@ -1542,14 +1123,14 @@ export default function implementationWorkflow(
 				baseBranch: metadata.baseBranch,
 			});
 		}
-		if (phase === "revision" && metadata?.state.phase === "revising" && metadata.state.step === "active") {
+		if (phase === "revision" && metadata) {
+			const review = await readWorkflowReview(activeFiles).catch(() => undefined);
 			instructions = revisionSystemPrompt({
 				identifier,
-				reviewRound: sessionReviewRound,
 				metadataPath: activeFiles.metadata,
 				planPath: activeFiles.plan,
 				clarificationsPath: activeFiles.clarifications,
-				reviewPath: activeFiles.review,
+				...(review ? { reviewPath: activeFiles.review } : {}),
 				questionTool: WORKFLOW_QUESTION_TOOL,
 				worktreePath: metadata.worktreePath,
 				workflowBranch: metadata.workflowBranch,
@@ -1583,12 +1164,7 @@ export default function implementationWorkflow(
 	});
 
 	pi.on("agent_settled", async (_event, ctx) => {
-		if (phase === "implementation" && metadata?.state.phase === "implementing" && metadata.state.step === "active") {
-			await completeImplementation(ctx, true);
-		}
-		if (phase === "revision" && metadata?.state.phase === "revising" && metadata.state.step === "active") {
-			await completeRevision(ctx, true);
-		}
+		await updateReviewReadiness(ctx);
 		revealPhaseReminder(ctx);
 	});
 
@@ -1601,7 +1177,7 @@ export default function implementationWorkflow(
 		phase = saved?.phase;
 		draftId = saved?.draftId;
 		identifier = saved?.identifier;
-		sessionReviewRound = saved?.reviewRound;
+		cleanupForce = saved?.force ?? false;
 		metadata = undefined;
 		draftMetadata = undefined;
 		activeFiles = undefined;
@@ -1609,14 +1185,17 @@ export default function implementationWorkflow(
 		phaseReminderVisible = phaseReminderWasShown(branch);
 
 		if (phase === "planning" && draftId) {
-			const files = draftFiles(draftId);
-			await ensureWorkflowFiles(files);
-			await prepareActivePlan(files);
-			pi.setSessionName(planDescription ? workflowSessionName("Planning", undefined, planDescription) : "");
+			try {
+				const files = draftFiles(draftId);
+				await ensureWorkflowFiles(files);
+				await prepareActivePlan(files);
+				pi.setSessionName(planDescription ? workflowSessionName("Planning", undefined, planDescription) : "");
+			} catch (error) {
+				ctx.ui.notify(errorMessage(error), "error");
+			}
 		}
 		if ((phase === "implementation" || phase === "revision" || phase === "review" || phase === "cleanup" || phase === "complete") && identifier) {
 			try {
-				metadata = await readCompletedWorkflowMetadata(identifier);
 				await prepareActivePlan(workflowFiles(identifier));
 			} catch (error) {
 				ctx.ui.notify(errorMessage(error), "error");
@@ -1625,21 +1204,23 @@ export default function implementationWorkflow(
 
 		applyPhaseTools();
 		updatePhaseStatus(ctx);
+		const description = () => metadata?.description ?? planDescription;
 		if (phase === "implementation" && identifier) {
-			pi.setSessionName(workflowSessionName("Implement", identifier, metadata?.description ?? planDescription));
+			pi.setSessionName(workflowSessionName("Implement", identifier, description()));
 		}
 		if (phase === "revision" && identifier) {
-			pi.setSessionName(workflowSessionName("Revise", identifier, metadata?.description ?? planDescription));
+			pi.setSessionName(workflowSessionName("Revise", identifier, description()));
 		}
 		if (phase === "review" && identifier) {
-			pi.setSessionName(workflowSessionName("Review", identifier, metadata?.description ?? planDescription));
+			pi.setSessionName(workflowSessionName("Review", identifier, description()));
 		}
 		await applyPhaseOverride(ctx);
 		if ((phase === "planning" || phase === "implementation" || phase === "revision" || phase === "review") && activeFiles) {
 			await presentDashboard(ctx);
 		}
+		if (phase === "implementation" || phase === "revision") await updateReviewReadiness(ctx);
 		if (phase === "review") revealPhaseReminder(ctx);
-		if (phase === "cleanup" && identifier) await finishReviewCleanup(ctx, identifier);
+		if (phase === "cleanup" && identifier) await finishCleanup(ctx, identifier, cleanupForce);
 	});
 
 	pi.on("session_shutdown", async (event) => {
@@ -1721,10 +1302,6 @@ function workflowSessionName(phase: string, identifier?: string, description?: s
 	const summary = description?.trim();
 	const details = slug && summary ? `${slug} · ${summary}` : slug ?? summary;
 	return details ? `${phase}: ${details}` : phase;
-}
-
-function arraysEqual(left: readonly string[], right: readonly string[]): boolean {
-	return left.length === right.length && left.every((value, index) => value === right[index]);
 }
 
 function errorMessage(error: unknown): string {
