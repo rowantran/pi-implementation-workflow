@@ -94,8 +94,8 @@ async function reviewAgentRunner(request) {
 
 async function sampleReview(headCommit, pullRequestUrl = "https://example.test/pull/21") {
 	return {
-		version: 1,
-		pullRequestUrl,
+		version: 2,
+		pullRequestUrls: [pullRequestUrl],
 		baseCommit: "abc123",
 		headCommit,
 		generatedAt: "2026-01-02T00:00:00.000Z",
@@ -748,8 +748,8 @@ try {
 			},
 		});
 		await storage.writeWorkflowReview(workflow.files, {
-			version: 1,
-			pullRequestUrl: "https://example.test/pull/21",
+			version: 2,
+			pullRequestUrls: ["https://example.test/pull/21"],
 			baseCommit: "abc123",
 			headCommit: "old123",
 			sourceFingerprint: "old-source",

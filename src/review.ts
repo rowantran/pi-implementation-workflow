@@ -32,11 +32,10 @@ import {
 	REVIEW_REPORT_VERSION,
 	type HolisticReview,
 	type IncrementalReviewScope,
-	type StoredPlannedChangeAnalysis,
+	type PlannedChangeAnalysis,
 	type ReviewSynthesis,
 	type TestingCriteriaAnalysis,
 	type WorkflowReviewReport,
-	workflowReviewPullRequestUrls,
 } from "./review-report.ts";
 
 const REVIEW_AGENT_EXTENSION = fileURLToPath(new URL("./review-agent-output.ts", import.meta.url));
@@ -266,7 +265,7 @@ export async function generateWorkflowReview(
 	let analysisChanged = false;
 	const jobs: Array<
 		() => Promise<
-			| { type: "change"; value: StoredPlannedChangeAnalysis }
+			| { type: "change"; value: PlannedChangeAnalysis }
 			| { type: "holistic"; value: HolisticReview }
 			| { type: "testing"; value: TestingCriteriaAnalysis }
 		>
@@ -524,7 +523,7 @@ function isReviewRoundManifest(value: unknown): value is ReviewRoundManifest {
 
 function previousReviewMatches(previous: WorkflowReviewReport, input: ReviewGenerationInput): boolean {
 	return (
-		arraysEqual(workflowReviewPullRequestUrls(previous), input.pullRequests.map(({ url }) => url)) &&
+		arraysEqual(previous.pullRequestUrls, input.pullRequests.map(({ url }) => url)) &&
 		previous.baseCommit === input.baseCommit &&
 		previous.headCommit !== input.headCommit &&
 		previous.testingCriteria.originalCriteria === input.testingCriteria &&

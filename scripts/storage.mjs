@@ -162,8 +162,8 @@ try {
 		assert.equal((await readWorkflowMetadata(completedFiles)).ask, ask);
 	}
 	const review = {
-		version: 1,
-		pullRequestUrl: "https://example.test/pull/1",
+		version: 2,
+		pullRequestUrls: ["https://example.test/pull/1"],
 		baseCommit: "abc123",
 		headCommit: "def456",
 		sourceFingerprint: "source789",
@@ -189,10 +189,9 @@ try {
 			review: {
 				id: "PC-01",
 				title: "Store the report",
-				summary: "Stored as JSON and Markdown.",
+				walkthrough: "Stored as JSON and Markdown.",
 				necessary: { status: "yes", explanation: "Required by the plan." },
 				sufficient: { status: "yes", explanation: "Both files are stored." },
-				contracts: [],
 				concerns: [],
 			},
 		}],

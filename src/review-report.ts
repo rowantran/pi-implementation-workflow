@@ -2,7 +2,7 @@ import { StringEnum } from "@earendil-works/pi-ai";
 import { Type, type Static } from "typebox";
 import { Check } from "typebox/value";
 
-export const REVIEW_REPORT_VERSION = 1;
+export const REVIEW_REPORT_VERSION = 2;
 
 export const VerdictSchema = Type.Object(
 	{
@@ -30,21 +30,6 @@ export const ConcernSchema = Type.Object(
 	{ additionalProperties: false },
 );
 
-/** Legacy structure retained so reports generated before the literate walkthrough still load. */
-export const ContractReviewSchema = Type.Object(
-	{
-		name: Type.String(),
-		kind: StringEnum(["type", "protocol", "interface", "class", "function", "other"] as const),
-		signature: Type.String(),
-		fields: Type.Array(Type.String()),
-		constructionSites: Type.Array(SourceEvidenceSchema),
-		consumers: Type.Array(SourceEvidenceSchema),
-		bridges: Type.Array(Type.String()),
-		assessment: Type.String(),
-	},
-	{ additionalProperties: false },
-);
-
 export const PlannedChangeAnalysisSchema = Type.Object(
 	{
 		id: Type.String(),
@@ -53,21 +38,6 @@ export const PlannedChangeAnalysisSchema = Type.Object(
 			description:
 				"Literate Markdown walkthrough of what was actually implemented, interleaving prose, code excerpts, and callouts",
 		}),
-		necessary: VerdictSchema,
-		sufficient: VerdictSchema,
-		concerns: Type.Array(ConcernSchema),
-	},
-	{ additionalProperties: false },
-);
-
-/** Stored planned-change review: current walkthrough shape or the legacy summary-and-contracts shape. */
-export const StoredPlannedChangeAnalysisSchema = Type.Object(
-	{
-		id: Type.String(),
-		title: Type.String(),
-		walkthrough: Type.Optional(Type.String()),
-		summary: Type.Optional(Type.String()),
-		contracts: Type.Optional(Type.Array(ContractReviewSchema)),
 		necessary: VerdictSchema,
 		sufficient: VerdictSchema,
 		concerns: Type.Array(ConcernSchema),
@@ -145,7 +115,7 @@ export const PlannedChangeReportSchema = Type.Object(
 		what: Type.String(),
 		why: Type.String(),
 		pseudocode: Type.Optional(Type.String()),
-		review: StoredPlannedChangeAnalysisSchema,
+		review: PlannedChangeAnalysisSchema,
 	},
 	{ additionalProperties: false },
 );
@@ -161,10 +131,7 @@ export const TestingCriteriaReportSchema = Type.Object(
 export const WorkflowReviewReportSchema = Type.Object(
 	{
 		version: Type.Literal(REVIEW_REPORT_VERSION),
-		/** New reports store the ordered pull request stack here. */
-		pullRequestUrls: Type.Optional(Type.Array(Type.String(), { minItems: 1 })),
-		/** Legacy reports stored only the single pull request URL. */
-		pullRequestUrl: Type.Optional(Type.String()),
+		pullRequestUrls: Type.Array(Type.String(), { minItems: 1 }),
 		baseCommit: Type.String(),
 		headCommit: Type.String(),
 		sourceFingerprint: Type.Optional(Type.String()),
@@ -181,9 +148,7 @@ export const WorkflowReviewReportSchema = Type.Object(
 export type Verdict = Static<typeof VerdictSchema>;
 export type SourceEvidence = Static<typeof SourceEvidenceSchema>;
 export type Concern = Static<typeof ConcernSchema>;
-export type ContractReview = Static<typeof ContractReviewSchema>;
 export type PlannedChangeAnalysis = Static<typeof PlannedChangeAnalysisSchema>;
-export type StoredPlannedChangeAnalysis = Static<typeof StoredPlannedChangeAnalysisSchema>;
 export type RelevantPlannedChange = Static<typeof RelevantPlannedChangeSchema>;
 export type IncrementalReviewScope = Static<typeof IncrementalReviewScopeSchema>;
 export type HolisticReview = Static<typeof HolisticReviewSchema>;
@@ -213,17 +178,11 @@ export function isReviewSynthesis(value: unknown): value is ReviewSynthesis {
 }
 
 export function isWorkflowReviewReport(value: unknown): value is WorkflowReviewReport {
-	if (!Check(WorkflowReviewReportSchema, value)) return false;
-	return workflowReviewPullRequestUrls(value).length > 0;
-}
-
-export function workflowReviewPullRequestUrls(report: WorkflowReviewReport): string[] {
-	if (report.pullRequestUrls?.length) return report.pullRequestUrls;
-	return report.pullRequestUrl ? [report.pullRequestUrl] : [];
+	return Check(WorkflowReviewReportSchema, value);
 }
 
 export function renderWorkflowReviewMarkdown(report: WorkflowReviewReport): string {
-	const pullRequestUrls = workflowReviewPullRequestUrls(report);
+	const pullRequestUrls = report.pullRequestUrls;
 	const pullRequestLines =
 		pullRequestUrls.length === 1
 			? [`Pull request: ${pullRequestUrls[0]}`]
@@ -260,21 +219,11 @@ export function renderWorkflowReviewMarkdown(report: WorkflowReviewReport): stri
 			"",
 		);
 		if (change.pseudocode) lines.push("**Pseudocode:**", "", indentCode(change.pseudocode), "");
-		lines.push("#### Actual implementation", "");
-		if (change.review.walkthrough) lines.push(change.review.walkthrough, "");
-		else if (change.review.summary) lines.push(change.review.summary, "");
-		const contracts = change.review.contracts ?? [];
-		for (const contract of contracts) {
-			lines.push(`##### ${contract.name} · ${contract.kind}`, "", indentCode(contract.signature), "");
-			if (contract.fields.length > 0) lines.push("Fields:", ...contract.fields.map((field) => `- ${field}`), "");
-			if (contract.constructionSites.length > 0) {
-				lines.push("Constructed by:", ...contract.constructionSites.map(renderEvidence), "");
-			}
-			if (contract.consumers.length > 0) lines.push("Consumed by:", ...contract.consumers.map(renderEvidence), "");
-			if (contract.bridges.length > 0) lines.push("Bridges:", ...contract.bridges.map((bridge) => `- ${bridge}`), "");
-			lines.push(contract.assessment, "");
-		}
 		lines.push(
+			"#### Actual implementation",
+			"",
+			change.review.walkthrough,
+			"",
 			"#### Verdict",
 			"",
 			`- Necessary: **${verdictLabel(change.review.necessary.status)}** — ${change.review.necessary.explanation}`,
