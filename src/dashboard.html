@@ -110,8 +110,10 @@ function escapeHtml(value) { return String(value).replace(/[&<>\"]/g, function(c
 function inlineMarkdown(value) { return escapeHtml(value).replace(/\x60([^\x60]+)\x60/g, "<code>$1</code>").replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>"); }
 function renderMarkdown(markdown) {
   const lines = String(markdown || "").replace(/\r\n/g, "\n").split("\n");
-  let html = "", list = "", code = false, codeLines = [], quoteLines = [];
-  function closeList() { if (list) { html += "</" + list + ">"; list = ""; } }
+  let html = "", list = "", listItemLines = [], paragraphLines = [], code = false, codeLines = [], quoteLines = [];
+  function closeParagraph() { if (paragraphLines.length) { html += "<p>" + inlineMarkdown(paragraphLines.join(" ")) + "</p>"; paragraphLines = []; } }
+  function closeListItem() { if (listItemLines.length) { html += "<li>" + inlineMarkdown(listItemLines.join(" ")) + "</li>"; listItemLines = []; } }
+  function closeList() { if (list) { closeListItem(); html += "</" + list + ">"; list = ""; } }
   function closeQuote() {
     if (!quoteLines.length) return;
     const paragraphs = []; let current = [];
@@ -121,20 +123,19 @@ function renderMarkdown(markdown) {
     quoteLines = [];
   }
   for (const raw of lines) {
-    if (/^\s*\x60{3}/.test(raw)) { closeList(); closeQuote(); if (code) { html += "<pre><code>" + escapeHtml(codeLines.join("\n")) + "</code></pre>"; codeLines = []; } code = !code; continue; }
+    if (/^\s*\x60{3}/.test(raw)) { closeParagraph(); closeList(); closeQuote(); if (code) { html += "<pre><code>" + escapeHtml(codeLines.join("\n")) + "</code></pre>"; codeLines = []; } code = !code; continue; }
     if (code) { codeLines.push(raw); continue; }
     const quote = /^>\s?(.*)$/.exec(raw);
-    if (quote) { closeList(); quoteLines.push(quote[1]); continue; }
+    if (quote) { closeParagraph(); closeList(); quoteLines.push(quote[1]); continue; }
     closeQuote();
     const heading = /^(#{1,4})\s+(.+)$/.exec(raw);
-    if (heading) { closeList(); const level = heading[1].length; html += "<h" + level + ">" + inlineMarkdown(heading[2]) + "</h" + level + ">"; continue; }
+    if (heading) { closeParagraph(); closeList(); const level = heading[1].length; html += "<h" + level + ">" + inlineMarkdown(heading[2]) + "</h" + level + ">"; continue; }
     const unordered = /^\s*[-*]\s+(.+)$/.exec(raw), ordered = /^\s*\d+[.)]\s+(.+)$/.exec(raw);
-    if (unordered || ordered) { const next = unordered ? "ul" : "ol"; if (list !== next) { closeList(); list = next; html += "<" + list + ">"; } html += "<li>" + inlineMarkdown((unordered || ordered)[1]) + "</li>"; continue; }
-    closeList();
-    if (!raw.trim()) continue;
-    html += "<p>" + inlineMarkdown(raw) + "</p>";
+    if (unordered || ordered) { const next = unordered ? "ul" : "ol"; closeParagraph(); if (list !== next) { closeList(); list = next; html += "<" + list + ">"; } else closeListItem(); listItemLines.push((unordered || ordered)[1]); continue; }
+    if (!raw.trim()) { closeParagraph(); closeList(); continue; }
+    if (list) listItemLines.push(raw.trim()); else paragraphLines.push(raw.trim());
   }
-  closeList(); closeQuote(); if (code) html += "<pre><code>" + escapeHtml(codeLines.join("\n")) + "</code></pre>";
+  closeParagraph(); closeList(); closeQuote(); if (code) html += "<pre><code>" + escapeHtml(codeLines.join("\n")) + "</code></pre>";
   return html || '<div class="empty">The plan is empty.</div>';
 }
 function headingText(value) { return String(value || "").replace(/\x60([^\x60]+)\x60/g, "$1").replace(/\*\*([^*]+)\*\*/g, "$1").trim(); }

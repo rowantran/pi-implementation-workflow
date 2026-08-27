@@ -191,9 +191,24 @@ const helperSource = dashboardScript.slice(
   dashboardScript.indexOf("function escapeHtml"),
   dashboardScript.indexOf("function initialize"),
 );
-const { diffBlockStartIndexes, hashReaderDestination, initialViewForHash, lineDiff, parsePlanStructure, renderRichDiff } = new Function(
-  `${helperSource}; return { diffBlockStartIndexes, hashReaderDestination, initialViewForHash, lineDiff, parsePlanStructure, renderRichDiff };`,
+const { diffBlockStartIndexes, hashReaderDestination, initialViewForHash, lineDiff, parsePlanStructure, renderMarkdown, renderRichDiff } = new Function(
+  `${helperSource}; return { diffBlockStartIndexes, hashReaderDestination, initialViewForHash, lineDiff, parsePlanStructure, renderMarkdown, renderRichDiff };`,
 )();
+const softWrappedMarkdown = `A paragraph with **strong text** wraps
+onto a second source line.
+
+A second paragraph.`;
+assert.equal(
+  renderMarkdown(softWrappedMarkdown),
+  "<p>A paragraph with <strong>strong text</strong> wraps onto a second source line.</p><p>A second paragraph.</p>",
+);
+const softWrappedList = `- A list item wraps
+  onto a second source line.
+- A second item.`;
+assert.equal(
+  renderMarkdown(softWrappedList),
+  "<ul><li>A list item wraps onto a second source line.</li><li>A second item.</li></ul>",
+);
 const { renderReviewDestination } = new Function(
   "dashboard",
   `${helperSource}; return { renderReviewDestination };`,
