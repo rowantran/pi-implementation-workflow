@@ -1,12 +1,14 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { Text } from "@earendil-works/pi-tui";
+import { getCapabilities, hyperlink, Text } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 import { updatePlanToolPromptGuidelines, updatePlanToolPromptSnippet } from "./prompts.ts";
 
 export const WORKFLOW_UPDATE_PLAN_TOOL = "workflow_update_plan";
 
-interface UpdatePlanResult {
+export interface UpdatePlanResult {
 	version: number;
+	dashboardUrl?: string;
+	dashboardError?: string;
 }
 
 const Parameters = Type.Object({
@@ -33,8 +35,13 @@ export function registerWorkflowPlanTool(
 
 		async execute(_toolCallId, params) {
 			const result = await onUpdate(params.description);
+			const dashboard = result.dashboardUrl
+				? `\nWorkflow dashboard: ${result.dashboardUrl}`
+				: result.dashboardError
+					? `\nWorkflow dashboard unavailable: ${result.dashboardError}`
+					: "";
 			return {
-				content: [{ type: "text", text: `Saved implementation plan version ${result.version}.` }],
+				content: [{ type: "text", text: `Saved implementation plan version ${result.version}.${dashboard}` }],
 				details: result,
 			};
 		},
@@ -46,7 +53,12 @@ export function registerWorkflowPlanTool(
 		renderResult(result, _options, theme) {
 			const details = result.details as UpdatePlanResult | undefined;
 			if (!details) return new Text(theme.fg("error", "Plan update failed"), 0, 0);
-			return new Text(theme.fg("success", `Saved version ${details.version}`), 0, 0);
+			const dashboard = details.dashboardUrl
+				? `\nWorkflow dashboard: ${getCapabilities().hyperlinks ? hyperlink(details.dashboardUrl, details.dashboardUrl) : details.dashboardUrl}`
+				: details.dashboardError
+					? `\nWorkflow dashboard unavailable: ${details.dashboardError}`
+					: "";
+			return new Text(theme.fg("success", `Saved version ${details.version}${dashboard}`), 0, 0);
 		},
 	});
 }

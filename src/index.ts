@@ -40,7 +40,11 @@ import {
 import { parsePlannedChanges, parseTestingCriteria } from "./planned-changes.ts";
 import { PLAN_TITLE, planningCompletionError } from "./planning.ts";
 import { formatPullRequestStack, toWorkflowPullRequests } from "./pull-requests.ts";
-import { registerWorkflowPlanTool, WORKFLOW_UPDATE_PLAN_TOOL } from "./plan-tool.ts";
+import {
+	registerWorkflowPlanTool,
+	WORKFLOW_UPDATE_PLAN_TOOL,
+	type UpdatePlanResult,
+} from "./plan-tool.ts";
 import {
 	implementationSystemPrompt,
 	implementationUserMessage,
@@ -165,7 +169,15 @@ export default function implementationWorkflow(
 			planDescription = description;
 			pi.setSessionName(workflowSessionName("Planning", undefined, description));
 			await writeWorkflowDashboard(files);
-			return { version: version.number };
+			let dashboardUrl: string | undefined;
+			let dashboardError: string | undefined;
+			try {
+				dashboardUrl = await ensureDashboardLink();
+			} catch (error) {
+				dashboardError = errorMessage(error);
+			}
+			const result: UpdatePlanResult = { version: version.number, dashboardUrl, dashboardError };
+			return result;
 		});
 	});
 
@@ -318,6 +330,19 @@ export default function implementationWorkflow(
 		return undefined;
 	}
 
+	async function ensureDashboardLink(): Promise<string> {
+		const reference = activeDashboardReference();
+		if (!reference) throw new Error("No workflow dashboard is available in this session.");
+		const config = await dashboardConfig();
+		const result = await ensureSharedDashboardServer(config, workflowsRoot());
+		if (result.status === "error") {
+			throw new Error(
+				`Could not serve the workflow dashboard on ${config.listenHost}:${config.listenPort}. ${result.message}\nConfiguration: ${config.configPath}`,
+			);
+		}
+		return dashboardUrl(reference, config);
+	}
+
 	async function presentDashboard(ctx: ExtensionContext, force = false): Promise<void> {
 		const reference = activeDashboardReference();
 		if (!activeFiles || !reference) {
@@ -328,23 +353,14 @@ export default function implementationWorkflow(
 		await writeWorkflowDashboard(activeFiles, currentHead);
 		if (dashboardAnnounced && !force) return;
 
-		let config: DashboardServerConfig;
+		let url: string;
 		try {
-			config = await dashboardConfig();
+			url = await ensureDashboardLink();
 		} catch (error) {
 			ctx.ui.notify(`Could not configure the workflow dashboard: ${errorMessage(error)}`, "error");
 			return;
 		}
-		const result = await ensureSharedDashboardServer(config, workflowsRoot());
-		if (result.status === "error") {
-			ctx.ui.notify(
-				`Could not serve the workflow dashboard on ${config.listenHost}:${config.listenPort}. ${result.message}\nConfiguration: ${config.configPath}`,
-				"error",
-			);
-			return;
-		}
 
-		const url = dashboardUrl(reference, config);
 		const displayLink = ctx.mode === "tui" && getCapabilities().hyperlinks ? hyperlink(url, url) : url;
 		ctx.ui.notify(`Workflow dashboard: ${displayLink}`, "info");
 		dashboardAnnounced = true;
@@ -484,7 +500,6 @@ export default function implementationWorkflow(
 			updatePhaseStatus(ctx);
 			pi.setSessionName("");
 			await prepareActivePlan(files);
-			await presentDashboard(ctx);
 			pi.sendUserMessage(startPlanningUserMessage(ask));
 		},
 	});
@@ -1215,7 +1230,7 @@ export default function implementationWorkflow(
 			pi.setSessionName(workflowSessionName("Review", identifier, description()));
 		}
 		await applyPhaseOverride(ctx);
-		if ((phase === "planning" || phase === "implementation" || phase === "revision" || phase === "review") && activeFiles) {
+		if ((phase === "implementation" || phase === "revision" || phase === "review") && activeFiles) {
 			await presentDashboard(ctx);
 		}
 		if (phase === "implementation" || phase === "revision") await updateReviewReadiness(ctx);

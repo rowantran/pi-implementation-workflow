@@ -46,7 +46,7 @@ The command opens a required multiline editor. Submit a non-empty ask to start p
 
 If planning is already active, continue through normal conversation instead of running `/workflow-plan` again. A session that already belongs to a frozen workflow refuses `/workflow-plan`; start a fresh session instead.
 
-The extension saves the submitted ask verbatim as immutable workflow metadata, starts `plan.md` and `working-plan.md` with only the implementation-plan title, sends the ask as the planning kickoff message, and announces an HTTP dashboard link in the notification panel. It never opens the browser automatically. The dashboard is a self-contained file styled with the Isara design system and served by the extension. It has:
+The extension saves the submitted ask verbatim as immutable workflow metadata, starts `plan.md` and `working-plan.md` with only the implementation-plan title, and sends the ask as the planning kickoff message. After each `workflow_update_plan` call, its output includes the HTTP dashboard link. It never opens the browser automatically. The dashboard is a self-contained file styled with the Isara design system and served by the extension. It has:
 
 - a concise plain-English plan description as the main document title, beside its prominent current version number;
 - a **Plan** view with a guided, change-by-change reader, a full-document fallback, the immutable original ask, and structured user clarifications;
@@ -250,7 +250,7 @@ One Pi process owns the temporary listener on the configured port. Other Pi proc
 
 ## Commands
 
-- `/workflow-plan [ask]` — open the required multiline ask editor, optionally prefilled with the argument, then start planning and show the dashboard link.
+- `/workflow-plan [ask]` — open the required multiline ask editor, optionally prefilled with the argument, then start planning. The dashboard link appears after `workflow_update_plan` saves the first plan version.
 - `/workflow-implement [identifier]` — from a planning session, freeze the plan, create the worktree, and switch to an implementation session; otherwise start a fresh implementation session for an existing workflow.
 - `/workflow-review [identifier]` — validate the live delivery, generate or reuse the deterministic review, and switch to a read-only review session.
 - `/workflow-revise [identifier]` — open the required change-request editor and start a separate revision session in the workflow worktree.

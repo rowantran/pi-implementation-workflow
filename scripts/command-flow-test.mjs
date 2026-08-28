@@ -276,6 +276,8 @@ await scenario({
 			description: "Commit the editable working plan",
 		});
 		assert.equal(result.details.version, 2);
+		assert.match(result.details.dashboardUrl, /^http:\/\/127\.0\.0\.1:\d+\/implementation-workflow\/drafts\/command-session$/);
+		assert.match(result.content[0].text, /Workflow dashboard: http:\/\/127\.0\.0\.1:\d+\/implementation-workflow\/drafts\/command-session/);
 		assert.equal(await readFile(join(draftRoot, "plan.md"), "utf8"), updatedPlan);
 		assert.equal(await readFile(join(draftRoot, "working-plan.md"), "utf8"), updatedPlan);
 		assert.equal(await readFile(join(draftRoot, "versions", "0002.md"), "utf8"), updatedPlan);

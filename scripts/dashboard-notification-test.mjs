@@ -109,16 +109,15 @@ try {
 	const rpcContext = context(draftBranch);
 	await first.commands.get("workflow-plan").handler("", rpcContext);
 	const expectedUrl = `http://127.0.0.1:${port}/implementation-workflow/drafts/notification-session`;
-	assert.equal(dashboardNotifications(first.notifications).length, 1);
-	assert.equal(dashboardNotifications(first.notifications)[0].message, `Workflow dashboard: ${expectedUrl}`);
+	assert.equal(dashboardNotifications(first.notifications).length, 0, "planning starts without a dashboard notification");
 	assert.equal(first.commands.get("workflow-dashboard").description, "Show the active implementation workflow dashboard link");
 	assert.match(first.shortcuts.get("ctrl+alt+d").description, /^Show /);
 
 	await emit(first, "session_start", { reason: "startup" }, rpcContext);
-	assert.equal(dashboardNotifications(first.notifications).length, 1, "automatic announcements deduplicate per runtime");
+	assert.equal(dashboardNotifications(first.notifications).length, 0, "planning resumes without a dashboard notification");
 	await first.commands.get("workflow-dashboard").handler("", rpcContext);
 	await first.shortcuts.get("ctrl+alt+d").handler(rpcContext);
-	assert.equal(dashboardNotifications(first.notifications).length, 3, "explicit command and shortcut always announce");
+	assert.equal(dashboardNotifications(first.notifications).length, 2, "explicit command and shortcut always announce");
 	assert.ok(first.executions.every(({ command }) => command === "git"));
 	assert.equal((await fetch(expectedUrl)).status, 200);
 
@@ -130,9 +129,7 @@ try {
 	activeNotifications = second.notifications;
 	const tuiContext = context(draftBranch, "tui");
 	await emit(second, "session_start", { reason: "resume" }, tuiContext);
-	const linkedMessage = dashboardNotifications(second.notifications)[0].message;
-	assert.ok(linkedMessage.includes(expectedUrl), "the OSC 8 label retains the literal URL");
-	assert.ok(linkedMessage.includes("\u001b]8;;"), "supported terminals receive an OSC 8 link");
+	assert.equal(dashboardNotifications(second.notifications).length, 0, "planning resumes without an automatic notification");
 	assert.equal((await fetch(expectedUrl)).status, 200);
 
 	await emit(second, "session_shutdown", { reason: "fork" }, tuiContext);
@@ -141,6 +138,9 @@ try {
 	await assert.rejects(fetch(expectedUrl));
 
 	await second.commands.get("workflow-dashboard").handler("", tuiContext);
+	const linkedMessage = dashboardNotifications(second.notifications)[0].message;
+	assert.ok(linkedMessage.includes(expectedUrl), "the OSC 8 label retains the literal URL");
+	assert.ok(linkedMessage.includes("\u001b]8;;"), "supported terminals receive an OSC 8 link");
 	assert.equal((await fetch(expectedUrl)).status, 200, "the next presentation restores the stable URL");
 	await emit(second, "session_shutdown", { reason: "reload" }, tuiContext);
 	await assert.rejects(fetch(expectedUrl));
@@ -153,8 +153,12 @@ try {
 	const invalidConfigHarness = createHarness();
 	activeNotifications = invalidConfigHarness.notifications;
 	await invalidConfigHarness.commands.get("workflow-plan").handler("", context([]));
-	assert.match(invalidConfigHarness.notifications.at(-1).message, /Could not configure.*implementation-workflow.*config\.toml/i);
-	assert.equal(invalidConfigHarness.notifications.at(-1).level, "error");
+	await invalidConfigHarness.commands.get("workflow-dashboard").handler("", context([]));
+	const dashboardConfigError = invalidConfigHarness.notifications.find(({ message }) =>
+		/Could not configure.*implementation-workflow.*config\.toml/i.test(message),
+	);
+	assert.ok(dashboardConfigError);
+	assert.equal(dashboardConfigError.level, "error");
 	await emit(invalidConfigHarness, "session_shutdown", { reason: "quit" }, context([]));
 
 	const source = await readFile(new URL("../src/index.ts", import.meta.url), "utf8");
