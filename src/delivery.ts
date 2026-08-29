@@ -3,6 +3,7 @@ import {
 	buildPullRequestStack,
 	parseOpenPullRequests,
 	type OpenPullRequest,
+	type WorkflowPullRequest,
 } from "./pull-requests.ts";
 import type { CompletedWorkflowMetadata } from "./storage.ts";
 
@@ -58,6 +59,39 @@ export async function checkDelivery(
 		previousCommit = pullRequest.headRefOid;
 	}
 	return { ok: true, headCommit, pullRequests };
+}
+
+/** Finds the open pull request for the checked-out branch, which is the workflow stack tip. */
+export async function findCurrentPullRequest(
+	exec: ExecFn,
+	workflow: CompletedWorkflowMetadata,
+): Promise<WorkflowPullRequest | undefined> {
+	const branch = await gitValue(exec, workflow.worktreePath, ["branch", "--show-current"]);
+	if (!branch) return undefined;
+	const result = await exec(
+		"gh",
+		[
+			"pr",
+			"list",
+			"--state",
+			"open",
+			"--head",
+			branch,
+			"--limit",
+			"2",
+			"--json",
+			"number,url,baseRefName,headRefName",
+		],
+		{ cwd: workflow.worktreePath, timeout: 15_000 },
+	);
+	if (result.code !== 0) return undefined;
+	try {
+		const pullRequests = parseOpenPullRequests(JSON.parse(result.stdout));
+		const matches = pullRequests?.filter((pullRequest) => pullRequest.headRefName === branch) ?? [];
+		return matches.length === 1 ? matches[0] : undefined;
+	} catch {
+		return undefined;
+	}
 }
 
 async function findPullRequestStack(exec: ExecFn, workflow: CompletedWorkflowMetadata) {
