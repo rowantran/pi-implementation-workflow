@@ -106,6 +106,7 @@ function createHarness(repositoryRoot, worktreePath, workflowBranch) {
 	const notifications = [];
 	const confirmations = [];
 	const selections = [];
+	const statuses = new Map();
 	const widgets = new Map();
 	const switches = [];
 	const userMessages = [];
@@ -248,7 +249,10 @@ function createHarness(repositoryRoot, worktreePath, workflowBranch) {
 					selections.push({ title, options });
 					return selectChoice(options);
 				},
-				setStatus() {},
+				setStatus: (id, content) => {
+					if (content === undefined) statuses.delete(id);
+					else statuses.set(id, content);
+				},
 				setWidget: (id, content, options) => {
 					if (content === undefined) widgets.delete(id);
 					else widgets.set(id, { content, options });
@@ -278,6 +282,7 @@ function createHarness(repositoryRoot, worktreePath, workflowBranch) {
 		notifications,
 		confirmations,
 		selections,
+		statuses,
 		widgets,
 		switches,
 		userMessages,
@@ -285,6 +290,12 @@ function createHarness(repositoryRoot, worktreePath, workflowBranch) {
 		getActiveTools: () => [...activeTools],
 		setPullRequest(value) {
 			pullRequests = [{ headRefOid: headCommit, ...value }];
+		},
+		setPullRequests(values) {
+			pullRequests = values.map((value) => ({ headRefOid: headCommit, ...value }));
+		},
+		setCurrentBranch(value) {
+			currentBranch = value;
 		},
 		setHeadCommit(value) {
 			headCommit = value;
@@ -429,6 +440,36 @@ try {
 		harness.setHeadCommit("base000");
 		await harness.emit("agent_settled", ctx);
 		assert.ok(!harness.widgets.has(REVIEW_READY_WIDGET), "no new commits hides the suggestion");
+	}
+
+	// The footer links only the pull request at the checked-out stack tip.
+	{
+		const workflow = await writeCompletedWorkflow("stack-footer");
+		const harness = createHarness(workflow.repositoryRoot, workflow.worktreePath, workflow.workflowBranch);
+		const stackTipBranch = "feature/stack-footer-tip";
+		harness.setCurrentBranch(stackTipBranch);
+		harness.setPullRequests([
+			{
+				number: 41,
+				url: "https://example.test/pull/41",
+				baseRefName: "main",
+				headRefName: workflow.workflowBranch,
+			},
+			{
+				number: 42,
+				url: "https://example.test/pull/42",
+				baseRefName: workflow.workflowBranch,
+				headRefName: stackTipBranch,
+			},
+		]);
+		const ctx = harness.context(workflow.worktreePath, [
+			phaseEntry("implementation", { identifier: workflow.metadata.identifier }),
+		]);
+		await harness.emit("session_start", ctx);
+		assert.equal(
+			harness.statuses.get("implementation-workflow-phase"),
+			"PR #42 · /workflow-review to review",
+		);
 	}
 
 	// /workflow-review checks the live delivery, generates, reuses, re-reviews incrementally, and falls back.

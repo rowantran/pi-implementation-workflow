@@ -4,7 +4,8 @@ import {
 	type ExtensionContext,
 	type Theme,
 } from "@earendil-works/pi-coding-agent";
-import { Box, type Component, Container, Text, truncateToWidth, type TUI } from "@earendil-works/pi-tui";
+import { Box, type Component, Container, hyperlink, Text, truncateToWidth, type TUI } from "@earendil-works/pi-tui";
+import type { WorkflowPullRequest } from "./pull-requests.ts";
 
 const COMPLETION_ENTRY = "implementation-workflow-completion";
 export const PHASE_REMINDER_ENTRY = "implementation-workflow-phase-reminder";
@@ -183,15 +184,31 @@ const NOOP_PROGRESS: WorkflowProgress = {
 	updateSubstep: () => {},
 };
 
-export function workflowPhaseStatusText(phase: WorkflowStatusPhase | undefined): string | undefined {
-	if (phase === "planning") return "/workflow-implement when the plan is ready";
-	if (phase === "implementation" || phase === "revision") return "/workflow-review when ready";
-	if (phase === "review") return "/workflow-revise to request changes · /workflow-cleanup to finish";
-	return undefined;
+export function workflowPhaseStatusText(
+	phase: WorkflowStatusPhase | undefined,
+	pullRequest?: Pick<WorkflowPullRequest, "number" | "url">,
+	hyperlinks = false,
+): string | undefined {
+	let guidance: string | undefined;
+	if (phase === "planning") guidance = "/workflow-implement when the plan is ready";
+	if (phase === "implementation" || phase === "revision") {
+		guidance = pullRequest ? "/workflow-review to review" : "/workflow-review when ready";
+	}
+	if (phase === "review") guidance = "/workflow-revise to request changes · /workflow-cleanup to finish";
+	if (!guidance) return undefined;
+	if (!pullRequest) return guidance;
+	const label = `PR #${pullRequest.number}`;
+	const pullRequestLink = hyperlinks ? hyperlink(label, pullRequest.url) : label;
+	return `${pullRequestLink} · ${guidance}`;
 }
 
-export function showWorkflowPhaseStatus(ctx: ExtensionContext, phase: WorkflowStatusPhase | undefined): void {
-	const status = workflowPhaseStatusText(phase);
+export function showWorkflowPhaseStatus(
+	ctx: ExtensionContext,
+	phase: WorkflowStatusPhase | undefined,
+	pullRequest?: Pick<WorkflowPullRequest, "number" | "url">,
+	hyperlinks = false,
+): void {
+	const status = workflowPhaseStatusText(phase, pullRequest, hyperlinks);
 	ctx.ui.setStatus(PHASE_STATUS_ID, status ? ctx.ui.theme.fg("dim", status) : undefined);
 }
 

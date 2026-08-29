@@ -26,7 +26,7 @@ import {
 	type DashboardServerConfig,
 } from "./dashboard-server.ts";
 import { writeWorkflowDashboard, writeWorkflowDashboardRedirect } from "./dashboard.ts";
-import { checkDelivery } from "./delivery.ts";
+import { checkDelivery, findCurrentPullRequest } from "./delivery.ts";
 import {
 	gitValue,
 	installWorktreeExclude,
@@ -39,7 +39,11 @@ import {
 } from "./git.ts";
 import { parsePlannedChanges, parseTestingCriteria } from "./planned-changes.ts";
 import { PLAN_TITLE, planningCompletionError } from "./planning.ts";
-import { formatPullRequestStack, toWorkflowPullRequests } from "./pull-requests.ts";
+import {
+	formatPullRequestStack,
+	toWorkflowPullRequests,
+	type WorkflowPullRequest,
+} from "./pull-requests.ts";
 import {
 	registerWorkflowPlanTool,
 	WORKFLOW_UPDATE_PLAN_TOOL,
@@ -153,6 +157,8 @@ export default function implementationWorkflow(
 	let dashboardConfigPromise: Promise<DashboardServerConfig> | undefined;
 	let readinessCheckInFlight = false;
 	let phaseReminderVisible = false;
+	let currentPullRequest: WorkflowPullRequest | undefined;
+	let pullRequestRefreshGeneration = 0;
 
 	registerWorkflowPlanTool(pi, async (rawDescription) => {
 		if (phase !== "planning" || !activeFiles) {
@@ -223,7 +229,41 @@ export default function implementationWorkflow(
 			phase === "planning" || phase === "implementation" || phase === "revision" || phase === "review"
 				? phase
 				: undefined;
-		showWorkflowPhaseStatus(ctx, phaseReminderVisible ? activePhase : undefined);
+		showWorkflowPhaseStatus(
+			ctx,
+			phaseReminderVisible || currentPullRequest ? activePhase : undefined,
+			currentPullRequest,
+			ctx.mode === "tui" && getCapabilities().hyperlinks,
+		);
+	}
+
+	async function refreshCurrentPullRequest(ctx: ExtensionContext): Promise<void> {
+		const generation = ++pullRequestRefreshGeneration;
+		const targetPhase = phase;
+		const targetMetadata = metadata;
+		if (
+			(targetPhase !== "implementation" && targetPhase !== "revision" && targetPhase !== "review") ||
+			!targetMetadata
+		) {
+			currentPullRequest = undefined;
+			updatePhaseStatus(ctx);
+			return;
+		}
+		let pullRequest: WorkflowPullRequest | undefined;
+		try {
+			pullRequest = await findCurrentPullRequest(exec, targetMetadata);
+		} catch {
+			// Pull request status is optional footer guidance; never surface lookup failures.
+		}
+		if (
+			generation !== pullRequestRefreshGeneration ||
+			phase !== targetPhase ||
+			metadata !== targetMetadata
+		) {
+			return;
+		}
+		currentPullRequest = pullRequest;
+		updatePhaseStatus(ctx);
 	}
 
 	function revealPhaseReminder(ctx: ExtensionContext): void {
@@ -401,9 +441,11 @@ export default function implementationWorkflow(
 		if (isDraftWorkflowMetadata(workflowMetadata)) {
 			draftMetadata = workflowMetadata;
 			metadata = undefined;
+			currentPullRequest = undefined;
 		} else {
 			metadata = workflowMetadata;
 			draftMetadata = undefined;
+			currentPullRequest = workflowMetadata.pullRequests?.at(-1);
 		}
 		await writeWorkflowDashboard(files);
 	}
@@ -1179,7 +1221,7 @@ export default function implementationWorkflow(
 	});
 
 	pi.on("agent_settled", async (_event, ctx) => {
-		await updateReviewReadiness(ctx);
+		await Promise.all([updateReviewReadiness(ctx), refreshCurrentPullRequest(ctx)]);
 		revealPhaseReminder(ctx);
 	});
 
@@ -1198,6 +1240,7 @@ export default function implementationWorkflow(
 		activeFiles = undefined;
 		planDescription = "";
 		phaseReminderVisible = phaseReminderWasShown(branch);
+		currentPullRequest = undefined;
 
 		if (phase === "planning" && draftId) {
 			try {
@@ -1230,6 +1273,7 @@ export default function implementationWorkflow(
 			pi.setSessionName(workflowSessionName("Review", identifier, description()));
 		}
 		await applyPhaseOverride(ctx);
+		await refreshCurrentPullRequest(ctx);
 		if ((phase === "implementation" || phase === "revision" || phase === "review") && activeFiles) {
 			await presentDashboard(ctx);
 		}

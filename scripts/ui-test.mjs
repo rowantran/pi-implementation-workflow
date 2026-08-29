@@ -15,9 +15,22 @@ const {
 assert.equal(workflowPhaseStatusText("planning"), "/workflow-implement when the plan is ready");
 assert.equal(workflowPhaseStatusText("implementation"), "/workflow-review when ready");
 assert.equal(workflowPhaseStatusText("revision"), "/workflow-review when ready");
+const pullRequest = { number: 14283, url: "https://github.com/example/project/pull/14283" };
+assert.equal(
+	workflowPhaseStatusText("implementation", pullRequest),
+	"PR #14283 · /workflow-review to review",
+);
+assert.equal(
+	workflowPhaseStatusText("implementation", pullRequest, true),
+	"\x1b]8;;https://github.com/example/project/pull/14283\x1b\\PR #14283\x1b]8;;\x1b\\ · /workflow-review to review",
+);
 assert.equal(
 	workflowPhaseStatusText("review"),
 	"/workflow-revise to request changes · /workflow-cleanup to finish",
+);
+assert.equal(
+	workflowPhaseStatusText("review", pullRequest),
+	"PR #14283 · /workflow-revise to request changes · /workflow-cleanup to finish",
 );
 assert.equal(workflowPhaseStatusText("cleanup"), undefined);
 assert.equal(workflowPhaseStatusText("complete"), undefined);
