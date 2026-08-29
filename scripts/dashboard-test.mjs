@@ -217,6 +217,8 @@ const overallReview = renderReviewDestination({ kind: "overall" });
 assert.ok(overallReview.includes("Overall result"));
 assert.ok(overallReview.includes("&lt;script&gt;alert(&quot;review&quot;)&lt;/script&gt;"));
 const plannedChangeReview = renderReviewDestination({ kind: "change", number: 1, change: data.review.plannedChanges[0] });
+assert.ok(plannedChangeReview.includes('<details class="review-collapsible"><summary>Planned design</summary>'));
+assert.ok(!plannedChangeReview.includes('<details class="review-collapsible" open>'));
 assert.ok(plannedChangeReview.includes('class="review-planned-design"'));
 assert.ok(plannedChangeReview.includes("PC-01:"));
 assert.ok(plannedChangeReview.includes("<h4>Pseudocode</h4>"));
@@ -227,6 +229,8 @@ assert.ok(!reviewWithoutPseudocode.includes("<h4>Pseudocode</h4>"));
 assert.ok(!reviewWithoutPseudocode.includes("undefined"));
 const testingReview = renderReviewDestination({ kind: "testing" });
 assert.ok(testingReview.includes("Testing criteria"));
+assert.ok(testingReview.includes('<details class="review-collapsible"><summary>Planned tests</summary>'));
+assert.ok(!testingReview.includes('<details class="review-collapsible" open>'));
 assert.ok(testingReview.includes("Run the dashboard test and inspect the report."));
 assert.ok(testingReview.includes("scripts/dashboard-test.mjs:1"));
 
