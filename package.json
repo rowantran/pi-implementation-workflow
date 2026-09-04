@@ -81,6 +81,8 @@
     "typescript": "5.9.3"
   },
   "dependencies": {
+    "marked": "^18.0.5",
+    "mermaid": "^11.12.3",
     "mustache": "^4.2.0",
     "smol-toml": "^1.8.0"
   }

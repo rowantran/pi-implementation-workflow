@@ -188,6 +188,16 @@ try {
 	assert.equal(draftResponse.headers["x-frame-options"], "DENY");
 	assert.equal(draftResponse.headers["referrer-policy"], "no-referrer");
 
+	const markedAsset = await rawRequest(port, "/implementation-workflow/assets/marked.umd.js");
+	assert.equal(markedAsset.status, 200);
+	assert.equal(markedAsset.headers["content-type"], "text/javascript; charset=utf-8");
+	assert.ok(markedAsset.body.includes("marked"));
+	const mermaidAsset = await rawRequest(port, "/workflow-dashboards/implementation-workflow/assets/mermaid.min.js", "HEAD");
+	assert.equal(mermaidAsset.status, 200);
+	assert.equal(mermaidAsset.body, "");
+	assert.ok(Number(mermaidAsset.headers["content-length"]) > 100_000);
+	assert.equal((await rawRequest(port, "/implementation-workflow/assets/missing.js")).status, 404);
+
 	const headResponse = await rawRequest(port, "/implementation-workflow/workflows/workflow-one", "HEAD");
 	assert.equal(headResponse.status, 200);
 	assert.equal(headResponse.body, "");
