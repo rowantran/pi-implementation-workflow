@@ -3,6 +3,7 @@ import { existsSync } from "node:fs";
 import { access, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { createServer as createNetServer } from "node:net";
 import { createJiti } from "jiti/static";
 
 const jiti = createJiti(import.meta.url, { moduleCache: false });
@@ -18,27 +19,37 @@ async function exists(path) {
 	}
 }
 
+async function unusedPort() {
+	const server = createNetServer();
+	await new Promise((resolve, reject) => {
+		server.once("error", reject);
+		server.listen(0, "127.0.0.1", resolve);
+	});
+	const address = server.address();
+	assert.ok(address && typeof address === "object");
+	await new Promise((resolve) => server.close(resolve));
+	return address.port;
+}
+
 async function scenario({ args = "", editorResult, planningModel, planningThinkingLevel, afterFirstStart } = {}) {
 	const root = await mkdtemp(join(tmpdir(), "pi-workflow-command-"));
 	const agentDir = join(root, "agent");
 	const repositoryRoot = join(root, "repository");
 	const gitCommonDir = join(repositoryRoot, ".git");
 	process.env.PI_CODING_AGENT_DIR = agentDir;
-	if (planningModel || planningThinkingLevel) {
-		const configDirectory = join(agentDir, "implementation-workflow");
-		await mkdir(configDirectory, { recursive: true });
-		const modelConfig = planningModel
-			? `provider = ${JSON.stringify(planningModel.provider)}\nmodel = ${JSON.stringify(planningModel.model)}\n`
-			: "";
-		const thinkingConfig = planningThinkingLevel
-			? `thinking_level = ${JSON.stringify(planningThinkingLevel)}\n`
-			: "";
-		await writeFile(
-			join(configDirectory, "config.toml"),
-			`[models.planning]\n${modelConfig}${thinkingConfig}`,
-			"utf8",
-		);
-	}
+	const configDirectory = join(agentDir, "implementation-workflow");
+	await mkdir(configDirectory, { recursive: true });
+	const dashboardConfig = `[dashboard]\nmode = "local"\nlisten_port = ${await unusedPort()}\n`;
+	const modelConfig = planningModel
+		? `provider = ${JSON.stringify(planningModel.provider)}\nmodel = ${JSON.stringify(planningModel.model)}\n`
+		: "";
+	const thinkingConfig = planningThinkingLevel
+		? `thinking_level = ${JSON.stringify(planningThinkingLevel)}\n`
+		: "";
+	const planningConfig = modelConfig || thinkingConfig
+		? `\n[models.planning]\n${modelConfig}${thinkingConfig}`
+		: "";
+	await writeFile(join(configDirectory, "config.toml"), `${dashboardConfig}${planningConfig}`, "utf8");
 
 	const commands = new Map();
 	const events = new Map();

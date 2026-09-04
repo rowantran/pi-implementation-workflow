@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { open, readFile, realpath } from "node:fs/promises";
 import { createServer, request, type Server, type ServerResponse } from "node:http";
 import { isAbsolute, relative, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import {
 	implementationWorkflowConfigPath,
 	loadImplementationWorkflowConfig,
@@ -14,7 +15,7 @@ import {
 } from "./storage.ts";
 
 export const DEFAULT_DASHBOARD_PORT = 43121;
-export const DASHBOARD_SERVER_PROTOCOL_VERSION = 1;
+export const DASHBOARD_SERVER_PROTOCOL_VERSION = 2;
 export const DASHBOARD_HEALTH_PATH = "/implementation-workflow/health";
 export const DASHBOARD_REVISION_HEADER = "X-Implementation-Workflow-Revision";
 const PROCESS_SERVER_KEY = Symbol.for("pi-implementation-workflow.dashboard-server.v1");
@@ -22,6 +23,10 @@ const PROBE_TIMEOUT_MS = 750;
 const MAX_HEALTH_RESPONSE_BYTES = 8 * 1024;
 const MAX_DASHBOARD_REVISION_SCAN_BYTES = 8 * 1024;
 const DASHBOARD_REVISION_PATTERN = /<meta name="implementation-workflow-revision" content="([a-f0-9]{64})">/;
+const DASHBOARD_ASSETS = new Map([
+	["marked.umd.js", fileURLToPath(new URL("./marked.umd.js", import.meta.resolve("marked")))],
+	["mermaid.min.js", fileURLToPath(new URL("./mermaid.min.js", import.meta.resolve("mermaid")))],
+]);
 
 export type DashboardScope = "draft" | "workflow";
 
@@ -227,6 +232,11 @@ async function handleDashboardRequest(
 		sendJson(response, 200, identity, method === "HEAD");
 		return;
 	}
+	const assetPath = dashboardAssetPath(rawPath);
+	if (assetPath) {
+		await sendDashboardAsset(response, assetPath, method === "HEAD");
+		return;
+	}
 	const reference = parseDashboardRoute(rawPath);
 	if (!reference) {
 		sendText(response, 404, "Not Found\n", method === "HEAD");
@@ -302,6 +312,28 @@ async function readDashboardRevision(
 	const buffer = Buffer.allocUnsafe(scanLength);
 	const { bytesRead } = await dashboardFile.read(buffer, 0, scanLength, 0);
 	return DASHBOARD_REVISION_PATTERN.exec(buffer.toString("utf8", 0, bytesRead))?.[1];
+}
+
+function dashboardAssetPath(rawPath: string): string | undefined {
+	const routeStart = rawPath.lastIndexOf("/implementation-workflow/assets/");
+	if (routeStart < 0) return undefined;
+	const name = rawPath.slice(routeStart + "/implementation-workflow/assets/".length);
+	return DASHBOARD_ASSETS.get(name);
+}
+
+async function sendDashboardAsset(response: ServerResponse, path: string, headOnly: boolean): Promise<void> {
+	let content: Buffer;
+	try {
+		content = await readFile(path);
+	} catch {
+		sendText(response, 404, "Not Found\n", headOnly);
+		return;
+	}
+	response.statusCode = 200;
+	response.setHeader("Content-Type", "text/javascript; charset=utf-8");
+	response.setHeader("Cache-Control", "no-store");
+	response.setHeader("Content-Length", content.byteLength);
+	response.end(headOnly ? undefined : content);
 }
 
 function parseDashboardRoute(rawPath: string): Pick<DashboardReference, "scope" | "id"> | undefined {

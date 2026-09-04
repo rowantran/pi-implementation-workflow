@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { createJiti } from "jiti/static";
+import { marked } from "marked";
 
 const jiti = createJiti(import.meta.url, { moduleCache: false });
 const { renderWorkflowDashboard } = await jiti.import(
@@ -117,6 +118,13 @@ assert.ok(html.includes("if(latestRevision!==dashboardRevision)reloadDashboard()
 assert.ok(!html.includes("{{dashboard"));
 assert.ok(!html.includes("</title><script>"));
 assert.ok(!html.includes("</template><script>"));
+assert.ok(html.includes('src="../assets/marked.umd.js"'));
+assert.ok(html.includes('new URL("../assets/mermaid.min.js",location.href)'));
+assert.ok(html.includes("function loadMermaidLibrary()"));
+assert.ok(html.includes("function renderMarkdown(markdown)"));
+assert.ok(html.includes("new marked.Renderer()"));
+assert.ok(html.includes("function renderMermaidDiagrams(root)"));
+assert.ok(html.includes('library.run({nodes:nodes,suppressErrors:true})'));
 assert.ok(html.includes("function renderRichDiff(rows, before, after)"));
 assert.ok(html.includes("function parsePlanStructure(markdown)"));
 assert.ok(html.includes('id="plan-guided-mode-button"'));
@@ -184,7 +192,7 @@ assert.ok(html.includes('id="diff-next-block"'));
 assert.ok(html.includes("function diffBlockStartIndexes(rows, contextLines = 3)"));
 assert.ok(html.includes("function moveDiffBlock(offset)"));
 assert.ok(!html.includes('class="diff-table"'));
-const dashboardScript = html.match(/<script>([\s\S]*)<\/script>/)?.[1];
+const dashboardScript = html.match(/<script id="dashboard-app">([\s\S]*?)<\/script>/)?.[1];
 assert.ok(dashboardScript);
 assert.doesNotThrow(() => new Function(dashboardScript));
 const helperSource = dashboardScript.slice(
@@ -192,27 +200,38 @@ const helperSource = dashboardScript.slice(
   dashboardScript.indexOf("function initialize"),
 );
 const { diffBlockStartIndexes, hashReaderDestination, initialViewForHash, lineDiff, parsePlanStructure, renderMarkdown, renderRichDiff } = new Function(
+  "marked",
   `${helperSource}; return { diffBlockStartIndexes, hashReaderDestination, initialViewForHash, lineDiff, parsePlanStructure, renderMarkdown, renderRichDiff };`,
-)();
+)(marked);
+function normalizeRenderedMarkdown(value) { return value.replace(/>\s+</g, "><").replace(/\s+/g, " ").trim(); }
 const softWrappedMarkdown = `A paragraph with **strong text** wraps
 onto a second source line.
 
 A second paragraph.`;
 assert.equal(
-  renderMarkdown(softWrappedMarkdown),
+  normalizeRenderedMarkdown(renderMarkdown(softWrappedMarkdown)),
   "<p>A paragraph with <strong>strong text</strong> wraps onto a second source line.</p><p>A second paragraph.</p>",
 );
 const softWrappedList = `- A list item wraps
   onto a second source line.
 - A second item.`;
 assert.equal(
-  renderMarkdown(softWrappedList),
+  normalizeRenderedMarkdown(renderMarkdown(softWrappedList)),
   "<ul><li>A list item wraps onto a second source line.</li><li>A second item.</li></ul>",
 );
+const tableMarkdown = renderMarkdown("| Name | Status |\n| --- | :---: |\n| Parser | Ready |");
+assert.ok(tableMarkdown.includes("<table>"));
+assert.ok(tableMarkdown.includes("<thead>"));
+assert.ok(tableMarkdown.includes('<th align="center">Status</th>'));
+const mermaidMarkdown = renderMarkdown("```mermaid\nflowchart LR\n  A --> B\n```");
+assert.ok(mermaidMarkdown.includes('<div class="mermaid">flowchart LR\n  A --&gt; B</div>'));
+assert.ok(!renderMarkdown('<script>alert("unsafe")</script>').includes("<script>"));
+assert.ok(!renderMarkdown("[unsafe](javascript:alert(1))").includes("javascript:"));
 const { renderReviewDestination } = new Function(
   "dashboard",
+  "marked",
   `${helperSource}; return { renderReviewDestination };`,
-)(data);
+)(data, marked);
 const overallReview = renderReviewDestination({ kind: "overall" });
 assert.ok(overallReview.includes("Overall result"));
 assert.ok(overallReview.includes("&lt;script&gt;alert(&quot;review&quot;)&lt;/script&gt;"));
@@ -260,6 +279,7 @@ function readerElement() {
       if (selector === ".sidebar-toggle-label") return this.sidebarLabel;
       return null;
     },
+    querySelectorAll() { return []; },
   };
 }
 const readerElements = {};
