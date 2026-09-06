@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { mkdir, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
-import { type Message, uuidv7 } from "@earendil-works/pi-ai";
+import { clampThinkingLevel, type Message, uuidv7 } from "@earendil-works/pi-ai";
 import {
 	getAgentDir,
 	SessionManager,
@@ -1126,13 +1126,22 @@ export default function implementationWorkflow(
 			content: [{ type: "text", text: planSlugUserMessage(plan) }],
 			timestamp: Date.now(),
 		};
+		// Omitting effort can send "none", which always-reasoning models reject.
+		// Keep this small request cheap without changing the session's thinking level.
+		const reasoningLevel = [
+			"openai-completions", "openai-responses", "openai-codex-responses", "azure-openai-responses",
+		].includes(ctx.model.api) ? clampThinkingLevel(ctx.model, "low") : "off";
 		const response = await ctx.modelRegistry.complete(
 			ctx.model,
 			{
 				systemPrompt: planSlugSystemPrompt(),
 				messages: [message],
 			},
-			{ cacheRetention: "none", sessionId: uuidv7() },
+			{
+				...(reasoningLevel !== "off" ? { reasoningEffort: reasoningLevel } : {}),
+				cacheRetention: "none",
+				sessionId: uuidv7(),
+			},
 		);
 		if (response.stopReason === "error" || response.stopReason === "aborted") {
 			throw new Error(response.errorMessage || "The model did not generate a workflow identifier.");

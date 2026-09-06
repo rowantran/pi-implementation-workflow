@@ -81,6 +81,8 @@ From the planning session, this freezes the plan and creates the workspace:
 7. creates `<repository>/.worktrees/<identifier>`;
 8. creates and switches to a separate worktree-bound implementation session.
 
+The separate slug-generation request uses `low` reasoning for OpenAI-compatible APIs, clamped to the selected model's declared supported levels. This avoids disabling reasoning on models that require it and does not change the session's thinking level. Other APIs keep their default behavior.
+
 The planning conversation remains saved and does not enter implementation context. Running `/workflow-implement` again later — from any session — starts a fresh implementation session in the existing worktree.
 
 Implementation inspects three durable sources before it acts: the immutable original ask in `metadata.json`, the frozen approved scope in `plan.md`, and later explicit answers in `clarifications.json`. If the approved plan has material ambiguity, the agent asks through `workflow_questions`. Submitted answers are appended verbatim to `clarifications.json` and shown in the dashboard. Selected answers retain the exact option label; custom answers retain the exact submitted text. Cancelled questionnaires are not stored.
