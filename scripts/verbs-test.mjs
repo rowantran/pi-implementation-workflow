@@ -3,6 +3,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createJiti } from "jiti/static";
+import { stream as streamOpenAIResponses } from "@earendil-works/pi-ai/api/openai-responses";
 
 const temporaryRoot = await mkdtemp(join(tmpdir(), "pi-workflow-verbs-"));
 process.env.PI_CODING_AGENT_DIR = join(temporaryRoot, "agent");
@@ -420,6 +421,101 @@ try {
 		await harness.run("workflow-plan", "", implementationCtx);
 		assert.match(harness.notifications.at(-1).message, /belongs to workflow workflow-verbs/);
 		await harness.emit("session_shutdown", implementationCtx);
+	}
+
+	// Slug generation must not send reasoning.effort=none to always-reasoning models,
+	// including custom model aliases whose catalog does not declare that limitation.
+	for (const { name, modelOverrides = {}, expectedEffort } of [
+		{ name: "missing-thinking-map", expectedEffort: "low" },
+		{ name: "always-reasoning", modelOverrides: { thinkingLevelMap: { off: null, minimal: null } }, expectedEffort: "low" },
+		{ name: "higher-minimum", modelOverrides: { thinkingLevelMap: { off: null, minimal: null, low: null, medium: null } }, expectedEffort: "high" },
+		{ name: "mapped-effort", modelOverrides: { thinkingLevelMap: { low: "medium" } }, expectedEffort: "medium" },
+		{ name: "non-reasoning", modelOverrides: { reasoning: false }, expectedEffort: undefined },
+		{ name: "completions", modelOverrides: { api: "openai-completions" }, expectedEffort: "low" },
+		{ name: "codex", modelOverrides: { api: "openai-codex-responses" }, expectedEffort: "low" },
+		{ name: "azure", modelOverrides: { api: "azure-openai-responses" }, expectedEffort: "low" },
+		{ name: "anthropic", modelOverrides: { api: "anthropic-messages" }, expectedEffort: undefined },
+	]) {
+		const identifier = `slug-${name}`;
+		const repositoryRoot = join(temporaryRoot, identifier);
+		const worktreePath = join(repositoryRoot, ".worktrees", identifier);
+		await mkdir(join(repositoryRoot, ".git", "info"), { recursive: true });
+		const draft = storage.draftFiles(identifier);
+		await storage.createDraft(draft, validPlan, {
+			version: storage.WORKFLOW_METADATA_VERSION,
+			draftId: identifier,
+			description: "Generate a slug with supported reasoning",
+			ask: "Complete planning with an always-reasoning model.",
+			createdAt: "2026-01-01T00:00:00.000Z",
+		});
+		const harness = createHarness(repositoryRoot, worktreePath, `workflow/${identifier}`);
+		const ctx = harness.context(repositoryRoot, [phaseEntry("planning", { draftId: identifier })]);
+		ctx.model = {
+			id: "gpt-6-astra",
+			name: "GPT-6 Astra",
+			provider: "test-proxy",
+			api: "openai-responses",
+			baseUrl: "https://unused.example.test/v1",
+			reasoning: true,
+			input: ["text"],
+			contextWindow: 128000,
+			maxTokens: 4096,
+			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+			...modelOverrides,
+		};
+		ctx.thinkingLevel = "high";
+		const payloads = [];
+		let completionCalls = 0;
+		ctx.modelRegistry.complete = async (model, context, options) => {
+			completionCalls++;
+			assert.equal(model, ctx.model, "slug generation keeps the selected model");
+			assert.equal(options.cacheRetention, "none");
+			assert.ok(options.sessionId);
+			if (model.api !== "openai-responses") {
+				assert.equal(options.reasoningEffort, expectedEffort, name);
+				return { stopReason: "stop", content: [{ type: "text", text: identifier }] };
+			}
+			return streamOpenAIResponses(model, context, {
+				...options,
+				apiKey: "test-only",
+				maxRetries: 0,
+				fetch: async (_url, init) => {
+					const payload = JSON.parse(init.body);
+					payloads.push(payload);
+					if (payload.reasoning?.effort === "none") {
+						return Response.json({ error: {
+							message: "Unsupported value: 'none' is not supported with the 'gpt-6-astra' model. Supported values are: 'low', 'medium', 'high', 'xhigh', and 'max'.",
+							type: "invalid_request_error",
+							param: "reasoning.effort",
+							code: "unsupported_value",
+						} }, { status: 400 });
+					}
+					const item = {
+						id: "msg_slug", type: "message", role: "assistant", status: "completed",
+						content: [{ type: "output_text", text: identifier, annotations: [] }],
+					};
+					const events = [
+						{ type: "response.output_item.done", output_index: 0, item },
+						{ type: "response.completed", response: { status: "completed", output: [item] } },
+					];
+					return new Response(events.map((event) => `data: ${JSON.stringify(event)}\n\n`).join(""), {
+						headers: { "Content-Type": "text/event-stream" },
+					});
+				},
+			}).result();
+		};
+		await harness.emit("session_start", ctx);
+		await harness.run("workflow-implement", "", ctx);
+		assert.equal(harness.switches.length, 1, JSON.stringify(harness.notifications));
+		assert.equal(completionCalls, 1, "a supported effort succeeds without retrying");
+		if (ctx.model.api === "openai-responses") {
+			assert.equal(payloads.length, 1);
+			assert.equal(payloads[0].reasoning?.effort, expectedEffort, name);
+		}
+		assert.equal(ctx.thinkingLevel, "high", "slug generation does not change session thinking");
+		assert.equal((await readMetadata(identifier)).worktreePath, worktreePath);
+		assert.equal(await readFile(storage.workflowFiles(identifier).plan, "utf8"), validPlan);
+		await harness.emit("session_shutdown", ctx);
 	}
 
 	// A settled implementation turn suggests /workflow-review only when the worktree is clean with new commits.
