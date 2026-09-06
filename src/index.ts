@@ -37,7 +37,7 @@ import {
 	worktreeStatus,
 	type ExecFn,
 } from "./git.ts";
-import { parsePlannedChanges, parseTestingCriteria } from "./planned-changes.ts";
+import { getPlanDependencyGraph, parsePlannedChanges, parseTestingCriteria } from "./planned-changes.ts";
 import { PLAN_TITLE, planningCompletionError } from "./planning.ts";
 import {
 	formatPullRequestStack,
@@ -169,6 +169,8 @@ export default function implementationWorkflow(
 			if (!draftMetadata) throw new Error("The workflow draft has no metadata.");
 			const plan = await readText(files.workingPlan);
 			const description = normalizePlanDescription(rawDescription);
+			const dependencyGraph = getPlanDependencyGraph(plan);
+			const dependencyWarning = dependencyGraph.status === "unavailable" ? dependencyGraph.reason : undefined;
 			const version = await savePlanVersion(files, plan);
 			draftMetadata = { ...draftMetadata, description };
 			await writeDraftWorkflowMetadata(files, draftMetadata);
@@ -182,7 +184,12 @@ export default function implementationWorkflow(
 			} catch (error) {
 				dashboardError = errorMessage(error);
 			}
-			const result: UpdatePlanResult = { version: version.number, dashboardUrl, dashboardError };
+			const result: UpdatePlanResult = {
+				version: version.number,
+				dashboardUrl,
+				dashboardError,
+				...(dependencyWarning === undefined ? {} : { dependencyWarning }),
+			};
 			return result;
 		});
 	});

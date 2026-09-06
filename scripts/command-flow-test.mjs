@@ -9,6 +9,7 @@ import { createJiti } from "jiti/static";
 const jiti = createJiti(import.meta.url, { moduleCache: false });
 const workflowModule = await jiti.import(new URL("../src/index.ts", import.meta.url).pathname);
 const implementationWorkflow = workflowModule.default;
+const { registerWorkflowPlanTool } = await jiti.import(new URL("../src/plan-tool.ts", import.meta.url).pathname);
 
 async function exists(path) {
 	try {
@@ -252,6 +253,30 @@ assert.equal(
 	undefined,
 );
 
+// Dependency diagnostics survive all dashboard-link outcomes in both tool result forms.
+for (const dashboard of [{}, { dashboardUrl: "http://example.test/workflow" }, { dashboardError: "Server unavailable" }]) {
+	let tool;
+	const details = { version: 4, dependencyWarning: "PC-01 depends on unknown ID PC-99; reference an existing planned change", ...dashboard };
+	registerWorkflowPlanTool({ registerTool: (definition) => { tool = definition; } }, async () => details);
+	const result = await tool.execute("save-draft", { description: "An incomplete draft" });
+	assert.equal(result.details, details);
+	assert.ok(result.content[0].text.includes(`Dependency warning: ${details.dependencyWarning}`));
+	const colors = [];
+	const rendered = tool.renderResult(result, {}, {
+		fg: (color, text) => { colors.push(color); return text; },
+	}).render(1000).join("\n");
+	assert.ok(rendered.includes(`Dependency warning: ${details.dependencyWarning}`));
+	assert.ok(colors.includes("warning"));
+	if (dashboard.dashboardError) {
+		assert.ok(result.content[0].text.includes(`Workflow dashboard unavailable: ${dashboard.dashboardError}`));
+		assert.ok(rendered.includes(`Workflow dashboard unavailable: ${dashboard.dashboardError}`));
+	}
+	if (dashboard.dashboardUrl) {
+		assert.ok(result.content[0].text.includes(dashboard.dashboardUrl));
+		assert.ok(rendered.includes(dashboard.dashboardUrl));
+	}
+}
+
 const submittedAsk = 'First line\n\nSecond <line> & "quotes".\n';
 const started = await scenario({ args: "inline prefill", editorResult: submittedAsk });
 assert.equal(started.editorCalls[0].prefill, "inline prefill");
@@ -275,7 +300,7 @@ await scenario({
 
 await scenario({
 	editorResult: "Commit a working plan",
-	afterFirstStart: async ({ draftRoot, tools }) => {
+	afterFirstStart: async ({ ctx, draftRoot, tools, implementCommand, notifications }) => {
 		const updatePlan = tools.get("workflow_update_plan");
 		assert.ok(updatePlan);
 		assert.equal(updatePlan.parameters.properties.plan, undefined);
@@ -287,12 +312,47 @@ await scenario({
 			description: "Commit the editable working plan",
 		});
 		assert.equal(result.details.version, 2);
+		assert.match(result.details.dependencyWarning, /add a second-level "Planned Changes" section/);
+		assert.ok(result.content[0].text.includes(`Dependency warning: ${result.details.dependencyWarning}`));
+		const theme = { fg: (_color, text) => text, bold: (text) => text };
+		const render = (saved) => updatePlan.renderResult(saved, {}, theme).render(1000).join("\n");
+		assert.ok(render(result).includes(`Dependency warning: ${result.details.dependencyWarning}`));
+		assert.match(render(result), /Saved version 2/);
 		assert.match(result.details.dashboardUrl, /^http:\/\/127\.0\.0\.1:\d+\/implementation-workflow\/drafts\/command-session$/);
 		assert.match(result.content[0].text, /Workflow dashboard: http:\/\/127\.0\.0\.1:\d+\/implementation-workflow\/drafts\/command-session/);
 		assert.equal(await readFile(join(draftRoot, "plan.md"), "utf8"), updatedPlan);
 		assert.equal(await readFile(join(draftRoot, "working-plan.md"), "utf8"), updatedPlan);
 		assert.equal(await readFile(join(draftRoot, "versions", "0002.md"), "utf8"), updatedPlan);
 		assert.deepEqual((await readdir(join(draftRoot, "versions"))).sort(), ["0001.md", "0002.md"]);
+
+		const entry = (id, dependsOn) => `### ${id}: Deliver ${id}\n\n${dependsOn === undefined ? "" : `**Depends on**\n${dependsOn}\n\n`}**What**\nImplement ${id}.\n\n**Why**\nDeliver the ask.`;
+		let version = 2;
+		for (const [dependencies, warning] of [
+			[[undefined, undefined], /PC-01 is missing \*\*Depends on\*\*/],
+			[["PC-02", "PC-01"], /dependency cycle: PC-01 -> PC-02 -> PC-01/],
+			[["PC-99", "None"], /PC-01 depends on unknown ID PC-99/],
+			[["PC-02", "None"], undefined],
+			[["None", undefined], /PC-02 is missing \*\*Depends on\*\*/],
+			[["None", "None"], undefined],
+		]) {
+			const plan = `# Implementation plan\n\n## Planned Changes\n\n${entry("PC-01", dependencies[0])}\n\n${entry("PC-02", dependencies[1])}\n\n## Testing\n\nVerify delivery.\n`;
+			await writeFile(join(draftRoot, "working-plan.md"), plan, "utf8");
+			const saved = await updatePlan.execute("update-plan", { description: "Deliver the planned changes" });
+			assert.equal(saved.details.version, ++version, "invalid drafts must still create saved versions");
+			assert.equal(await readFile(join(draftRoot, "plan.md"), "utf8"), plan);
+			assert.equal(await readFile(join(draftRoot, "versions", `${String(version).padStart(4, "0")}.md`), "utf8"), plan);
+			if (warning) {
+				assert.match(saved.details.dependencyWarning, warning);
+				assert.ok(saved.content[0].text.includes(`Dependency warning: ${saved.details.dependencyWarning}`));
+				assert.ok(render(saved).includes(`Dependency warning: ${saved.details.dependencyWarning}`));
+				await implementCommand.handler("", ctx);
+				assert.equal(notifications.at(-1).message, `The plan cannot advance: ${saved.details.dependencyWarning}.`);
+			} else {
+				assert.ok(!Object.hasOwn(saved.details, "dependencyWarning"));
+				assert.ok(!saved.content[0].text.includes("Dependency warning:"));
+				assert.ok(!render(saved).includes("Dependency warning:"));
+			}
+		}
 	},
 });
 
@@ -307,4 +367,4 @@ await scenario({
 	},
 });
 
-console.log("Command-flow test passed: the required editor captures one immutable ask before planning activation and kickoff.");
+console.log("Command-flow test passed: immutable asks, draft-save dependency diagnostics, and strict planning completion.");

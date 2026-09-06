@@ -127,7 +127,23 @@ assert.ok(html.includes("function renderMermaidDiagrams(root)"));
 assert.ok(html.includes('library.run({nodes:nodes,suppressErrors:true})'));
 assert.ok(html.includes("function renderRichDiff(rows, before, after)"));
 assert.ok(html.includes("function parsePlanStructure(markdown)"));
+assert.ok(html.includes('id="plan-graph-mode-button"'));
+assert.ok(html.includes('.guided-pagination[hidden]{display:none}'));
+assert.ok(html.includes('.ds-tabs__tab[hidden]{display:none}'));
+assert.ok(html.includes('.plan-layout>.plan-card{min-width:0}'), "diagram overflow stays inside the card on narrow screens");
+assert.ok(html.includes('#plan-dependency-canvas .node.graph-node--selected .label *'));
+assert.ok(html.includes('class="dependency-goal"'));
 assert.ok(html.includes('id="plan-guided-mode-button"'));
+assert.ok(html.includes('id="plan-dependency-graph"'));
+assert.ok(html.includes('id="plan-dependency-list"'));
+assert.ok(html.includes('id="plan-graph-unavailable"'));
+assert.ok(html.includes('id="dependency-diff"'));
+assert.ok(html.includes('securityLevel:"strict"'));
+assert.ok(html.includes('htmlLabels:false,useMaxWidth:false'));
+assert.ok(html.includes('window.addEventListener("hashchange",applyDashboardHash)'));
+assert.ok(!html.includes('.bindFunctions('));
+assert.ok(html.includes('.dependency-canvas{overflow:auto;max-width:100%'));
+assert.ok(html.includes('.dependency-canvas svg{display:block;max-width:none!important'));
 assert.ok(html.includes('id="plan-full-mode-button"'));
 assert.ok(html.includes('id="review-guided-mode-button"'));
 assert.ok(html.includes('id="review-full-mode-button"'));
@@ -183,7 +199,7 @@ assert.ok(!html.includes("function focusReviewSection"));
 assert.ok(html.includes("function prepareReview()"));
 assert.ok(html.includes("function renderReviewDestination(selected,fullDocument)"));
 assert.ok(html.includes('const unseenReview=dashboard.review && state.reviewHead !== dashboard.review.headCommit'));
-assert.ok(html.includes('initialView=unseenReview ? "review"'));
+assert.ok(html.includes('initialView=unseenReview && !planHashDestination ? "review"'), "explicit plan deep links win over an unseen review");
 assert.ok(!html.includes('<script>alert("review")</script>'));
 assert.ok(html.includes('class="markdown diff-document"'));
 assert.ok(html.includes("renderRichDiff(rows,before.content,after.content)"));
@@ -199,9 +215,9 @@ const helperSource = dashboardScript.slice(
   dashboardScript.indexOf("function escapeHtml"),
   dashboardScript.indexOf("function initialize"),
 );
-const { diffBlockStartIndexes, hashReaderDestination, initialViewForHash, lineDiff, parsePlanStructure, renderMarkdown, renderRichDiff } = new Function(
+const { dependencyChanges, dependencyRelations, diffBlockStartIndexes, generateDependencyDiagram, hashReaderDestination, initialViewForHash, lineDiff, mermaidGraphText, parsePlanStructure, planModeForState, renderDependencyChanges, renderDependencyList, renderMarkdown, renderRichDiff, wrapGraphTitle } = new Function(
   "marked",
-  `${helperSource}; return { diffBlockStartIndexes, hashReaderDestination, initialViewForHash, lineDiff, parsePlanStructure, renderMarkdown, renderRichDiff };`,
+  `${helperSource}; return { dependencyChanges, dependencyRelations, diffBlockStartIndexes, generateDependencyDiagram, hashReaderDestination, initialViewForHash, lineDiff, mermaidGraphText, parsePlanStructure, planModeForState, renderDependencyChanges, renderDependencyList, renderMarkdown, renderRichDiff, wrapGraphTitle };`,
 )(marked);
 function normalizeRenderedMarkdown(value) { return value.replace(/>\s+</g, "><").replace(/\s+/g, " ").trim(); }
 const softWrappedMarkdown = `A paragraph with **strong text** wraps
@@ -527,6 +543,10 @@ assert.equal(structure.changes[0].title, "Parse the plan");
 assert.ok(structure.changes[0].content.includes("This is code, not another change"));
 assert.equal(structure.changes[1].id, "change-2-render-each-change");
 assert.equal(structure.testing, "Verify guided and full-document modes.");
+const tildeStructure = parsePlanStructure(structuredPlan.replaceAll("```", "~~~~"));
+assert.equal(tildeStructure.changes.length, 2, "tilde-fenced headings are not planned changes");
+const nestedFenceStructure = parsePlanStructure(structuredPlan.replace("```text", "````text\n```").replace("```\n\n### Render", "```\n````\n\n### Render"));
+assert.equal(nestedFenceStructure.changes.length, 2, "shorter code fences cannot close longer fences");
 const legacyStructure = parsePlanStructure("# Legacy plan\n\nOne long document.");
 assert.equal(legacyStructure.canUseGuidedView, false);
 assert.equal(legacyStructure.title, "Legacy plan");
@@ -539,4 +559,185 @@ assert.equal(initialViewForHash("#plan/change-1-parse", "review", true), "plan")
 assert.equal(initialViewForHash("", "review", true), "review");
 assert.equal(initialViewForHash("", "diff", false), "diff");
 
-console.log("Dashboard test passed: plan, review, and grouped diff navigation render and behave correctly.");
+// The render entrypoint, not only the disk writer, must normalize every version.
+function snapshotFromHtml(rendered) {
+  const serialized = /<template id="dashboard-data">([\s\S]*?)<\/template>/.exec(rendered)?.[1];
+  assert.ok(serialized);
+  return JSON.parse(serialized.replace(/&(#x[\da-f]+|#\d+|amp|lt|gt|quot);/gi, (_entity, code) => {
+    if (code.startsWith("#x")) return String.fromCodePoint(parseInt(code.slice(2), 16));
+    if (code.startsWith("#")) return String.fromCodePoint(Number(code.slice(1)));
+    return { amp: "&", lt: "<", gt: ">", quot: '"' }[code];
+  }));
+}
+const graphNodes = [
+  { id: "PC-01", title: "Read shared schema", dependsOn: ["PC-03"] }, // Forward references are not reading order.
+  { id: "PC-02", title: "Render graph", dependsOn: ["PC-03"] },
+  { id: "PC-03", title: "Define shared schema", dependsOn: [] },
+  { id: "PC-04", title: "Integrate both branches", dependsOn: ["PC-01", "PC-02"] },
+  { id: "PC-05", title: "Independent documentation", dependsOn: [] },
+  { id: "PC-06", title: 'Escape "quotes" <script>alert(1)</script> %%{init: evil}%% `text` & labels', dependsOn: ["PC-04"] },
+];
+function planWithNodes(nodes) {
+  return '# Dependency plan\n\n## Goal\n\nShip the graph.\n\n## Planned Changes\n\n' + nodes.map((node) =>
+    `### ${node.id}: ${node.title}\n\n**Depends on**\n\n${node.dependsOn.join(", ") || "None"}\n\n**What**\n\nImplement **${node.id}** safely.\n\n**Why**\n\nKeep readers informed.\n`,
+  ).join("\n") + '\n## Testing\n\nVerify the graph and legacy reader.\n';
+}
+const graphPlan = planWithNodes(graphNodes);
+const invalidGraphPlan = graphPlan.replace("PC-01, PC-02", "PC-99");
+const graphData = {
+  ...data,
+  versions: [data.versions[0], { number: 2, createdAt: data.generatedAt, content: invalidGraphPlan }, { number: 3, createdAt: data.generatedAt, content: graphPlan }],
+};
+const serializedBeforeRender = JSON.stringify(graphData);
+const graphHtml = renderWorkflowDashboard(graphData);
+const normalized = snapshotFromHtml(graphHtml);
+assert.equal(JSON.stringify(graphData), serializedBeforeRender, "normalization must not mutate callers' snapshots");
+assert.equal(normalized.versions[0].dependencyGraph.status, "unavailable");
+assert.deepEqual(normalized.versions[0].changeDetails, []);
+assert.equal(normalized.versions[1].dependencyGraph.status, "unavailable");
+assert.match(normalized.versions[1].dependencyGraph.reason, /PC-99/);
+const graph = normalized.versions[2].dependencyGraph;
+assert.deepEqual(graph, { status: "valid", nodes: graphNodes });
+assert.deepEqual(normalized.versions[2].changeDetails[0], { id: "PC-01", what: "Implement **PC-01** safely.", why: "Keep readers informed." });
+assert.ok(!graphHtml.includes('<script>alert(1)</script>'));
+assert.deepEqual(snapshotFromHtml(renderWorkflowDashboard({ ...data, versions: [] })).versions, []);
+const staleGraph = { ...data.versions[0], dependencyGraph: graph };
+assert.equal(snapshotFromHtml(renderWorkflowDashboard({ ...data, versions: [staleGraph] })).versions[0].dependencyGraph.status, "unavailable", "caller-provided graph data is not trusted");
+const legacyGraph = snapshotFromHtml(renderWorkflowDashboard({ ...data, versions: [{ ...data.versions[0], content: graphPlan.replace(/\*\*Depends on\*\*\n\n[^\n]+\n\n/g, "") }] })).versions[0].dependencyGraph;
+assert.equal(legacyGraph.status, "unavailable", "missing legacy dependencies must not imply an edgeless graph");
+const diagram = generateDependencyDiagram(graph);
+assert.ok(diagram.startsWith("flowchart TD\n"));
+assert.equal(diagram.match(/dag_\d+\["/g)?.length, graphNodes.length, "roots and isolated nodes are rendered explicitly");
+assert.ok(diagram.includes("dag_2 --> dag_0"), "edges point from prerequisite to dependent");
+assert.ok(!diagram.includes("dag_0 --> dag_2"));
+assert.equal(diagram.match(/ --> /g)?.length, 5);
+assert.ok(diagram.includes("dag_4["), "isolated node is present");
+assert.ok(!diagram.includes("%%{init:"));
+assert.ok(!diagram.includes("<script>"));
+assert.ok(!diagram.includes('"quotes"'));
+assert.ok(!diagram.includes("click "));
+assert.ok(diagram.includes("#34;quotes#34;"));
+assert.equal(mermaidGraphText('"<>`&#;\\'), "#34;#60;#62;#96;#38;#35;#59;#92;");
+assert.ok(wrapGraphTitle("x".repeat(140)).every((line) => line.length <= 28));
+assert.equal(wrapGraphTitle("x".repeat(140)).join(""), "x".repeat(140), "long labels are wrapped, never truncated");
+assert.ok(wrapGraphTitle("😀".repeat(80)).every((line) => Array.from(line).length <= 28));
+assert.equal(generateDependencyDiagram(legacyGraph), "");
+assert.deepEqual([...dependencyRelations(graph, "PC-04").ancestors].sort(), ["PC-01", "PC-02", "PC-03"]);
+assert.deepEqual([...dependencyRelations(graph, "PC-03").downstream].sort(), ["PC-01", "PC-02", "PC-04", "PC-06"]);
+assert.equal(dependencyRelations(graph, "PC-05").ancestors.size, 0);
+assert.equal(dependencyRelations(graph, "PC-05").downstream.size, 0);
+assert.equal(dependencyRelations(legacyGraph, "PC-01").ancestors.size, 0);
+const textList = renderDependencyList(graph);
+assert.equal(textList.match(/data-graph-select=/g)?.length, 6);
+assert.equal(textList.match(/<strong>Requires<\/strong>/g)?.length, 6);
+assert.equal(textList.match(/<strong>Enables<\/strong>/g)?.length, 6);
+assert.ok(textList.includes('href="#plan/graph/PC-03"'));
+assert.ok(textList.includes("&lt;script&gt;"));
+assert.ok(!textList.includes("<script>"));
+assert.ok(!textList.includes("<details"), "dependency alternative is always visible");
+const graphStructure = parsePlanStructure(graphPlan);
+const detailHelpers = new Function("latestPlan", "planStructure", "marked", `${helperSource};return { renderGraphDetail, renderDependencyRelations };`)(normalized.versions[2], graphStructure, marked);
+const detail = detailHelpers.renderGraphDetail(graph, "PC-01");
+assert.ok(detail.includes("<h4>What</h4>"));
+assert.ok(detail.includes("<h4>Why</h4>"));
+assert.ok(detail.includes("<strong>PC-01</strong>"));
+assert.ok(detail.includes("Read in guided view"));
+assert.ok(detail.includes('href="#plan/change-1-pc-01-read-shared-schema"'));
+const guidedLinks = detailHelpers.renderDependencyRelations(graph, "PC-04", false);
+assert.ok(guidedLinks.includes('href="#plan/change-1-pc-01-read-shared-schema"'));
+assert.ok(guidedLinks.includes("PC-06</a>"));
+assert.equal(hashReaderDestination("#plan-graph", "plan"), "graph");
+assert.equal(hashReaderDestination("#plan-graph/PC-02", "plan"), "graph/PC-02");
+assert.equal(hashReaderDestination("#plan/graph/PC-02", "plan"), "graph/PC-02");
+assert.equal(hashReaderDestination("#plan/PC-02", "plan"), "PC-02");
+assert.equal(initialViewForHash("#plan-graph", "review", true), "plan");
+assert.equal(planModeForState(null, undefined, true, true), "graph");
+assert.equal(planModeForState(null, "guided", true, true), "guided");
+assert.equal(planModeForState(null, "full", true, true), "full");
+assert.equal(planModeForState("goal", "graph", true, true), "guided");
+assert.equal(planModeForState("PC-02", "graph", true, true), "guided");
+assert.equal(planModeForState("graph/PC-02", "guided", true, true), "graph");
+assert.equal(planModeForState(null, undefined, false, true), "guided");
+assert.equal(planModeForState(null, undefined, false, false), "full");
+assert.equal(planModeForState("graph", "full", false, false), "graph", "unavailable graphs remain accessible explicitly");
+assert.equal(planModeForState(null, "garbage", true, true), "graph");
+assert.deepEqual(dependencyChanges(graph, graph), { addedNodes: [], removedNodes: [], addedEdges: [], removedEdges: [] });
+const changedGraph = { status: "valid", nodes: graphNodes.map((node) => node.id === "PC-04" ? { ...node, dependsOn: ["PC-03"] } : node) };
+assert.deepEqual(dependencyChanges(graph, changedGraph), { addedNodes: [], removedNodes: [], addedEdges: ["PC-03 → PC-04"], removedEdges: ["PC-01 → PC-04", "PC-02 → PC-04"] });
+assert.deepEqual(dependencyChanges(graph, { status: "valid", nodes: graph.nodes.slice(0, -1) }), { addedNodes: [], removedNodes: ["PC-06"], addedEdges: [], removedEdges: ["PC-04 → PC-06"] });
+assert.equal(dependencyChanges(legacyGraph, graph), null);
+assert.ok(renderDependencyChanges(legacyGraph, graph).includes("comparison unavailable"));
+assert.ok(renderDependencyChanges(graph, graph).includes("No dependency changes"));
+assert.ok(renderDependencyChanges(graph, changedGraph).includes("Dependency removed: PC-01 → PC-04"));
+
+// Exercise the browser-owned SVG handlers and async rendering without trusting Mermaid callbacks.
+const graphElements = {};
+for (const id of ["plan-content", "plan-pagination", "plan-dependency-canvas", "plan-graph-detail", "plan-graph-selection", "plan-graph-detail-title", "plan-graph-render-status"]) graphElements[id] = readerElement();
+const svg = { ...readerElement(), style: {}, viewBox: { baseVal: { width: 960, height: 820 } } };
+const svgNodes = graph.nodes.map(() => ({ ...readerElement(), listeners: {}, addEventListener(name, handler) { this.listeners[name] = handler; } }));
+const listButtons = graph.nodes.map((node) => ({ ...readerElement(), dataset: { graphSelect: node.id } }));
+graphElements["plan-dependency-canvas"].querySelector = (selector) => selector === "svg" ? svg : svgNodes[Number(/dag-node-(\d+)/.exec(selector)?.[1])];
+let mermaidOptions, mermaidSource, boundCallbacks = 0;
+const mermaidStub = {
+  initialize(options) { mermaidOptions = options; },
+  async render(_id, source) { mermaidSource = source; return { svg: "<svg>trusted generated graph</svg>", bindFunctions() { boundCallbacks++; } }; },
+};
+const graphDocument = {
+  documentElement: { dataset: { theme: "dark" } },
+  getElementById(id) { return graphElements[id]; },
+  querySelectorAll(selector) { assert.equal(selector, "[data-graph-select]"); return listButtons; },
+};
+const graphBrowser = new Function("latestPlan", "planStructure", "globalThis", "document", "location", "history", "marked", `let selectedGraphNode="PC-04",graphRenderSequence=0;const readers={plan:{mode:"graph",destinations:[{id:"goal"}]}};${helperSource};return { renderDependencyGraphDiagram, renderPlanGraph, selectGraphNode, handleDependencyNavigation };`)(normalized.versions[2], graphStructure, { mermaid: mermaidStub }, graphDocument, fakeLocation, fakeHistory, marked);
+await graphBrowser.renderDependencyGraphDiagram(graph);
+assert.equal(mermaidOptions.securityLevel, "strict");
+assert.equal(mermaidOptions.theme, "dark");
+assert.equal(mermaidOptions.htmlLabels, false, "root htmlLabels takes precedence in newer Mermaid releases");
+assert.equal(mermaidOptions.flowchart.htmlLabels, false);
+assert.equal(mermaidSource, diagram);
+assert.equal(boundCallbacks, 0);
+assert.equal(svg.style.width, "960px", "wide graphs retain readable intrinsic dimensions for scrolling");
+assert.equal(svg.style.height, "820px");
+assert.equal(svgNodes[0].attributes.role, "button");
+assert.equal(svgNodes[0].attributes.tabindex, "0");
+assert.match(svgNodes[0].attributes["aria-label"], /Requires: PC-03/);
+assert.equal(svgNodes[3].classList.contains("graph-node--selected"), true);
+assert.equal(svgNodes[2].classList.contains("graph-node--ancestor"), true);
+assert.equal(svgNodes[5].classList.contains("graph-node--downstream"), true);
+svgNodes[2].listeners.click();
+assert.equal(svgNodes[2].classList.contains("graph-node--selected"), true);
+assert.equal(svgNodes[3].classList.contains("graph-node--downstream"), true);
+assert.ok(graphElements["plan-graph-detail"].innerHTML.includes("Define shared schema"));
+assert.ok(fakeLocation.href.endsWith("#plan/graph/PC-03"));
+let preventedKey = false;
+svgNodes[4].listeners.keydown({ key: " ", preventDefault() { preventedKey = true; } });
+assert.equal(preventedKey, true);
+assert.equal(svgNodes[4].attributes["aria-pressed"], "true");
+assert.equal(svgNodes[3].classList.contains("graph-node--downstream"), false);
+assert.equal(listButtons[4].attributes["aria-pressed"], "true");
+const selectedDetail = graphElements["plan-graph-detail"].innerHTML;
+graphBrowser.selectGraphNode('PC-99" onclick="evil', false);
+assert.equal(graphElements["plan-graph-detail"].innerHTML, selectedDetail, "unknown node IDs cannot drive browser navigation");
+mermaidStub.render = async () => { throw new Error("offline"); };
+await graphBrowser.renderDependencyGraphDiagram(graph);
+assert.match(graphElements["plan-dependency-canvas"].textContent, /dependencies and change details are available below/);
+assert.match(graphElements["plan-graph-render-status"].textContent, /Use the dependency list/);
+const pendingRenders = [];
+mermaidStub.render = () => new Promise((resolve) => pendingRenders.push(resolve));
+const oldRender = graphBrowser.renderDependencyGraphDiagram(graph);
+await Promise.resolve();
+const newRender = graphBrowser.renderDependencyGraphDiagram(graph);
+await Promise.resolve();
+pendingRenders[1]({ svg: "new render" });
+await newRender;
+pendingRenders[0]({ svg: "stale render" });
+await oldRender;
+assert.equal(graphElements["plan-dependency-canvas"].innerHTML, "new render", "stale async renders cannot replace a newer theme or selection");
+const unavailableBrowser = new Function("latestPlan", "document", `const readers={plan:{destinations:[]}};${helperSource};return {renderPlanGraph};`)({ dependencyGraph: { status: "unavailable", reason: '<script>unsafe legacy reason</script>' } }, graphDocument);
+unavailableBrowser.renderPlanGraph();
+assert.match(graphElements["plan-content"].innerHTML, /Graph unavailable/);
+assert.match(graphElements["plan-content"].innerHTML, /&lt;script&gt;/);
+assert.ok(!graphElements["plan-content"].innerHTML.includes("<script>"));
+assert.match(graphElements["plan-content"].innerHTML, /data-graph-fallback="full"/);
+assert.equal(graphElements["plan-pagination"].hidden, true);
+
+console.log("Dashboard test passed: normalized DAGs, safe graph navigation, legacy fallback, plan/review readers, and semantic version comparison.");

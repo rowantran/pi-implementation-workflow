@@ -13,6 +13,7 @@ import {
 	type WorkflowFiles,
 } from "./storage.ts";
 import type { WorkflowReviewReport } from "./review-report.ts";
+import { getPlanDependencyGraph, parsePlannedChanges } from "./planned-changes.ts";
 
 const DASHBOARD_TEMPLATE = readFileSync(new URL("./dashboard.html", import.meta.url), "utf8");
 
@@ -56,8 +57,20 @@ export async function writeWorkflowDashboardRedirect(from: string, destinationUr
 }
 
 export function renderWorkflowDashboard(data: WorkflowDashboardData): string {
-	const dashboardData = JSON.stringify(data);
-	const { generatedAt: _generatedAt, ...visibleData } = data;
+	// Normalize each snapshot here, including for callers that render without writing to disk.
+	// Legacy plans remain readable, but must never acquire inferred dependency edges.
+	const normalizedData = {
+		...data,
+		versions: data.versions.map((version) => {
+			const dependencyGraph = getPlanDependencyGraph(version.content);
+			const changeDetails = dependencyGraph.status === "valid"
+				? parsePlannedChanges(version.content).map(({ id, what, why }) => ({ id, what, why }))
+				: [];
+			return { ...version, dependencyGraph, changeDetails };
+		}),
+	};
+	const dashboardData = JSON.stringify(normalizedData);
+	const { generatedAt: _generatedAt, ...visibleData } = normalizedData;
 	const dashboardRevision = createHash("sha256")
 		.update(DASHBOARD_TEMPLATE)
 		.update("\0")
