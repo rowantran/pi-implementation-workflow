@@ -78,7 +78,7 @@ The graph should guide real work. Independent branches can proceed without an ar
 None
 
 **What**
-Explain the Depends on field, arrow direction, draft warnings, and the graph reading mode. Include a small branching example and a local preview command.
+Explain the Depends on field, arrow direction, draft warnings, and the Dependency graph section in Guided view. Include a small branching example and a local preview command.
 
 **Why**
 Users and agents need a clear contract for the new format. Documentation can be prepared from the agreed design without waiting for the implementation branches.

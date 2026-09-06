@@ -47,9 +47,9 @@ try {
   ]);
   const result = await ensureSharedDashboardServer(config, root);
   if (result.status === "error") throw new Error(result.message);
-  console.log(`Dependency graph preview: ${config.publicBaseUrl}/implementation-workflow/workflows/${id}#plan-graph`);
+  console.log(`Dependency graph preview: ${config.publicBaseUrl}/implementation-workflow/workflows/${id}#plan/graph`);
   console.log(`Example plan and rendered dashboard: ${directory}`);
-  console.log("Use Graph, Guided view, and Compare versions to inspect the same plan. Press Ctrl+C to stop.");
+  console.log("In Guided view, navigate Goal → Dependency graph → planned changes. Compare versions shows dependency changes. Press Ctrl+C to stop.");
 } catch (error) {
   await cleanup();
   throw error;

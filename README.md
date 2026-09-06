@@ -49,7 +49,7 @@ If planning is already active, continue through normal conversation instead of r
 The extension saves the submitted ask verbatim as immutable workflow metadata, starts `plan.md` and `working-plan.md` with only the implementation-plan title, and sends the ask as the planning kickoff message. After each `workflow_update_plan` call, its output includes the HTTP dashboard link. It never opens the browser automatically. The extension serves a single-page dashboard styled with the Isara design system. It has:
 
 - a concise plain-English plan description as the main document title, beside its prominent current version number;
-- a **Plan** view with a dependency graph, a guided change-by-change reader, a full-document fallback, the immutable original ask, and structured user clarifications;
+- a **Plan** view with a guided reader ordered as Goal, Dependency graph, planned changes, and Testing; a full-document fallback; the immutable original ask; and structured user clarifications;
 - GitHub-style Markdown rendering, including tables and Mermaid diagrams in `mermaid` fenced code blocks;
 - an automatically generated plan outline, top-anchored previous/next navigation, `[`/`]` section shortcuts, `S`/`C` controls for the navigation and workflow-context sidebars, and direct links to individual planned changes;
 - a **Compare versions** view with two version selectors, `[`/`]` diff-block navigation, and a rich, formatted plan diff with green additions and red deletions; nearby changes use Git's default three-line context rule, so changes separated by up to six unchanged lines form one block;
@@ -81,7 +81,7 @@ Use the exact value `None` for a change with no prerequisites. Otherwise, write 
 
 An arrow **PC-01 → PC-03** means that PC-03 requires the result of PC-01. For example, `PC-01 → PC-02`, `PC-01 → PC-03`, and `PC-02, PC-03 → PC-04` describe two branches that come together at PC-04. Do not add dependencies solely to force a linear sequence. Independent branches need not wait for each other, but concurrent agents must still coordinate shared files.
 
-The **Graph** reading mode generates a Mermaid diagram directly from these fields. Select a node to inspect its change and highlight prerequisites and downstream changes. Requires and Enables links connect related changes, and a text dependency list provides an alternative to the diagram. The version comparison also summarizes dependency changes.
+The **Dependency graph** section in **Guided view** generates a Mermaid diagram directly from these fields. It comes after Goal and before the planned changes, with the same outline, previous/next controls, and `[`/`]` shortcuts as the other sections. Select a node to inspect its change and highlight prerequisites and downstream changes, then choose **Open planned change** to read that entry. Requires and Enables links connect related changes, and a text dependency list provides an alternative to the diagram. The version comparison also summarizes dependency changes.
 
 `workflow_update_plan` saves incomplete drafts and returns a warning when their graph is unavailable. `/workflow-implement` requires a declaration on every change and rejects unknown IDs, repeated dependencies, self-dependencies, and cycles. Older approved plans without dependency declarations remain readable and reviewable; their graph is explicitly unavailable rather than inferred from entry order.
 

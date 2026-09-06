@@ -127,7 +127,11 @@ assert.ok(html.includes("function renderMermaidDiagrams(root)"));
 assert.ok(html.includes('library.run({nodes:nodes,suppressErrors:true})'));
 assert.ok(html.includes("function renderRichDiff(rows, before, after)"));
 assert.ok(html.includes("function parsePlanStructure(markdown)"));
-assert.ok(html.includes('id="plan-graph-mode-button"'));
+assert.ok(!html.includes('id="plan-graph-mode-button"'), "Graph is a guided section, not a reading mode");
+assert.ok(html.includes('data-reader="plan" data-reader-destination="graph">Dependency graph</button>'));
+assert.ok(html.indexOf('data-reader-destination="goal"') < html.indexOf('data-reader-destination="graph"'));
+assert.ok(html.indexOf('data-reader-destination="graph"') < html.indexOf('id="plan-change-links"'));
+assert.ok(!html.includes('plan-reader--graph{display:block}'), "the graph must preserve the guided outline");
 assert.ok(html.includes('.guided-pagination[hidden]{display:none}'));
 assert.ok(html.includes('.ds-tabs__tab[hidden]{display:none}'));
 assert.ok(html.includes('.plan-layout>.plan-card{min-width:0}'), "diagram overflow stays inside the card on narrow screens");
@@ -143,7 +147,8 @@ assert.ok(html.includes('htmlLabels:false,useMaxWidth:false'));
 assert.ok(html.includes('window.addEventListener("hashchange",applyDashboardHash)'));
 assert.ok(!html.includes('.bindFunctions('));
 assert.ok(html.includes('.dependency-canvas{overflow:auto;max-width:100%'));
-assert.ok(html.includes('.dependency-canvas svg{display:block;max-width:none!important'));
+assert.ok(html.includes('.dependency-canvas svg{display:block;height:auto;'));
+assert.ok(!html.includes('.dependency-canvas svg{display:block;max-width:none!important'), "CSS must not override the responsive diagram width");
 assert.ok(html.includes('id="plan-full-mode-button"'));
 assert.ok(html.includes('id="review-guided-mode-button"'));
 assert.ok(html.includes('id="review-full-mode-button"'));
@@ -215,9 +220,9 @@ const helperSource = dashboardScript.slice(
   dashboardScript.indexOf("function escapeHtml"),
   dashboardScript.indexOf("function initialize"),
 );
-const { dependencyChanges, dependencyRelations, diffBlockStartIndexes, generateDependencyDiagram, hashReaderDestination, initialViewForHash, lineDiff, mermaidGraphText, parsePlanStructure, planModeForState, renderDependencyChanges, renderDependencyList, renderMarkdown, renderRichDiff, wrapGraphTitle } = new Function(
+const { createPlanDestinations, dependencyChanges, dependencyRelations, diffBlockStartIndexes, generateDependencyDiagram, hashReaderDestination, initialViewForHash, lineDiff, mermaidGraphText, parsePlanStructure, planModeForState, planDestinationForState, renderDependencyChanges, renderDependencyList, renderMarkdown, renderRichDiff, wrapGraphTitle } = new Function(
   "marked",
-  `${helperSource}; return { dependencyChanges, dependencyRelations, diffBlockStartIndexes, generateDependencyDiagram, hashReaderDestination, initialViewForHash, lineDiff, mermaidGraphText, parsePlanStructure, planModeForState, renderDependencyChanges, renderDependencyList, renderMarkdown, renderRichDiff, wrapGraphTitle };`,
+  `${helperSource}; return { createPlanDestinations, dependencyChanges, dependencyRelations, diffBlockStartIndexes, generateDependencyDiagram, hashReaderDestination, initialViewForHash, lineDiff, mermaidGraphText, parsePlanStructure, planModeForState, planDestinationForState, renderDependencyChanges, renderDependencyList, renderMarkdown, renderRichDiff, wrapGraphTitle };`,
 )(marked);
 function normalizeRenderedMarkdown(value) { return value.replace(/>\s+</g, "><").replace(/\s+/g, " ").trim(); }
 const softWrappedMarkdown = `A paragraph with **strong text** wraps
@@ -641,7 +646,7 @@ const detail = detailHelpers.renderGraphDetail(graph, "PC-01");
 assert.ok(detail.includes("<h4>What</h4>"));
 assert.ok(detail.includes("<h4>Why</h4>"));
 assert.ok(detail.includes("<strong>PC-01</strong>"));
-assert.ok(detail.includes("Read in guided view"));
+assert.ok(detail.includes("Open planned change"));
 assert.ok(detail.includes('href="#plan/change-1-pc-01-read-shared-schema"'));
 const guidedLinks = detailHelpers.renderDependencyRelations(graph, "PC-04", false);
 assert.ok(guidedLinks.includes('href="#plan/change-1-pc-01-read-shared-schema"'));
@@ -651,16 +656,27 @@ assert.equal(hashReaderDestination("#plan-graph/PC-02", "plan"), "graph/PC-02");
 assert.equal(hashReaderDestination("#plan/graph/PC-02", "plan"), "graph/PC-02");
 assert.equal(hashReaderDestination("#plan/PC-02", "plan"), "PC-02");
 assert.equal(initialViewForHash("#plan-graph", "review", true), "plan");
-assert.equal(planModeForState(null, undefined, true, true), "graph");
-assert.equal(planModeForState(null, "guided", true, true), "guided");
-assert.equal(planModeForState(null, "full", true, true), "full");
-assert.equal(planModeForState("goal", "graph", true, true), "guided");
-assert.equal(planModeForState("PC-02", "graph", true, true), "guided");
-assert.equal(planModeForState("graph/PC-02", "guided", true, true), "graph");
-assert.equal(planModeForState(null, undefined, false, true), "guided");
-assert.equal(planModeForState(null, undefined, false, false), "full");
-assert.equal(planModeForState("graph", "full", false, false), "graph", "unavailable graphs remain accessible explicitly");
-assert.equal(planModeForState(null, "garbage", true, true), "graph");
+assert.equal(planModeForState(null, undefined, true), "guided", "new visits start at Goal in Guided view");
+assert.equal(planModeForState(null, "guided", true), "guided");
+assert.equal(planModeForState(null, "full", true), "full");
+assert.equal(planModeForState("goal", "graph", true), "guided");
+assert.equal(planModeForState("PC-02", "graph", true), "guided");
+assert.equal(planModeForState("graph/PC-02", "full", true), "guided");
+assert.equal(planModeForState(null, "graph", true), "guided", "restore old Graph mode as Guided view");
+assert.equal(planModeForState(null, undefined, false), "full");
+assert.equal(planModeForState("graph", "full", false), "full", "unstructured legacy documents retain the full-document fallback");
+assert.equal(planModeForState(null, "garbage", true), "guided");
+assert.equal(planDestinationForState(null, undefined, undefined), "goal");
+assert.equal(planDestinationForState(null, "graph", "goal"), "graph");
+assert.equal(planDestinationForState("goal", "graph", "graph"), "goal");
+assert.equal(planDestinationForState("graph/PC-02", "full", "goal"), "graph/PC-02");
+assert.equal(planDestinationForState(null, "guided", "graph"), "graph");
+assert.equal(planDestinationForState("full", "guided", "graph"), "graph");
+const guidedDestinations = createPlanDestinations(graphStructure);
+assert.deepEqual(guidedDestinations.map((section) => section.kind), ["goal", "graph", ...graphNodes.map(() => "change"), "testing"]);
+assert.equal(guidedDestinations[1].id, "graph");
+assert.equal(guidedDestinations[1].label, "Dependency graph");
+assert.deepEqual(createPlanDestinations({ canUseGuidedView: false }), []);
 assert.deepEqual(dependencyChanges(graph, graph), { addedNodes: [], removedNodes: [], addedEdges: [], removedEdges: [] });
 const changedGraph = { status: "valid", nodes: graphNodes.map((node) => node.id === "PC-04" ? { ...node, dependsOn: ["PC-03"] } : node) };
 assert.deepEqual(dependencyChanges(graph, changedGraph), { addedNodes: [], removedNodes: [], addedEdges: ["PC-03 → PC-04"], removedEdges: ["PC-01 → PC-04", "PC-02 → PC-04"] });
@@ -672,7 +688,7 @@ assert.ok(renderDependencyChanges(graph, changedGraph).includes("Dependency remo
 
 // Exercise the browser-owned SVG handlers and async rendering without trusting Mermaid callbacks.
 const graphElements = {};
-for (const id of ["plan-content", "plan-pagination", "plan-dependency-canvas", "plan-graph-detail", "plan-graph-selection", "plan-graph-detail-title", "plan-graph-render-status"]) graphElements[id] = readerElement();
+for (const id of ["plan-content", "plan-pagination", "plan-dependency-canvas", "plan-graph-detail", "plan-graph-selection", "plan-graph-detail-title", "plan-graph-render-status", "plan-reader", "plan-outline", "plan-navigation-sidebar-button", "plan-guided-mode-button", "plan-full-mode-button", "plan-position", "plan-previous-section", "plan-next-section"]) graphElements[id] = readerElement();
 const svg = { ...readerElement(), style: {}, viewBox: { baseVal: { width: 960, height: 820 } } };
 const svgNodes = graph.nodes.map(() => ({ ...readerElement(), listeners: {}, addEventListener(name, handler) { this.listeners[name] = handler; } }));
 const listButtons = graph.nodes.map((node) => ({ ...readerElement(), dataset: { graphSelect: node.id } }));
@@ -685,9 +701,9 @@ const mermaidStub = {
 const graphDocument = {
   documentElement: { dataset: { theme: "dark" } },
   getElementById(id) { return graphElements[id]; },
-  querySelectorAll(selector) { assert.equal(selector, "[data-graph-select]"); return listButtons; },
+  querySelectorAll(selector) { return selector === "[data-graph-select]" ? listButtons : []; },
 };
-const graphBrowser = new Function("latestPlan", "planStructure", "globalThis", "document", "location", "history", "marked", `let selectedGraphNode="PC-04",graphRenderSequence=0;const readers={plan:{mode:"graph",destinations:[{id:"goal"}]}};${helperSource};return { renderDependencyGraphDiagram, renderPlanGraph, selectGraphNode, handleDependencyNavigation };`)(normalized.versions[2], graphStructure, { mermaid: mermaidStub }, graphDocument, fakeLocation, fakeHistory, marked);
+const graphBrowser = new Function("latestPlan", "planStructure", "globalThis", "document", "location", "history", "marked", `let selectedGraphNode="PC-04",graphRenderSequence=0,navigationSidebarCollapsed=false;const readers={plan:{mode:"guided",currentDestination:"graph",destinations:[{id:"goal"},{id:"graph"}]}};${helperSource};return { renderDependencyGraphDiagram, renderPlanGraph, selectGraphNode, handleDependencyNavigation, configureReader, createPlanDestinations, renderPlanDestination, renderFullPlan, renderReader, setReaderMode, moveReader, readers };`)(normalized.versions[2], graphStructure, { mermaid: mermaidStub }, graphDocument, fakeLocation, fakeHistory, marked);
 await graphBrowser.renderDependencyGraphDiagram(graph);
 assert.equal(mermaidOptions.securityLevel, "strict");
 assert.equal(mermaidOptions.theme, "dark");
@@ -695,8 +711,10 @@ assert.equal(mermaidOptions.htmlLabels, false, "root htmlLabels takes precedence
 assert.equal(mermaidOptions.flowchart.htmlLabels, false);
 assert.equal(mermaidSource, diagram);
 assert.equal(boundCallbacks, 0);
-assert.equal(svg.style.width, "960px", "wide graphs retain readable intrinsic dimensions for scrolling");
-assert.equal(svg.style.height, "820px");
+assert.equal(svg.style.width, "100%", "graphs fit the guided column when there is enough room");
+assert.equal(svg.style.maxWidth, "960px");
+assert.equal(svg.style.minWidth, "720px", "labels never shrink below 75%; narrow screens scroll instead");
+assert.equal(svg.style.height, "auto");
 assert.equal(svgNodes[0].attributes.role, "button");
 assert.equal(svgNodes[0].attributes.tabindex, "0");
 assert.match(svgNodes[0].attributes["aria-label"], /Requires: PC-03/);
@@ -732,12 +750,47 @@ await newRender;
 pendingRenders[0]({ svg: "stale render" });
 await oldRender;
 assert.equal(graphElements["plan-dependency-canvas"].innerHTML, "new render", "stale async renders cannot replace a newer theme or selection");
-const unavailableBrowser = new Function("latestPlan", "document", `const readers={plan:{destinations:[]}};${helperSource};return {renderPlanGraph};`)({ dependencyGraph: { status: "unavailable", reason: '<script>unsafe legacy reason</script>' } }, graphDocument);
-unavailableBrowser.renderPlanGraph();
-assert.match(graphElements["plan-content"].innerHTML, /Graph unavailable/);
-assert.match(graphElements["plan-content"].innerHTML, /&lt;script&gt;/);
-assert.ok(!graphElements["plan-content"].innerHTML.includes("<script>"));
-assert.match(graphElements["plan-content"].innerHTML, /data-graph-fallback="full"/);
+const unavailableBrowser = new Function("latestPlan", `${helperSource};return {renderPlanGraph};`)({ dependencyGraph: { status: "unavailable", reason: '<script>unsafe legacy reason</script>' } });
+const unavailableSection = unavailableBrowser.renderPlanGraph();
+assert.match(unavailableSection, /Graph unavailable/);
+assert.match(unavailableSection, /&lt;script&gt;/);
+assert.ok(!unavailableSection.includes("<script>"));
+assert.match(unavailableSection, /data-graph-fallback="full"/);
+assert.ok(!unavailableSection.includes('data-graph-fallback="guided"'));
+
+// The graph participates in the same guided sequence, sidebar, pagination and saved state as prose.
+mermaidStub.render = async () => ({ svg: "<svg>guided graph</svg>" });
+graphBrowser.configureReader("plan", guidedDestinations, graphBrowser.renderPlanDestination, graphBrowser.renderFullPlan);
+graphBrowser.setReaderMode("plan", "guided", "goal", false);
+assert.equal(graphElements["plan-next-section"].dataset.destination, "graph");
+graphBrowser.moveReader("plan", 1, false);
+assert.equal(graphBrowser.readers.plan.mode, "guided");
+assert.equal(graphBrowser.readers.plan.currentDestination, "graph");
+assert.equal(graphElements["plan-outline"].hidden, false);
+assert.equal(graphElements["plan-pagination"].hidden, false);
+assert.equal(graphElements["plan-position"].textContent, "Dependency graph");
+assert.equal(graphElements["plan-previous-section"].dataset.destination, "goal");
+assert.equal(graphElements["plan-next-section"].dataset.destination, guidedDestinations[2].id);
+assert.equal(graphElements["plan-reader"].classList.contains("plan-reader--dependencies"), true);
+assert.equal(graphElements["plan-guided-mode-button"].attributes["aria-pressed"], "true");
+assert.match(graphElements["plan-content"].innerHTML, /id="plan-dependency-graph"/);
+graphBrowser.selectGraphNode("PC-03", false);
+assert.equal(graphBrowser.readers.plan.currentDestination, "graph", "node selection does not replace the guided destination");
+graphBrowser.moveReader("plan", 1, false);
+assert.equal(graphBrowser.readers.plan.currentDestination, guidedDestinations[2].id);
+assert.equal(graphElements["plan-previous-section"].dataset.destination, "graph");
+assert.equal(graphElements["plan-reader"].classList.contains("plan-reader--dependencies"), false);
+graphBrowser.moveReader("plan", -1, false);
+assert.equal(graphBrowser.readers.plan.currentDestination, "graph");
+assert.ok(fakeLocation.href.endsWith("#plan/graph/PC-03"), "returning to the graph keeps node selection");
+graphBrowser.renderReader("plan", "graph/PC-02", false);
+assert.equal(graphBrowser.readers.plan.currentDestination, "graph");
+assert.ok(fakeLocation.href.endsWith("#plan/graph/PC-02"));
+graphBrowser.setReaderMode("plan", "full");
+assert.equal(graphElements["plan-reader"].classList.contains("plan-reader--dependencies"), false);
 assert.equal(graphElements["plan-pagination"].hidden, true);
+graphBrowser.setReaderMode("plan", "guided", undefined, false);
+assert.equal(graphBrowser.readers.plan.currentDestination, "graph");
+assert.equal(graphElements["plan-pagination"].hidden, false);
 
 console.log("Dashboard test passed: normalized DAGs, safe graph navigation, legacy fallback, plan/review readers, and semantic version comparison.");
