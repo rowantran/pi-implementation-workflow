@@ -13,7 +13,7 @@ import {
 	type WorkflowFiles,
 } from "./storage.ts";
 import type { WorkflowReviewReport } from "./review-report.ts";
-import { getPlanDependencyGraph, parsePlannedChanges } from "./planned-changes.ts";
+import { getPlanDependencyGraph } from "./planned-changes.ts";
 
 const DASHBOARD_TEMPLATE = readFileSync(new URL("./dashboard.html", import.meta.url), "utf8");
 
@@ -61,13 +61,10 @@ export function renderWorkflowDashboard(data: WorkflowDashboardData): string {
 	// Legacy plans remain readable, but must never acquire inferred dependency edges.
 	const normalizedData = {
 		...data,
-		versions: data.versions.map((version) => {
-			const dependencyGraph = getPlanDependencyGraph(version.content);
-			const changeDetails = dependencyGraph.status === "valid"
-				? parsePlannedChanges(version.content).map(({ id, what, why }) => ({ id, what, why }))
-				: [];
-			return { ...version, dependencyGraph, changeDetails };
-		}),
+		versions: data.versions.map((version) => ({
+			...version,
+			dependencyGraph: getPlanDependencyGraph(version.content),
+		})),
 	};
 	const dashboardData = JSON.stringify(normalizedData);
 	const { generatedAt: _generatedAt, ...visibleData } = normalizedData;

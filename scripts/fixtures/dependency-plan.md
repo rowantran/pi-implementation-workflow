@@ -56,7 +56,7 @@ Readers need to see the independent branches and the points where their results 
 PC-03
 
 **What**
-Let readers select a node to inspect the change and highlight its prerequisites and downstream changes. Provide Requires and Enables links plus a text dependency list.
+Let readers select a node to highlight its prerequisites and downstream changes. Keep the graph section limited to the diagram and its legend, without extra content below it. Read change details through the plan outline; keep Requires and Enables links in each planned-change section.
 
 **Why**
 The diagram should explain the plan, not replace its details. Linked navigation keeps a selected change in the context of the complete plan.
@@ -99,6 +99,6 @@ All branches must work together before the feature is ready. Passing parser test
 - A valid branching plan saves its dependencies in each numbered Markdown version and displays all seven changes in the graph.
 - A plan with missing dependency fields, unknown identifiers, or a cycle can be saved as a draft with a warning, but cannot advance to implementation.
 - Selecting PC-04 highlights PC-03 and PC-01 as prerequisites and PC-07 as a downstream change. The reader can open each related change without losing its identity.
-- The graph remains readable in light and dark themes. Its text dependency list remains usable when Mermaid is unavailable.
+- The graph remains readable in light and dark themes, with no content below the diagram. When Mermaid is unavailable, the reader can still navigate to each planned change and read its dependency fields.
 - Comparing two versions reports changed dependencies rather than only diagram formatting changes.
 - The existing planning, implementation, review, and dashboard tests pass without modifying older approved plans.

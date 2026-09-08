@@ -139,7 +139,10 @@ assert.ok(html.includes('#plan-dependency-canvas .node.graph-node--selected .lab
 assert.ok(html.includes('class="dependency-goal"'));
 assert.ok(html.includes('id="plan-guided-mode-button"'));
 assert.ok(html.includes('id="plan-dependency-graph"'));
-assert.ok(html.includes('id="plan-dependency-list"'));
+for (const removed of ["plan-dependency-list", "plan-graph-selection", "plan-graph-detail", "plan-graph-render-status", "data-graph-select", "data-graph-open", "renderDependencyList", "renderGraphDetail"]) {
+  assert.ok(!html.includes(removed), `${removed} is removed, not hidden`);
+}
+assert.ok(!html.includes("Prerequisites and downstream changes are highlighted."));
 assert.ok(html.includes('id="plan-graph-unavailable"'));
 assert.ok(html.includes('id="dependency-diff"'));
 assert.ok(html.includes('securityLevel:"strict"'));
@@ -220,9 +223,9 @@ const helperSource = dashboardScript.slice(
   dashboardScript.indexOf("function escapeHtml"),
   dashboardScript.indexOf("function initialize"),
 );
-const { createPlanDestinations, dependencyChanges, dependencyRelations, diffBlockStartIndexes, generateDependencyDiagram, hashReaderDestination, initialViewForHash, lineDiff, mermaidGraphText, parsePlanStructure, planModeForState, planDestinationForState, renderDependencyChanges, renderDependencyList, renderMarkdown, renderRichDiff, wrapGraphTitle } = new Function(
+const { createPlanDestinations, dependencyChanges, dependencyRelations, diffBlockStartIndexes, generateDependencyDiagram, hashReaderDestination, initialViewForHash, lineDiff, mermaidGraphText, parsePlanStructure, planModeForState, planDestinationForState, renderDependencyChanges, renderMarkdown, renderRichDiff, wrapGraphTitle } = new Function(
   "marked",
-  `${helperSource}; return { createPlanDestinations, dependencyChanges, dependencyRelations, diffBlockStartIndexes, generateDependencyDiagram, hashReaderDestination, initialViewForHash, lineDiff, mermaidGraphText, parsePlanStructure, planModeForState, planDestinationForState, renderDependencyChanges, renderDependencyList, renderMarkdown, renderRichDiff, wrapGraphTitle };`,
+  `${helperSource}; return { createPlanDestinations, dependencyChanges, dependencyRelations, diffBlockStartIndexes, generateDependencyDiagram, hashReaderDestination, initialViewForHash, lineDiff, mermaidGraphText, parsePlanStructure, planModeForState, planDestinationForState, renderDependencyChanges, renderMarkdown, renderRichDiff, wrapGraphTitle };`,
 )(marked);
 function normalizeRenderedMarkdown(value) { return value.replace(/>\s+</g, "><").replace(/\s+/g, " ").trim(); }
 const softWrappedMarkdown = `A paragraph with **strong text** wraps
@@ -598,12 +601,12 @@ const graphHtml = renderWorkflowDashboard(graphData);
 const normalized = snapshotFromHtml(graphHtml);
 assert.equal(JSON.stringify(graphData), serializedBeforeRender, "normalization must not mutate callers' snapshots");
 assert.equal(normalized.versions[0].dependencyGraph.status, "unavailable");
-assert.deepEqual(normalized.versions[0].changeDetails, []);
+assert.ok(!Object.hasOwn(normalized.versions[0], "changeDetails"));
 assert.equal(normalized.versions[1].dependencyGraph.status, "unavailable");
 assert.match(normalized.versions[1].dependencyGraph.reason, /PC-99/);
 const graph = normalized.versions[2].dependencyGraph;
 assert.deepEqual(graph, { status: "valid", nodes: graphNodes });
-assert.deepEqual(normalized.versions[2].changeDetails[0], { id: "PC-01", what: "Implement **PC-01** safely.", why: "Keep readers informed." });
+assert.ok(!Object.hasOwn(normalized.versions[2], "changeDetails"), "graph snapshots no longer duplicate change details");
 assert.ok(!graphHtml.includes('<script>alert(1)</script>'));
 assert.deepEqual(snapshotFromHtml(renderWorkflowDashboard({ ...data, versions: [] })).versions, []);
 const staleGraph = { ...data.versions[0], dependencyGraph: graph };
@@ -632,23 +635,18 @@ assert.deepEqual([...dependencyRelations(graph, "PC-03").downstream].sort(), ["P
 assert.equal(dependencyRelations(graph, "PC-05").ancestors.size, 0);
 assert.equal(dependencyRelations(graph, "PC-05").downstream.size, 0);
 assert.equal(dependencyRelations(legacyGraph, "PC-01").ancestors.size, 0);
-const textList = renderDependencyList(graph);
-assert.equal(textList.match(/data-graph-select=/g)?.length, 6);
-assert.equal(textList.match(/<strong>Requires<\/strong>/g)?.length, 6);
-assert.equal(textList.match(/<strong>Enables<\/strong>/g)?.length, 6);
-assert.ok(textList.includes('href="#plan/graph/PC-03"'));
-assert.ok(textList.includes("&lt;script&gt;"));
-assert.ok(!textList.includes("<script>"));
-assert.ok(!textList.includes("<details"), "dependency alternative is always visible");
 const graphStructure = parsePlanStructure(graphPlan);
-const detailHelpers = new Function("latestPlan", "planStructure", "marked", `${helperSource};return { renderGraphDetail, renderDependencyRelations };`)(normalized.versions[2], graphStructure, marked);
-const detail = detailHelpers.renderGraphDetail(graph, "PC-01");
-assert.ok(detail.includes("<h4>What</h4>"));
-assert.ok(detail.includes("<h4>Why</h4>"));
-assert.ok(detail.includes("<strong>PC-01</strong>"));
-assert.ok(detail.includes("Open planned change"));
-assert.ok(detail.includes('href="#plan/change-1-pc-01-read-shared-schema"'));
-const guidedLinks = detailHelpers.renderDependencyRelations(graph, "PC-04", false);
+const sectionHelpers = new Function("latestPlan", "planStructure", "marked", `${helperSource};return { renderPlanGraph, renderDependencyRelations, renderPlanDestination };`)(normalized.versions[2], graphStructure, marked);
+const graphSection = sectionHelpers.renderPlanGraph();
+assert.ok(graphSection.includes('class="dependency-legend"'));
+assert.match(graphSection, /Drawing dependency graph…<\/p><\/div><\/section>$/, "the graph canvas is the last element in its section");
+assert.ok(!graphSection.includes("Selected change"));
+assert.ok(!graphSection.includes("Dependency list"));
+const changeSection = sectionHelpers.renderPlanDestination({ kind: "change", change: graphStructure.changes[0] });
+assert.ok(changeSection.includes("<strong>What</strong>"));
+assert.ok(changeSection.includes("<strong>Why</strong>"));
+assert.ok(changeSection.includes("Implement <strong>PC-01</strong> safely."), "planned-change details remain in their own guided section");
+const guidedLinks = sectionHelpers.renderDependencyRelations(graph, "PC-04");
 assert.ok(guidedLinks.includes('href="#plan/change-1-pc-01-read-shared-schema"'));
 assert.ok(guidedLinks.includes("PC-06</a>"));
 assert.equal(hashReaderDestination("#plan-graph", "plan"), "graph");
@@ -688,10 +686,9 @@ assert.ok(renderDependencyChanges(graph, changedGraph).includes("Dependency remo
 
 // Exercise the browser-owned SVG handlers and async rendering without trusting Mermaid callbacks.
 const graphElements = {};
-for (const id of ["plan-content", "plan-pagination", "plan-dependency-canvas", "plan-graph-detail", "plan-graph-selection", "plan-graph-detail-title", "plan-graph-render-status", "plan-reader", "plan-outline", "plan-navigation-sidebar-button", "plan-guided-mode-button", "plan-full-mode-button", "plan-position", "plan-previous-section", "plan-next-section"]) graphElements[id] = readerElement();
+for (const id of ["plan-content", "plan-pagination", "plan-dependency-canvas", "plan-reader", "plan-outline", "plan-navigation-sidebar-button", "plan-guided-mode-button", "plan-full-mode-button", "plan-position", "plan-previous-section", "plan-next-section"]) graphElements[id] = readerElement();
 const svg = { ...readerElement(), style: {}, viewBox: { baseVal: { width: 960, height: 820 } } };
 const svgNodes = graph.nodes.map(() => ({ ...readerElement(), listeners: {}, addEventListener(name, handler) { this.listeners[name] = handler; } }));
-const listButtons = graph.nodes.map((node) => ({ ...readerElement(), dataset: { graphSelect: node.id } }));
 graphElements["plan-dependency-canvas"].querySelector = (selector) => selector === "svg" ? svg : svgNodes[Number(/dag-node-(\d+)/.exec(selector)?.[1])];
 let mermaidOptions, mermaidSource, boundCallbacks = 0;
 const mermaidStub = {
@@ -701,7 +698,7 @@ const mermaidStub = {
 const graphDocument = {
   documentElement: { dataset: { theme: "dark" } },
   getElementById(id) { return graphElements[id]; },
-  querySelectorAll(selector) { return selector === "[data-graph-select]" ? listButtons : []; },
+  querySelectorAll() { return []; },
 };
 const graphBrowser = new Function("latestPlan", "planStructure", "globalThis", "document", "location", "history", "marked", `let selectedGraphNode="PC-04",graphRenderSequence=0,navigationSidebarCollapsed=false;const readers={plan:{mode:"guided",currentDestination:"graph",destinations:[{id:"goal"},{id:"graph"}]}};${helperSource};return { renderDependencyGraphDiagram, renderPlanGraph, selectGraphNode, handleDependencyNavigation, configureReader, createPlanDestinations, renderPlanDestination, renderFullPlan, renderReader, setReaderMode, moveReader, readers };`)(normalized.versions[2], graphStructure, { mermaid: mermaidStub }, graphDocument, fakeLocation, fakeHistory, marked);
 await graphBrowser.renderDependencyGraphDiagram(graph);
@@ -724,21 +721,22 @@ assert.equal(svgNodes[5].classList.contains("graph-node--downstream"), true);
 svgNodes[2].listeners.click();
 assert.equal(svgNodes[2].classList.contains("graph-node--selected"), true);
 assert.equal(svgNodes[3].classList.contains("graph-node--downstream"), true);
-assert.ok(graphElements["plan-graph-detail"].innerHTML.includes("Define shared schema"));
+assert.match(svgNodes[2].attributes["aria-label"], /Highlight prerequisites and downstream changes/);
 assert.ok(fakeLocation.href.endsWith("#plan/graph/PC-03"));
 let preventedKey = false;
 svgNodes[4].listeners.keydown({ key: " ", preventDefault() { preventedKey = true; } });
 assert.equal(preventedKey, true);
 assert.equal(svgNodes[4].attributes["aria-pressed"], "true");
 assert.equal(svgNodes[3].classList.contains("graph-node--downstream"), false);
-assert.equal(listButtons[4].attributes["aria-pressed"], "true");
-const selectedDetail = graphElements["plan-graph-detail"].innerHTML;
-graphBrowser.selectGraphNode('PC-99" onclick="evil', false);
-assert.equal(graphElements["plan-graph-detail"].innerHTML, selectedDetail, "unknown node IDs cannot drive browser navigation");
+const selectedHash = fakeLocation.href;
+graphBrowser.selectGraphNode('PC-99" onclick="evil');
+assert.equal(fakeLocation.href, selectedHash, "unknown node IDs cannot drive browser navigation");
+assert.equal(svgNodes[4].attributes["aria-pressed"], "true");
 mermaidStub.render = async () => { throw new Error("offline"); };
 await graphBrowser.renderDependencyGraphDiagram(graph);
-assert.match(graphElements["plan-dependency-canvas"].textContent, /dependencies and change details are available below/);
-assert.match(graphElements["plan-graph-render-status"].textContent, /Use the dependency list/);
+assert.match(graphElements["plan-dependency-canvas"].innerHTML, /role="status"/);
+assert.match(graphElements["plan-dependency-canvas"].innerHTML, /Use the plan outline or Next/);
+assert.ok(!graphElements["plan-dependency-canvas"].innerHTML.includes("below"), "render failures do not refer to the removed list");
 const pendingRenders = [];
 mermaidStub.render = () => new Promise((resolve) => pendingRenders.push(resolve));
 const oldRender = graphBrowser.renderDependencyGraphDiagram(graph);
@@ -774,7 +772,7 @@ assert.equal(graphElements["plan-next-section"].dataset.destination, guidedDesti
 assert.equal(graphElements["plan-reader"].classList.contains("plan-reader--dependencies"), true);
 assert.equal(graphElements["plan-guided-mode-button"].attributes["aria-pressed"], "true");
 assert.match(graphElements["plan-content"].innerHTML, /id="plan-dependency-graph"/);
-graphBrowser.selectGraphNode("PC-03", false);
+graphBrowser.selectGraphNode("PC-03");
 assert.equal(graphBrowser.readers.plan.currentDestination, "graph", "node selection does not replace the guided destination");
 graphBrowser.moveReader("plan", 1, false);
 assert.equal(graphBrowser.readers.plan.currentDestination, guidedDestinations[2].id);
