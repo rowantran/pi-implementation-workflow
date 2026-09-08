@@ -49,7 +49,7 @@ If planning is already active, continue through normal conversation instead of r
 The extension saves the submitted ask verbatim as immutable workflow metadata, starts `plan.md` and `working-plan.md` with only the implementation-plan title, and sends the ask as the planning kickoff message. After each `workflow_update_plan` call, its output includes the HTTP dashboard link. It never opens the browser automatically. The extension serves a single-page dashboard styled with the Isara design system. It has:
 
 - a concise plain-English plan description as the main document title, beside its prominent current version number;
-- a **Plan** view with a guided, change-by-change reader, a full-document fallback, the immutable original ask, and structured user clarifications;
+- a **Plan** view with a guided reader ordered as Goal, Dependency graph, planned changes, and Testing; a full-document fallback; the immutable original ask; and structured user clarifications;
 - GitHub-style Markdown rendering, including tables and Mermaid diagrams in `mermaid` fenced code blocks;
 - an automatically generated plan outline, top-anchored previous/next navigation, `[`/`]` section shortcuts, `S`/`C` controls for the navigation and workflow-context sidebars, and direct links to individual planned changes;
 - a **Compare versions** view with two version selectors, `[`/`]` diff-block navigation, and a rich, formatted plan diff with green additions and red deletions; nearby changes use Git's default three-line context rule, so changes separated by up to six unchanged lines form one block;
@@ -58,7 +58,34 @@ The extension saves the submitted ask verbatim as immutable workflow metadata, s
 
 Press `Ctrl+Alt+D` or run `/workflow-dashboard` to regenerate the dashboard and show its link again.
 
-The plan has **Goal**, **Planned Changes**, and **Testing** sections. Every planned change uses a stable consecutive identifier (`PC-01`, `PC-02`, and so on) with explicit **What** and **Why** fields. A change includes **Pseudocode** only when it clarifies meaningful behavior, state, interfaces, or data flow; mechanical documentation, testing, configuration, data, migration, and wiring changes can omit it. The Testing section contains explicit verification criteria. Planned changes and testing criteria become separate units of the implementation review. Planning cannot advance if the required structure is missing, empty, or ambiguous.
+The plan has **Goal**, **Planned Changes**, and **Testing** sections. Every planned change uses a stable consecutive identifier (`PC-01`, `PC-02`, and so on) with explicit **Depends on**, **What**, and **Why** fields. A change includes **Pseudocode** only when it clarifies meaningful behavior, state, interfaces, or data flow; mechanical documentation, testing, configuration, data, migration, and wiring changes can omit it. The Testing section contains explicit verification criteria. Planned changes and testing criteria become separate units of the implementation review. Planning cannot advance if the required structure is missing, empty, or ambiguous.
+
+### Change dependencies
+
+Every planned change declares its direct prerequisites before its What field:
+
+```markdown
+### PC-03: Show the graph
+
+**Depends on**
+PC-01, PC-02
+
+**What**
+Render the planned changes and their dependencies.
+
+**Why**
+Readers need to see how the changes fit together.
+```
+
+Use the exact value `None` for a change with no prerequisites. Otherwise, write canonical planned-change IDs separated by commas on one line. Dependencies can refer to later entries: the numbered entries provide reading order, while dependencies define execution order. Keep IDs stable when adding a prerequisite; do not renumber the plan to make the graph run in numerical order.
+
+An arrow **PC-01 → PC-03** means that PC-03 requires the result of PC-01. For example, `PC-01 → PC-02`, `PC-01 → PC-03`, and `PC-02, PC-03 → PC-04` describe two branches that come together at PC-04. Do not add dependencies solely to force a linear sequence. Independent branches need not wait for each other, but concurrent agents must still coordinate shared files.
+
+The **Dependency graph** section in **Guided view** generates a Mermaid diagram directly from these fields. It comes after Goal and before the planned changes, with the same outline, previous/next controls, and `[`/`]` shortcuts as the other sections. Select a node to highlight its prerequisites and downstream changes; the legend explains the colors. The section ends at the graph, without a selection message, change details, or a duplicate dependency list. Read each change through the plan outline or Next. Its Requires and Enables links connect related changes, and its dependency fields remain available if the diagram cannot render. The version comparison also summarizes dependency changes.
+
+`workflow_update_plan` saves incomplete drafts and returns a warning when their graph is unavailable. `/workflow-implement` requires a declaration on every change and rejects unknown IDs, repeated dependencies, self-dependencies, and cycles. Older approved plans without dependency declarations remain readable and reviewable; their graph is explicitly unavailable rather than inferred from entry order.
+
+The Markdown is the only authoritative graph storage. `working-plan.md`, `plan.md`, and each numbered Markdown version contain the dependencies. The dashboard derives graph data from each version's Markdown; there is no separately editable graph file, progress state, or task scheduler.
 
 During planning, the agent uses native `edit` or `write` calls only on `working-plan.md`. It then calls `workflow_update_plan` with a one-sentence-or-less English description. The tool is the only way to commit a plan change: it stores the complete working plan as the next numbered Markdown file under `versions/`, copies the same content to `plan.md`, and updates the description. Calls whose working-plan content matches the prior version still create a new version. `/workflow-implement` refuses to advance while `working-plan.md` differs from the committed `plan.md`.
 
@@ -343,6 +370,14 @@ npm test
 ```
 
 The package loads `src/index.ts` directly through Pi. No build step is required.
+
+Preview a branching dependency plan with the real dashboard renderer and bundled Mermaid assets:
+
+```bash
+npm run preview:dag
+```
+
+Open the printed loopback URL. The preview includes two plan versions so you can inspect graph navigation and dependency differences. It uses temporary storage, not your saved workflows, and removes its temporary files when stopped with Ctrl+C. To use another port, run `PORT=43124 npm run preview:dag`. The example Markdown is at `scripts/fixtures/dependency-plan.md`.
 
 ## License
 

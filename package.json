@@ -56,6 +56,7 @@
   },
   "scripts": {
     "smoke": "node ./scripts/smoke.mjs",
+    "preview:dag": "node ./scripts/preview-dag.mjs",
     "test:command-flow": "node ./scripts/command-flow-test.mjs",
     "test:config": "node ./scripts/config-test.mjs",
     "test:dashboard": "node ./scripts/dashboard-test.mjs",

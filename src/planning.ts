@@ -8,7 +8,7 @@ export function planningCompletionError(plan: string, description: string): stri
 		return "The plan description is empty. Use workflow_update_plan to set it before advancing to implementation.";
 	}
 	try {
-		parsePlannedChanges(plan);
+		parsePlannedChanges(plan, { requireDependencies: true });
 		parseTestingCriteria(plan);
 	} catch (error) {
 		const detail = error instanceof Error ? error.message : String(error);

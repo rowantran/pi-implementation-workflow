@@ -77,6 +77,30 @@ assert.ok(implementationSystem.includes("use one pull request only for a small c
 assert.ok(implementationSystem.includes("default to a linear stack"));
 assert.ok(implementationSystem.includes("bottom pull request must target main"));
 assert.ok(!implementationSystem.includes("&amp;"));
+assert.ok(implementationSystem.includes("**Depends on**"));
+assert.ok(implementationSystem.includes("implement them before their dependents"));
+assert.ok(implementationSystem.includes("reading order, not execution order"));
+assert.ok(implementationSystem.includes("forward references are valid"));
+assert.ok(implementationSystem.includes("dependency DAG as a required pull request shape"));
+assert.ok(implementationSystem.includes("shared files concurrently"));
+assert.ok(implementationSystem.includes("Keep approved PC IDs and dependencies immutable"));
+assert.ok(implementationSystem.includes("ask for clarification rather than rewriting"));
+assert.ok(implementationSystem.includes("dependencies are unspecified, not `None`"));
+assert.ok(implementationSystem.includes("Do not backfill the frozen plan"));
+
+for (const reviewPath of [undefined, "/tmp/review.json"]) {
+  const revision = prompts.revisionSystemPrompt({ ...implementationValues, reviewPath });
+  assert.ok(revision.includes("Use declared **Depends on** relationships"));
+  assert.ok(revision.includes("affected prerequisites and downstream dependents"));
+  assert.ok(revision.includes("including their integration and tests"));
+  assert.ok(revision.includes("reading order, not execution order"));
+  assert.ok(revision.includes("does not prescribe the pull request stack"));
+  assert.ok(revision.includes("conflict in shared files"));
+  assert.ok(revision.includes("Keep approved PC IDs and dependencies immutable"));
+  assert.ok(revision.includes("Ask for clarification about missing or incorrect dependencies"));
+  assert.ok(revision.includes("do not backfill their declarations"));
+  assert.ok(!revision.includes("undefined"));
+}
 
 const implementationUserValues = {
   ...durablePaths,
@@ -114,6 +138,21 @@ assert.ok(planningSystem.includes(planningValues.updatePlanTool));
 assert.ok(planningSystem.includes("three second-level sections"));
 assert.ok(planningSystem.includes("third-level Markdown heading (`###`)"));
 assert.ok(planningSystem.includes("### PC-01: Short descriptive title"));
+assert.match(planningSystem, /### PC-01: Short descriptive title\n\n\*\*Depends on\*\*\nNone\n\n\*\*What\*\*\n/);
+assert.ok(planningSystem.includes("Every entry must have exactly one standalone **Depends on** field before **What**"));
+assert.ok(planningSystem.includes("comma-separated canonical PC IDs such as `PC-02, PC-03`"));
+assert.ok(planningSystem.includes("Keep identifiers stable"));
+assert.ok(planningSystem.includes("reading order is distinct from execution order"));
+assert.ok(planningSystem.includes("Do not renumber stable PC IDs"));
+assert.ok(planningSystem.includes("implement PC-03 before PC-01"));
+assert.ok(planningSystem.includes("Forward references are allowed"));
+assert.ok(planningSystem.includes("real, direct prerequisites"));
+assert.ok(planningSystem.includes("without duplicates, self-references, unknown IDs, or cycles"));
+assert.ok(planningSystem.includes("Do not invent dependencies or fake chains"));
+assert.ok(planningSystem.includes("Graph independence does not guarantee"));
+assert.ok(planningSystem.includes("shared files, resources, and integration still require coordination"));
+assert.ok(planningSystem.includes("Incomplete drafts can be saved"));
+assert.ok(planningSystem.includes("Resolve every warning and declare a valid dependency DAG"));
 assert.ok(planningSystem.includes("**What**"));
 assert.ok(planningSystem.includes("**Why**"));
 assert.ok(planningSystem.includes("**Pseudocode**"));
@@ -176,6 +215,16 @@ const holisticReview = prompts.holisticReviewPrompt({
   pullRequestStack: reviewValues.pullRequestStack,
 });
 assert.ok(holisticReview.includes("Review the complete delivery holistically"));
+assert.ok(holisticReview.includes("Check declared **Depends on** relationships across changes"));
+assert.ok(holisticReview.includes("prerequisite contracts must exist"));
+assert.ok(holisticReview.includes("end-to-end tests must cover their integration"));
+assert.ok(holisticReview.includes("reading order, not execution order"));
+assert.ok(holisticReview.includes("dependency DAG need not match the linear pull request stack"));
+assert.ok(holisticReview.includes("Independent nodes are not proof"));
+assert.ok(holisticReview.includes("approved plan, PC IDs, and dependencies are immutable"));
+assert.ok(holisticReview.includes("do not rewrite the approved plan"));
+assert.ok(holisticReview.includes("dependencies as unspecified, not `None`"));
+assert.ok(holisticReview.includes("do not fail a review solely because the old format lacks declarations"));
 
 const testingCriteriaReview = prompts.testingCriteriaReviewPrompt({
   testingCriteria: "Run {{tests}} & inspect <output>.",
@@ -214,7 +263,7 @@ assert.equal(
   "Commit working-plan.md as the persistent plan, with its English description, as the next numbered version",
 );
 assert.deepEqual(prompts.updatePlanToolPromptGuidelines(), [
-  "Edit working-plan.md with the native edit or write tool, then use workflow_update_plan to commit every implementation-plan change during workflow planning.\nProvide a one-sentence-or-less English description that accurately describes the entirety of the working plan as it now stands. The description is the plan's display title: never describe only the latest edit or diff.",
+  "Edit working-plan.md with the native edit or write tool, then use workflow_update_plan to commit every implementation-plan change during workflow planning.\nProvide a one-sentence-or-less English description that accurately describes the entirety of the working plan as it now stands. The description is the plan's display title: never describe only the latest edit or diff.\nDraft saves are allowed even when dependencies are incomplete or invalid. If the result includes a dependency warning, fix the reported issue in working-plan.md and save again. Planning cannot finish until every planned change has a standalone **Depends on** field before **What**, containing None or comma-separated canonical PC IDs, and the dependencies form a valid DAG.",
 ]);
 
 console.log(

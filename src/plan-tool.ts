@@ -9,6 +9,7 @@ export interface UpdatePlanResult {
 	version: number;
 	dashboardUrl?: string;
 	dashboardError?: string;
+	dependencyWarning?: string;
 }
 
 const Parameters = Type.Object({
@@ -40,8 +41,9 @@ export function registerWorkflowPlanTool(
 				: result.dashboardError
 					? `\nWorkflow dashboard unavailable: ${result.dashboardError}`
 					: "";
+			const warning = result.dependencyWarning ? `\nDependency warning: ${result.dependencyWarning}` : "";
 			return {
-				content: [{ type: "text", text: `Saved implementation plan version ${result.version}.${dashboard}` }],
+				content: [{ type: "text", text: `Saved implementation plan version ${result.version}.${warning}${dashboard}` }],
 				details: result,
 			};
 		},
@@ -58,7 +60,10 @@ export function registerWorkflowPlanTool(
 				: details.dashboardError
 					? `\nWorkflow dashboard unavailable: ${details.dashboardError}`
 					: "";
-			return new Text(theme.fg("success", `Saved version ${details.version}${dashboard}`), 0, 0);
+			const warning = details.dependencyWarning
+				? `\n${theme.fg("warning", `Dependency warning: ${details.dependencyWarning}`)}`
+				: "";
+			return new Text(theme.fg("success", `Saved version ${details.version}${dashboard}`) + warning, 0, 0);
 		},
 	});
 }
