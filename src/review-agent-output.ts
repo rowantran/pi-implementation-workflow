@@ -18,7 +18,7 @@ export default function reviewAgentOutput(pi: ExtensionAPI): void {
 		defineTool({
 			name: PLANNED_CHANGE_OUTPUT_TOOL,
 			label: "Submit Planned Change Review",
-			description: "Submit the final structured review for one assigned planned change.",
+			description: "Submit the final structured review for one assigned planned change, using its exact stable slug ID.",
 			parameters: PlannedChangeAnalysisSchema,
 			async execute(_toolCallId, params) {
 				return {
@@ -34,7 +34,7 @@ export default function reviewAgentOutput(pi: ExtensionAPI): void {
 		defineTool({
 			name: INCREMENTAL_REVIEW_SCOPE_OUTPUT_TOOL,
 			label: "Submit Incremental Review Scope",
-			description: "Submit the planned changes whose prior reviews may be affected by the revision.",
+			description: "Submit the unique stable slug IDs of planned changes whose prior reviews may be affected by the revision.",
 			parameters: IncrementalReviewScopeSchema,
 			async execute(_toolCallId, params) {
 				return {

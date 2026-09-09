@@ -10,7 +10,13 @@ import {
 	type WorkflowReviewReport,
 } from "./review-report.ts";
 
-export const WORKFLOW_METADATA_VERSION = 5;
+import { preparePlanDraft, readPlanVersion } from "./plan-storage.ts";
+export {
+	finalizePlanDraft, hasUnsavedPlanDraft, listPlanVersions, planDirectory, preparePlanDraft, readPlanVersion, withPlanLock,
+	type PlanDocument, type PlanDraft, type PlanVersion, type PlannedChange,
+} from "./plan-storage.ts";
+
+export const WORKFLOW_METADATA_VERSION = 6;
 export const CLARIFICATIONS_STATE_VERSION = 1;
 export const DRAFT_IDENTIFIER_PATTERN = /^[a-zA-Z0-9-]+$/;
 export const IDENTIFIER_PATTERN = /^[a-z0-9][a-z0-9-]{0,79}$/;
@@ -67,13 +73,6 @@ export interface ActiveWorkflowMarker extends WorkflowLocator {
 
 export type WorkflowMetadata = DraftWorkflowMetadata | CompletedWorkflowMetadata;
 
-export interface PlanVersion {
-	number: number;
-	createdAt: string;
-	path: string;
-	content: string;
-}
-
 export interface SavedWorkflowReview {
 	number: number;
 	path: string;
@@ -97,9 +96,15 @@ export interface WorkflowClarifications {
 
 export interface WorkflowFiles {
 	root: string;
+	/** Alias of latestPlan, for prompt paths only; never read with generic file APIs. */
 	plan: string;
+	/** Mutable directory edited directly by the planning agent. */
 	workingPlan: string;
 	versions: string;
+	/** Tool-managed relative symlink, for prompt paths only. */
+	latestPlan: string;
+	/** Ignored tool-owned optimistic concurrency record, outside the draft. */
+	planDraftBase: string;
 	clarifications: string;
 	dashboard: string;
 	metadata: string;
@@ -169,9 +174,11 @@ export function resolveWorkflowLocator(identifier: string, registryRoot = workfl
 function filesAt(root: string): WorkflowFiles {
 	return {
 		root,
-		plan: join(root, "plan.md"),
-		workingPlan: join(root, "working-plan.md"),
-		versions: join(root, "versions"),
+		plan: join(root, "latest-plan"),
+		workingPlan: join(root, "working-plan"),
+		versions: join(root, "plan-versions"),
+		latestPlan: join(root, "latest-plan"),
+		planDraftBase: join(root, ".plan-draft-base.json"),
 		clarifications: join(root, "clarifications.json"),
 		dashboard: join(root, "dashboard.html"),
 		metadata: join(root, "metadata.json"),
@@ -194,7 +201,6 @@ export function isDraftWorkflowMetadata(metadata: WorkflowMetadata): metadata is
 
 export async function createDraft(
 	files: WorkflowFiles,
-	initialPlan: string,
 	metadata: DraftWorkflowMetadata,
 ): Promise<void> {
 	if (await pathExists(files.root)) throw new Error(`Workflow draft already exists: ${files.root}`);
@@ -202,20 +208,14 @@ export async function createDraft(
 	assertSafeArtifactPath(files.versions);
 	await mkdir(files.versions, { recursive: true });
 	await Promise.all([
-		atomicWrite(files.plan, initialPlan),
-		atomicWrite(files.workingPlan, initialPlan),
+		preparePlanDraft(files),
 		atomicWrite(files.metadata, `${JSON.stringify(metadata, null, 2)}\n`),
 		atomicWrite(files.clarifications, `${JSON.stringify(emptyClarifications(), null, 2)}\n`),
 	]);
-	await writeVersionFile(files, 1, initialPlan);
 }
 
-/** Creates an unpublished bundle. registerWorkflow publishes its active marker separately. */
-export async function createWorkflow(
-	files: WorkflowFiles,
-	initialPlan: string,
-	metadata: CompletedWorkflowMetadata,
-): Promise<void> {
+/** Creates a skeleton draft, not a finalized placeholder. Registration publishes its marker separately. */
+export async function createWorkflow(files: WorkflowFiles, metadata: CompletedWorkflowMetadata): Promise<void> {
 	assertCompletedMetadata(metadata);
 	assertFilesEqual(files, workflowFiles(metadata.identifier, metadata.worktreePath));
 	await mkdir(dirname(files.root), { recursive: true });
@@ -230,9 +230,7 @@ export async function createWorkflow(
 	}
 	try {
 		for (const directory of [files.versions, files.reviews, files.reviewRuns]) await mkdir(directory);
-		await atomicWrite(files.plan, initialPlan);
-		await atomicWrite(files.workingPlan, initialPlan);
-		await writeVersionFile(files, 1, initialPlan);
+		await preparePlanDraft(files);
 		await atomicWrite(files.clarifications, `${JSON.stringify(emptyClarifications(), null, 2)}\n`);
 		await atomicWrite(files.metadata, `${JSON.stringify(portableMetadata(metadata), null, 2)}\n`);
 	} catch (error) {
@@ -246,34 +244,6 @@ export async function ensureWorkflowFiles(files: WorkflowFiles): Promise<Workflo
 	const metadata = await readWorkflowMetadata(files);
 	await readClarifications(files);
 	return metadata;
-}
-
-export async function savePlanVersion(files: WorkflowFiles, content: string): Promise<PlanVersion> {
-	assertSafeArtifactPath(files.versions);
-	await mkdir(files.versions, { recursive: true });
-	let number = (await latestPlanVersionNumber(files)) + 1;
-	while (true) {
-		try {
-			const path = await writeVersionFile(files, number, content);
-			await atomicWrite(files.plan, content);
-			const info = await stat(path);
-			return { number, createdAt: info.mtime.toISOString(), path, content };
-		} catch (error) {
-			if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
-			number += 1;
-		}
-	}
-}
-
-export async function listPlanVersions(files: WorkflowFiles): Promise<PlanVersion[]> {
-	const numbered = await listNumberedFiles(files.versions, ".md");
-	return Promise.all(
-		numbered.map(async ({ name, number }) => {
-			const path = join(files.versions, name);
-			const [content, info] = await Promise.all([readText(path), stat(path)]);
-			return { number, createdAt: info.mtime.toISOString(), path, content };
-		}),
-	);
 }
 
 export async function readClarifications(files: WorkflowFiles): Promise<WorkflowClarifications> {
@@ -372,7 +342,6 @@ export async function appendWorkflowReview(
 export async function promoteDraft(draft: WorkflowFiles, destination: WorkflowFiles): Promise<void> {
 	await mkdir(dirname(destination.root), { recursive: true });
 	await rename(draft.root, destination.root);
-	await rm(destination.workingPlan, { force: true }).catch(() => undefined);
 }
 
 export async function pathExists(path: string): Promise<boolean> {
@@ -565,7 +534,8 @@ export async function readWorkflowMetadata(files: WorkflowFiles): Promise<Workfl
 	if (isDraftMetadataValue(stored)) {
 		const metadata = stored as DraftWorkflowMetadata;
 		assertDraftMetadataForFiles(files, metadata);
-		return metadata;
+		const plan = await readPlanVersion(files);
+		return plan ? { ...metadata, description: plan.description } : metadata;
 	}
 	const portable = stored as PortableWorkflowMetadata;
 	if (basename(dirname(files.root)) !== ".workflows" || basename(files.root) !== portable.identifier) {
@@ -574,8 +544,11 @@ export async function readWorkflowMetadata(files: WorkflowFiles): Promise<Workfl
 	const worktreePath = dirname(dirname(resolve(files.root)));
 	assertFilesEqual(files, workflowFiles(portable.identifier, worktreePath));
 	const marker = requireActiveMarker(worktreePath, portable.identifier);
+	const plan = await readPlanVersion(files, portable.approvedPlanVersion);
+	if (portable.approvedPlanVersion !== undefined && !plan) throw new Error(`Approved plan version v${portable.approvedPlanVersion} is missing for workflow ${portable.identifier}.`);
 	return {
 		...portable,
+		...(plan ? { description: plan.description } : {}),
 		...locatorFrom(marker),
 		...(marker.pullRequests === undefined ? {} : { pullRequests: marker.pullRequests }),
 	};
@@ -641,18 +614,6 @@ async function assertAskIsUnchanged(files: WorkflowFiles, ask: string): Promise<
 	if (typeof storedAsk === "string" && storedAsk !== ask) {
 		throw new Error("The workflow original ask is immutable.");
 	}
-}
-
-async function latestPlanVersionNumber(files: WorkflowFiles): Promise<number> {
-	const versions = await listNumberedFiles(files.versions, ".md");
-	return versions[versions.length - 1]?.number ?? 0;
-}
-
-async function writeVersionFile(files: WorkflowFiles, number: number, content: string): Promise<string> {
-	const path = join(files.versions, `${String(number).padStart(4, "0")}.md`);
-	assertSafeArtifactPath(path);
-	await writeFile(path, content, { encoding: "utf8", flag: "wx" });
-	return path;
 }
 
 async function listNumberedFiles(
@@ -888,7 +849,8 @@ function existsSync(path: string): boolean {
 function assertFilesEqual(files: WorkflowFiles, expected: WorkflowFiles): void {
 	for (const key of Object.keys(expected) as Array<keyof WorkflowFiles>) {
 		if (resolve(files[key]) !== expected[key]) throw new Error(`Invalid workflow artifact path: ${files[key]}`);
-		assertSafeArtifactPath(files[key]);
+		// Only plan-storage may inspect/follow this narrowly validated alias.
+		assertSafeArtifactPath(key === "latestPlan" || key === "plan" ? dirname(files[key]) : files[key]);
 	}
 }
 

@@ -1,8 +1,15 @@
 import { StringEnum } from "@earendil-works/pi-ai";
 import { Type, type Static } from "typebox";
 import { Check } from "typebox/value";
+import { PLANNED_CHANGE_ID_PATTERN } from "./planned-changes.ts";
 
-export const REVIEW_REPORT_VERSION = 2;
+export const REVIEW_REPORT_VERSION = 3;
+
+export const PlannedChangeIdSchema = Type.String({
+	pattern: PLANNED_CHANGE_ID_PATTERN.source,
+	maxLength: 80,
+	description: "Stable lowercase hyphen-separated slug from the approved structured plan, not a display number",
+});
 
 export const VerdictSchema = Type.Object(
 	{
@@ -32,7 +39,7 @@ export const ConcernSchema = Type.Object(
 
 export const PlannedChangeAnalysisSchema = Type.Object(
 	{
-		id: Type.String(),
+		id: PlannedChangeIdSchema,
 		title: Type.String(),
 		walkthrough: Type.String({
 			description:
@@ -47,7 +54,7 @@ export const PlannedChangeAnalysisSchema = Type.Object(
 
 export const RelevantPlannedChangeSchema = Type.Object(
 	{
-		id: Type.String(),
+		id: PlannedChangeIdSchema,
 		explanation: Type.String(),
 	},
 	{ additionalProperties: false },
@@ -110,11 +117,10 @@ export const ReviewSynthesisSchema = Type.Object(
 
 export const PlannedChangeReportSchema = Type.Object(
 	{
-		id: Type.String(),
+		id: PlannedChangeIdSchema,
 		title: Type.String(),
-		what: Type.String(),
-		why: Type.String(),
-		pseudocode: Type.Optional(Type.String()),
+		dependsOn: Type.Array(PlannedChangeIdSchema, { uniqueItems: true }),
+		content: Type.String({ description: "Complete original freeform Markdown from the approved planned change" }),
 		review: PlannedChangeAnalysisSchema,
 	},
 	{ additionalProperties: false },
@@ -178,7 +184,13 @@ export function isReviewSynthesis(value: unknown): value is ReviewSynthesis {
 }
 
 export function isWorkflowReviewReport(value: unknown): value is WorkflowReviewReport {
-	return Check(WorkflowReviewReportSchema, value);
+	if (!Check(WorkflowReviewReportSchema, value)) return false;
+	const ids = new Set(value.plannedChanges.map(({ id }) => id));
+	return ids.size === value.plannedChanges.length && value.plannedChanges.every((change) =>
+		change.review.id === change.id &&
+		change.review.title === change.title &&
+		change.dependsOn.every((id) => id !== change.id && ids.has(id)),
+	);
 }
 
 export function renderWorkflowReviewMarkdown(report: WorkflowReviewReport): string {
@@ -207,19 +219,17 @@ export function renderWorkflowReviewMarkdown(report: WorkflowReviewReport): stri
 	appendConcerns(lines, report.overallConcerns);
 	lines.push("", "## Review of planned changes", "");
 
-	for (const change of report.plannedChanges) {
+	for (const [index, change] of report.plannedChanges.entries()) {
 		lines.push(
-			`### ${change.id}: ${change.title}`,
+			`### ${index + 1}. ${change.title}`,
+			"",
+			`Stable ID: \`${change.id}\``,
+			`Depends on: ${change.dependsOn.length ? change.dependsOn.map((id) => `\`${id}\``).join(", ") : "None"}`,
 			"",
 			"#### Planned design",
 			"",
-			`**What:** ${change.what}`,
+			change.content,
 			"",
-			`**Why:** ${change.why}`,
-			"",
-		);
-		if (change.pseudocode) lines.push("**Pseudocode:**", "", indentCode(change.pseudocode), "");
-		lines.push(
 			"#### Actual implementation",
 			"",
 			change.review.walkthrough,
@@ -283,11 +293,4 @@ function appendConcerns(lines: string[], concerns: Concern[]): void {
 
 function renderEvidence(evidence: SourceEvidence): string {
 	return `- \`${evidence.location}\` — ${evidence.description}`;
-}
-
-function indentCode(value: string): string {
-	return value
-		.split("\n")
-		.map((line) => `    ${line}`)
-		.join("\n");
 }

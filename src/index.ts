@@ -1,5 +1,6 @@
+import { lstatSync, realpathSync } from "node:fs";
 import { mkdir, rm, writeFile } from "node:fs/promises";
-import { dirname, join, resolve } from "node:path";
+import { dirname, join, relative, resolve, sep } from "node:path";
 import { clampThinkingLevel, type Message, uuidv7 } from "@earendil-works/pi-ai";
 import {
 	getAgentDir,
@@ -38,8 +39,7 @@ import {
 	worktreeStatus,
 	type ExecFn,
 } from "./git.ts";
-import { getPlanDependencyGraph, parsePlannedChanges, parseTestingCriteria } from "./planned-changes.ts";
-import { PLAN_TITLE, planningCompletionError } from "./planning.ts";
+import { planningCompletionError } from "./planning.ts";
 import {
 	formatPullRequestStack,
 	toWorkflowPullRequests,
@@ -87,7 +87,6 @@ import {
 	createWorkflow,
 	ensureWorkflowFiles,
 	listCompletedWorkflows,
-	listPlanVersions,
 	listSavedReviews,
 	pathExists,
 	readActiveWorkflow,
@@ -95,7 +94,11 @@ import {
 	readCompletedWorkflowMetadata,
 	readText,
 	readWorkflowReview,
-	savePlanVersion,
+	readPlanVersion,
+	preparePlanDraft,
+	finalizePlanDraft,
+	hasUnsavedPlanDraft,
+	withPlanLock,
 	WORKFLOW_METADATA_VERSION,
 	type CompletedWorkflowMetadata,
 	type SavedWorkflowReview,
@@ -162,7 +165,7 @@ export default function implementationWorkflow(
 	let currentPullRequest: WorkflowPullRequest | undefined;
 	let pullRequestRefreshGeneration = 0;
 
-	registerWorkflowPlanTool(pi, async (rawDescription) => {
+	registerWorkflowPlanTool(pi, async (input) => {
 		if (phase !== "planning" || !activeFiles) {
 			throw new Error("The implementation plan can only be updated during workflow planning.");
 		}
@@ -172,28 +175,29 @@ export default function implementationWorkflow(
 			if (!metadata || metadata.approvedPlanVersion !== undefined) {
 				throw new Error("Only an unapproved workflow plan can be updated.");
 			}
-			const plan = await readText(files.workingPlan);
-			const description = normalizePlanDescription(rawDescription);
-			const dependencyGraph = getPlanDependencyGraph(plan);
-			const dependencyWarning = dependencyGraph.status === "unavailable" ? dependencyGraph.reason : undefined;
-			const version = await savePlanVersion(files, plan);
+			if (input.action === "prepare") {
+				const draft = await preparePlanDraft(files);
+				return { action: "prepare", draftPath: draft.path, baseVersion: draft.baseVersion };
+			}
+			const description = normalizePlanDescription(input.description);
+			const version = await finalizePlanDraft(files, description, input.expectedBaseVersion);
+			// The snapshot owns its description. No fallible durable writes after publication.
 			metadata = { ...metadata, description };
-			await writeCompletedWorkflowMetadata(metadata);
 			planDescription = description;
 			pi.setSessionName(workflowSessionName("Planning", identifier, description));
-			await writeWorkflowDashboard(files);
 			let dashboardUrl: string | undefined;
 			let dashboardError: string | undefined;
 			try {
+				await writeWorkflowDashboard(files);
 				dashboardUrl = await ensureDashboardLink();
 			} catch (error) {
 				dashboardError = errorMessage(error);
 			}
 			const result: UpdatePlanResult = {
+				action: "finalize",
 				version: version.number,
 				dashboardUrl,
 				dashboardError,
-				...(dependencyWarning === undefined ? {} : { dependencyWarning }),
 			};
 			return result;
 		});
@@ -560,7 +564,7 @@ export default function implementationWorkflow(
 					// A failed add may be a race with another process. Never remove a branch or directory we did not create.
 					if (added.code !== 0) throw new Error(`Could not create worktree: ${added.stderr || added.stdout}`);
 					try {
-						await createWorkflow(workflowFiles(nextIdentifier, worktreePath), `${PLAN_TITLE}\n`, initial);
+						await createWorkflow(workflowFiles(nextIdentifier, worktreePath), initial);
 						await registerWorkflow(initial);
 					} catch (error) {
 						const removed = await exec("git", ["-C", repository.root, "worktree", "remove", "--force", worktreePath]);
@@ -636,7 +640,7 @@ export default function implementationWorkflow(
 				await replacementCtx.sendUserMessage(
 					implementationUserMessage({
 						metadataPath: files.metadata,
-						planPath: files.plan,
+						planPath: planPathForWorkflow(files, workflow),
 						clarificationsPath: files.clarifications,
 						baseBranch: workflow.baseBranch,
 					}),
@@ -650,43 +654,42 @@ export default function implementationWorkflow(
 			ctx.ui.notify("This planning session has no workflow metadata.", "error");
 			return;
 		}
-		const workflow = await readCompletedWorkflowMetadata(identifier);
-		if (workflow.approvedPlanVersion !== undefined) {
-			await enterImplementationSession(ctx, workflow);
-			return;
-		}
 		const files = activeFiles;
-		const [plan, workingPlan] = await Promise.all([readText(files.plan), readText(files.workingPlan)]);
-		if (workingPlan !== plan) {
-			ctx.ui.notify(`The working plan has uncommitted changes. Call ${WORKFLOW_UPDATE_PLAN_TOOL} before advancing to implementation.`, "error");
-			return;
-		}
-		const completionError = planningCompletionError(plan, workflow.description);
-		if (completionError) {
-			ctx.ui.notify(completionError, "error");
-			return;
-		}
-		const validation = await validateWorktree(exec, workflow);
-		if (validation) {
-			ctx.ui.notify(`Cannot approve plan: ${validation}.`, "error");
-			return;
-		}
-		const latest = (await listPlanVersions(files)).at(-1);
-		if (!latest || latest.content !== plan) {
-			ctx.ui.notify(`The saved plan does not match its latest version. Save it again with ${WORKFLOW_UPDATE_PLAN_TOOL} before approval.`, "error");
-			return;
-		}
-		const approved: CompletedWorkflowMetadata = { ...workflow, approvedPlanVersion: latest.number };
+		let approved: CompletedWorkflowMetadata;
 		try {
-			await writeCompletedWorkflowMetadata(approved);
-			await commitWorkflowArtifacts(exec, approved, `Approve workflow plan: ${identifier}`);
+			// Share the publication lock across processes. Approval cannot race a
+			// finalization between selecting the version and committing its artifacts.
+			approved = await withPlanLock(files, async () => {
+				const workflow = await readCompletedWorkflowMetadata(identifier!);
+				if (workflow.approvedPlanVersion !== undefined) return workflow;
+				if (await hasUnsavedPlanDraft(files)) {
+					throw new Error(`The working plan has uncommitted changes. Call ${WORKFLOW_UPDATE_PLAN_TOOL} before advancing to implementation.`);
+				}
+				const latest = await readPlanVersion(files);
+				const completionError = planningCompletionError(latest?.document, latest?.description ?? workflow.description);
+				if (completionError) throw new Error(completionError);
+				if (!latest) throw new Error("Finalize a plan before approving it.");
+				const validation = await validateWorktree(exec, workflow);
+				if (validation) throw new Error(`Cannot approve plan: ${validation}.`);
+				const next = { ...workflow, description: latest.description, approvedPlanVersion: latest.number };
+				try {
+					await writeCompletedWorkflowMetadata(next);
+					await commitWorkflowArtifacts(exec, next, `Approve workflow plan: ${identifier}`);
+				} catch (error) {
+					// Approval is not complete until its initial artifact commit succeeds.
+					await writeCompletedWorkflowMetadata(workflow);
+					throw new Error(`Could not commit the approved plan: ${errorMessage(error)}`);
+				}
+				// Another session may have edited its draft during the Git commit.
+				// Approval pins the saved version; never discard those newer edits.
+				if (!await hasUnsavedPlanDraft(files)) await rm(files.workingPlan, { recursive: true, force: true });
+				else ctx.ui.notify("The working draft changed during approval and was preserved. Implementation uses the approved saved version.", "warning");
+				return next;
+			});
 		} catch (error) {
-			// Approval is not complete until its initial artifact commit succeeds.
-			await writeCompletedWorkflowMetadata(workflow);
-			ctx.ui.notify(`Could not commit the approved plan: ${errorMessage(error)}`, "error");
+			ctx.ui.notify(errorMessage(error), "error");
 			return;
 		}
-		await rm(files.workingPlan, { force: true });
 		appendPhase({ phase: "complete", identifier });
 		metadata = approved;
 		updatePhaseStatus(ctx);
@@ -722,7 +725,7 @@ export default function implementationWorkflow(
 	function briefingValues(workflow: CompletedWorkflowMetadata, files: WorkflowFiles) {
 		return {
 			identifier: workflow.identifier,
-			metadataPath: files.metadata, planPath: files.plan, clarificationsPath: files.clarifications,
+			metadataPath: files.metadata, planPath: planPathForWorkflow(files, workflow), clarificationsPath: files.clarifications,
 			workingPlanPath: files.workingPlan, reviewPath: files.reviewMarkdown,
 			worktreePath: workflow.worktreePath,
 			approved: workflow.approvedPlanVersion !== undefined,
@@ -797,19 +800,21 @@ export default function implementationWorkflow(
 		await writeCompletedWorkflowMetadata(workflow);
 		if (identifier === workflow.identifier) metadata = workflow;
 
-		const [plan, clarifications, existing, savedReviews] = await Promise.all([
-			readText(files.plan),
+		const [planVersion, clarifications, existing, savedReviews] = await Promise.all([
+			readPlanVersion(files, workflow.approvedPlanVersion),
 			readText(files.clarifications),
 			readWorkflowReview(files).catch(() => undefined),
 			listSavedReviews(files),
 		]);
+		if (!planVersion) throw new Error("The approved plan version is missing.");
+		const plan = planVersion.document;
 		const inputs: ReviewInputsSnapshot = {
 			pullRequestUrls: delivery.pullRequests.map(({ url }) => url),
 			baseCommit: workflow.baseCommit,
 			headCommit: delivery.headCommit,
 			sourceFingerprint: reviewSourceFingerprint(workflow.ask, plan, clarifications),
-			testingCriteria: parseTestingCriteria(plan),
-			plannedChanges: parsePlannedChanges(plan).map(({ id, title }) => ({ id, title })),
+			testingCriteria: plan.testing,
+			plannedChanges: plan.changes.map(({ id, title }) => ({ id, title })),
 		};
 		if (existing && reviewIsCurrent(existing, inputs)) {
 			await writeWorkflowDashboard(files, delivery.headCommit);
@@ -824,7 +829,6 @@ export default function implementationWorkflow(
 			);
 		}
 
-		const plannedChanges = parsePlannedChanges(plan);
 		const progressSteps = seed
 			? [
 					"Identifying planned changes affected by the revision",
@@ -847,11 +851,10 @@ export default function implementationWorkflow(
 						sourceFingerprint: inputs.sourceFingerprint,
 						worktreePath: workflow.worktreePath,
 						metadataPath: files.metadata,
-						planPath: files.plan,
+						planPath: planVersion.path,
 						clarificationsPath: files.clarifications,
 						reviewRunsPath: files.reviewRuns,
-						plannedChanges,
-						testingCriteria: inputs.testingCriteria,
+						plan,
 						previousReview: seed?.report,
 						previousReviewPath: seed?.path,
 						onStage: (stage) => {
@@ -974,10 +977,10 @@ export default function implementationWorkflow(
 			const workflow = await resolveTargetWorkflow(ctx, args, "cleanup");
 			if (!workflow) return;
 			const files = workflowFiles(workflow.identifier);
-			if (await pathExists(files.workingPlan) && await readText(files.workingPlan) !== await readText(files.plan)) {
+			if (await hasUnsavedPlanDraft(files)) {
 				const discardDraft = await ctx.ui.confirm(
 					"Working plan has unsaved changes",
-					`Cleanup preserves the saved plan, but discards working-plan.md. Save it with ${WORKFLOW_UPDATE_PLAN_TOOL} first to keep those edits. Discard the working draft?`,
+					`Cleanup preserves finalized plan versions, but discards working-plan/. Save it with ${WORKFLOW_UPDATE_PLAN_TOOL} first to keep those edits. Discard the working draft?`,
 				);
 				if (!discardDraft) return;
 			}
@@ -1188,7 +1191,7 @@ export default function implementationWorkflow(
 		let instructions = !phase || (phase === "complete" && briefed) ? briefingSystemPrompt(briefingValues(metadata, activeFiles)) : "";
 		if (phase === "planning" && metadata.approvedPlanVersion === undefined) {
 			instructions = planningSystemPrompt({
-				planPath: activeFiles.plan,
+				planPath: planPathForWorkflow(activeFiles, metadata),
 				workingPlanPath: activeFiles.workingPlan,
 				updatePlanTool: WORKFLOW_UPDATE_PLAN_TOOL,
 			});
@@ -1197,7 +1200,7 @@ export default function implementationWorkflow(
 			instructions = implementationSystemPrompt({
 				identifier,
 				metadataPath: activeFiles.metadata,
-				planPath: activeFiles.plan,
+				planPath: planPathForWorkflow(activeFiles, metadata),
 				clarificationsPath: activeFiles.clarifications,
 				questionTool: WORKFLOW_QUESTION_TOOL,
 				worktreePath: metadata.worktreePath,
@@ -1210,7 +1213,7 @@ export default function implementationWorkflow(
 			instructions = revisionSystemPrompt({
 				identifier,
 				metadataPath: activeFiles.metadata,
-				planPath: activeFiles.plan,
+				planPath: planPathForWorkflow(activeFiles, metadata),
 				clarificationsPath: activeFiles.clarifications,
 				...(review ? { reviewPath: activeFiles.review } : {}),
 				questionTool: WORKFLOW_QUESTION_TOOL,
@@ -1226,7 +1229,7 @@ export default function implementationWorkflow(
 					? formatPullRequestStack(metadata.pullRequests)
 					: undefined,
 				metadataPath: activeFiles.metadata,
-				planPath: activeFiles.plan,
+				planPath: planPathForWorkflow(activeFiles, metadata),
 				clarificationsPath: activeFiles.clarifications,
 				reviewPath: activeFiles.review,
 				reviewMarkdownPath: activeFiles.reviewMarkdown,
@@ -1237,11 +1240,13 @@ export default function implementationWorkflow(
 	});
 
 	pi.on("tool_call", async (event, ctx) => {
-		if (!activeFiles || !phase || (event.toolName !== "edit" && event.toolName !== "write")) return;
+		if (!activeFiles || (event.toolName !== "edit" && event.toolName !== "write")) return;
 		const rawPath = (event.input as { path?: unknown }).path;
 		if (typeof rawPath !== "string") return;
 		const target = resolve(ctx.cwd, rawPath.replace(/^@/, ""));
-		const reason = workflowWriteBlockReason(phase, activeFiles, target);
+		const currentMetadata = identifier ? await readCompletedWorkflowMetadata(identifier) : undefined;
+		const writePhase = phase === "planning" && currentMetadata?.approvedPlanVersion !== undefined ? "complete" : phase ?? "complete";
+		const reason = workflowWriteBlockReason(writePhase, activeFiles, target);
 		if (reason) return { block: true, reason };
 	});
 
@@ -1325,17 +1330,51 @@ export function workflowWriteBlockReason(
 	files: WorkflowFiles,
 	targetPath: string,
 ): string | undefined {
+	const target = resolve(targetPath);
 	if (phase === "planning") {
-		if (resolve(targetPath) === resolve(files.workingPlan)) return undefined;
-		return `Planning edit/write calls may only change ${files.workingPlan}. Commit it with ${WORKFLOW_UPDATE_PLAN_TOOL}.`;
+		const path = relative(resolve(files.workingPlan), target).split(sep).join("/");
+		const allowed = /^(?:plan\.json|goal\.md|intro\.md|testing\.md)$/.test(path) ||
+			/^planned-changes\/[a-z][a-z0-9]*(?:-[a-z0-9]+)*\/(?:change_metadata\.json|change\.md)$/.test(path);
+		if (allowed && isPathInside(target, files.workingPlan)) {
+			// Native file edits must not follow a draft link into frozen or unrelated files.
+			let current = target;
+			const boundary = dirname(dirname(files.root));
+			while (isPathInside(current, boundary)) {
+				try {
+					const info = lstatSync(current);
+					if (info.isSymbolicLink() || (info.isFile() && info.nlink > 1)) return "Plan draft edits cannot follow symbolic or hard links.";
+				} catch (error) {
+					if ((error as NodeJS.ErrnoException).code !== "ENOENT") return `Cannot inspect plan draft path: ${errorMessage(error)}`;
+				}
+				if (current === resolve(boundary)) break;
+				current = dirname(current);
+			}
+			return undefined;
+		}
+		return `Planning edit/write calls may only change plan JSON and Markdown files inside ${files.workingPlan}. Prepare and finalize drafts with ${WORKFLOW_UPDATE_PLAN_TOOL}.`;
 	}
-	if (resolve(targetPath) === resolve(files.metadata)) {
+	const physicalTarget = resolveExistingPath(target);
+	if (target === resolve(files.metadata) || physicalTarget === resolveExistingPath(files.metadata)) {
 		return "Workflow metadata, including the original ask, is managed by the workflow and read-only.";
 	}
-	if (resolve(targetPath) === resolve(files.plan)) {
+	if ([files.plan, files.versions, files.workingPlan, files.planDraftBase].some((path) =>
+		isPathInside(target, path) || isPathInside(physicalTarget, resolveExistingPath(path)))) {
 		return "The workflow plan is frozen and read-only in this phase.";
 	}
 	return undefined;
+}
+
+function resolveExistingPath(path: string): string {
+	try {
+		return realpathSync(path);
+	} catch {
+		const parent = dirname(path);
+		return parent === path ? path : join(resolveExistingPath(parent), relative(parent, path));
+	}
+}
+
+function planPathForWorkflow(files: WorkflowFiles, workflow: CompletedWorkflowMetadata): string {
+	return workflow.approvedPlanVersion === undefined ? files.plan : join(files.versions, `v${workflow.approvedPlanVersion}`);
 }
 
 function normalizePlanSlug(response: string): string {

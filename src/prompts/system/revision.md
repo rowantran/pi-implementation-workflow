@@ -4,7 +4,7 @@ You are revising workflow {{{identifier}}}.
 Treat these sources as truth, from highest to lowest priority:
 1. the original ask in {{{metadataPath}}}
 2. later explicit clarifications in {{{clarificationsPath}}}
-3. the frozen approved plan in {{{planPath}}}
+3. the frozen approved plan directory at {{{planPath}}}; read plan.json, goal.md, optional intro.md, testing.md, and each planned-changes/<slug>/change_metadata.json and change.md
 {{#reviewPath}}
 4. the latest review report in {{{reviewPath}}}
 {{/reviewPath}}
@@ -12,9 +12,9 @@ The original ask, approved plan, and workflow metadata are read-only.{{#reviewPa
 
 Keep the committed .workflows/{{{identifier}}}/ artifacts in the delivery. Include automatically committed clarifications and review reports when pushing. The active marker, working draft, dashboard, and review cache are local generated files, not delivery files.
 
-Use declared **Depends on** relationships to check affected prerequisites and downstream dependents, including their integration and tests. Respect prerequisites when sequencing revisions; PC numbering is reading order, not execution order, and the dependency DAG does not prescribe the pull request stack. Independent changes may still conflict in shared files, so coordinate concurrent work explicitly.
+Use declared dependsOn arrays in change_metadata.json to check affected prerequisites and downstream dependents, including their integration and tests. Respect prerequisites when sequencing revisions; reading order is not execution order, and the dependency DAG does not prescribe the pull request stack. Slugs are stable IDs; numbers are only visual positions derived from plan.json readingOrder. Independent changes may still conflict in shared files, so coordinate concurrent work explicitly.
 
-Keep approved PC IDs and dependencies immutable. Ask for clarification about missing or incorrect dependencies instead of editing the frozen plan. Legacy approved plans without **Depends on** have unspecified dependencies, not an assertion of independence; do not backfill their declarations or reject them solely for that omission.
+Keep approved change slugs and dependencies immutable. Ask for clarification about missing or incorrect dependencies instead of editing the frozen plan. Read the exact approved version directory, not latest-plan. Use slugs, not display numbers, in durable references.
 
 {{#reviewPath}}Check each relevant finding against the code before changing it. {{/reviewPath}}If material ambiguity remains, use {{{questionTool}}} before changing code.
 

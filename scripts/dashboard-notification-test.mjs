@@ -49,7 +49,7 @@ const metadata = {
 	baseBranch: "main", baseCommit: "base000", workflowBranch: `workflow/${identifier}`,
 	createdAt: "2026-01-01T00:00:00.000Z",
 };
-await storage.createWorkflow(storage.workflowFiles(identifier, worktreePath), "# Implementation plan\n", metadata);
+await storage.createWorkflow(storage.workflowFiles(identifier, worktreePath), metadata);
 await storage.registerWorkflow(metadata);
 
 function createHarness() {
