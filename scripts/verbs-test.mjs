@@ -1,9 +1,10 @@
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { lstat, mkdir, mkdtemp, readFile, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createJiti } from "jiti/static";
 import { stream as streamOpenAIResponses } from "@earendil-works/pi-ai/api/openai-responses";
+import { planFixture, writePlanFixture } from "./plan-fixture.mjs";
 
 const temporaryRoot = await mkdtemp(join(tmpdir(), "pi-workflow-verbs-"));
 process.env.PI_CODING_AGENT_DIR = join(temporaryRoot, "agent");
@@ -16,48 +17,31 @@ const storage = await jiti.import(new URL("../src/storage.ts", import.meta.url).
 const dashboardServer = await jiti.import(new URL("../src/dashboard-server.ts", import.meta.url).pathname);
 const { readReviewSourceFingerprint } = await jiti.import(new URL("../src/review-selection.ts", import.meta.url).pathname);
 
-const validPlan = `# Implementation plan
-
-## Goal
-
-Complete the workflow verbs.
-
-## Planned Changes
-
-### PC-01: Complete the verbs
-
-**Depends on**
-None
-
-**What**
-Support explicit workflow verbs.
-
-**Why**
-The workflow must stay flexible.
-
-**Pseudocode**
-\`\`\`text
-procedure RunVerb()
-\`\`\`
-
-## Testing
-
-Verify each verb.
-`;
+const validPlan = planFixture({
+	readingOrder: ["complete-verbs"],
+	goal: "Complete the workflow verbs.",
+	testing: "Verify each verb.",
+	changes: [{
+		id: "complete-verbs",
+		title: "Complete the verbs",
+		dependsOn: [],
+		content: "Support explicit workflow verbs so the workflow stays flexible.\n\nKeep briefing read-only and preserve workflow identity across session switches.\n\n```text\nprocedure RunVerb()\n```",
+	}],
+});
 
 async function reviewAgentRunner(request) {
 	if (request.role === "incremental-scope") {
 		return {
 			summary: "The revision affects the verbs planned change.",
 			relevantPlannedChanges: [{
-				id: "PC-01",
+				id: "complete-verbs",
 				explanation: "The revision changes the verb implementation.",
 			}],
 		};
 	}
 	if (request.role === "planned-change") {
 		return {
-			id: "PC-01",
+			id: "complete-verbs",
 			title: "Complete the verbs",
 			walkthrough: "The verbs are implemented.",
 			necessary: { status: "yes", explanation: "It maps to the plan." },
@@ -197,8 +181,20 @@ function createHarness(repositoryRoot, worktreePath, workflowBranch) {
 			}
 			if (gitArgs[0] === "show-ref" || (gitArgs[0] === "rev-parse" && gitArgs.includes("--verify"))) return { code: 1, stdout: "", stderr: "" };
 			if (gitArgs[0] === "ls-files") {
-				const bundle = `.workflows/${cwd.split("/").at(-1)}`;
-				return { code: 0, stdout: ["plan.md", "metadata.json", "versions/0001.md", "clarifications.json"].map((name) => `${bundle}/${name}\0`).join(""), stderr: "" };
+				const listed = [];
+				async function listExisting(path) {
+					let info;
+					try { info = await lstat(join(cwd, path)); }
+					catch (error) { if (error.code === "ENOENT") return; throw error; }
+					if (info.isDirectory()) {
+						for (const name of await readdir(join(cwd, path))) await listExisting(`${path}/${name}`);
+					} else listed.push(path); // Keep latest-plan as a symlink; never traverse it.
+				}
+				for (const pathspec of gitArgs.slice(gitArgs.indexOf("--") + 1)) {
+					assert.ok(pathspec.startsWith(":(top,literal).workflows/"));
+					await listExisting(pathspec.slice(":(top,literal)".length));
+				}
+				return { code: 0, stdout: listed.map((path) => `${path}\0`).join(""), stderr: "" };
 			}
 			if (gitArgs[0] === "diff") return { code: gitArgs.includes("--quiet") && gitArgs.includes("--cached") ? 1 : 0, stdout: "", stderr: "" };
 			if (gitArgs[0] === "add" || gitArgs[0] === "commit") return { code: 0, stdout: "", stderr: "" };
@@ -397,8 +393,13 @@ async function writeCompletedWorkflow(identifier, options = {}) {
 		approvedPlanVersion: 1,
 		...options.metadata,
 	};
-	await storage.createWorkflow(files, validPlan, metadata);
-	await storage.registerWorkflow(metadata);
+	const initialMetadata = { ...metadata };
+	delete initialMetadata.approvedPlanVersion;
+	await storage.createWorkflow(files, initialMetadata);
+	await storage.registerWorkflow(initialMetadata);
+	await writePlanFixture(files.workingPlan, validPlan);
+	await storage.finalizePlanDraft(files, metadata.description, 0);
+	if (metadata.approvedPlanVersion !== undefined) await storage.writeCompletedWorkflowMetadata(metadata);
 	return { files, metadata, repositoryRoot, worktreePath, workflowBranch };
 }
 
@@ -430,11 +431,13 @@ try {
 		const harness = createHarness(workflow.repositoryRoot, workflow.worktreePath, workflow.workflowBranch);
 		const ctx = harness.context(join(workflow.worktreePath, "src"), []);
 		await harness.emit("session_start", ctx);
+		const planPath = storage.planDirectory(workflow.files, approved ? 1 : undefined);
+		assert.equal(planPath, approved ? join(workflow.files.versions, "v1") : workflow.files.latestPlan);
 		const before = {
 			tools: harness.getActiveTools(), toolChanges: harness.toolChanges.length,
 			models: harness.modelChanges.length, thinking: harness.thinkingChanges.length,
 			names: harness.sessionNames.length,
-			plan: await readFile(workflow.files.plan, "utf8"),
+			plan: (await storage.readPlanVersion(workflow.files, 1)).document,
 			metadata: await readFile(workflow.files.metadata, "utf8"),
 			clarifications: await readFile(workflow.files.clarifications, "utf8"),
 		};
@@ -451,10 +454,10 @@ try {
 		});
 		assert.ok(!harness.entries.some(({ customType }) => customType === "implementation-workflow-phase"));
 		const prompt = harness.userMessages.at(-1);
-		for (const file of [workflow.files.metadata, workflow.files.plan, workflow.files.clarifications]) assert.ok(prompt.includes(file));
+		for (const file of [workflow.files.metadata, planPath, workflow.files.clarifications]) assert.ok(prompt.includes(file));
 		assert.match(prompt, /then wait for my next task/);
 		assert.match(prompt, approved ? /The plan is approved/ : /NOT approved/);
-		assert.equal(await readFile(workflow.files.plan, "utf8"), before.plan);
+		assert.deepEqual((await storage.readPlanVersion(workflow.files, 1)).document, before.plan);
 		assert.equal(await readFile(workflow.files.metadata, "utf8"), before.metadata);
 		assert.equal(await readFile(workflow.files.clarifications, "utf8"), before.clarifications);
 		assert.ok(!harness.executions.some(({ args }) => args.includes("add") || args.includes("commit")));
@@ -464,14 +467,15 @@ try {
 		await harness.emit("session_start", resumed);
 		const restored = await harness.emit("before_agent_start", resumed, { systemPrompt: "Base instructions" });
 		assert.ok(restored.systemPrompt.startsWith("Base instructions\n"));
-		assert.ok(restored.systemPrompt.includes(workflow.files.plan));
-		assert.ok(!restored.systemPrompt.includes(validPlan));
+		assert.ok(restored.systemPrompt.includes(planPath));
+		assert.ok(!restored.systemPrompt.includes(validPlan.changes[0].content));
 		assert.equal(harness.sessionNames.length, before.names);
 		if (!approved) {
 			await storage.writeCompletedWorkflowMetadata({ ...workflow.metadata, approvedPlanVersion: 1 });
 			const updated = await harness.emit("before_agent_start", resumed, { systemPrompt: "Base" });
 			assert.match(updated.systemPrompt, /The plan is approved/);
 			assert.doesNotMatch(updated.systemPrompt, /NOT approved/);
+			assert.ok(updated.systemPrompt.includes(join(workflow.files.versions, "v1")));
 		}
 	}
 
@@ -532,6 +536,7 @@ try {
 		assert.equal(metadata.approvedPlanVersion, 1);
 		assert.ok(!harness.executions.some(({ args }) => args.includes("worktree") && args.includes("add")), "implementation does not create another worktree");
 		assert.match(harness.userMessages.at(-1), /Implement the plan/);
+		assert.ok(harness.userMessages.at(-1).includes(join(storage.workflowFiles(identifier).versions, "v1")));
 		assert.deepEqual((await sessionPhase(harness.switches[0])).data, {
 			phase: "implementation",
 			identifier,
@@ -635,7 +640,11 @@ try {
 		}
 		assert.equal(ctx.thinkingLevel, "high", "slug generation does not change session thinking");
 		assert.equal((await readMetadata(identifier)).worktreePath, worktreePath);
-		assert.equal(await readFile(storage.workflowFiles(identifier).plan, "utf8"), "# Implementation plan\n");
+		const files = storage.workflowFiles(identifier);
+		assert.equal(await storage.readPlanVersion(files), undefined, "planning starts without a finalized placeholder");
+		assert.equal(await storage.pathExists(files.latestPlan), false);
+		assert.deepEqual(JSON.parse(await readFile(join(files.workingPlan, "plan.json"), "utf8")), { schemaVersion: 1, readingOrder: [] });
+		assert.equal(await readFile(join(files.workingPlan, "goal.md"), "utf8"), "");
 		assert.equal((await readMetadata(identifier)).approvedPlanVersion, undefined);
 		assert.equal((await readMetadata(identifier)).ask, ask);
 		assert.deepEqual((await sessionPhase(harness.switches[0])).data, { phase: "planning", identifier });
@@ -694,7 +703,19 @@ try {
 
 	// /workflow-review checks the live delivery, generates, reuses, re-reviews incrementally, and falls back.
 	{
-		const workflow = await writeCompletedWorkflow("verb-review");
+		const workflow = await writeCompletedWorkflow("verb-review", { metadata: { approvedPlanVersion: undefined } });
+		// Publish both versions before approval, which freezes further finalization.
+		await storage.preparePlanDraft(workflow.files);
+		await writePlanFixture(workflow.files.workingPlan, {
+			...validPlan,
+			goal: "Unapproved next plan.",
+			changes: validPlan.changes.map((change) => ({ ...change, content: "Unapproved replacement prose." })),
+		});
+		await storage.finalizePlanDraft(workflow.files, "Unapproved next plan", 1);
+		workflow.metadata.approvedPlanVersion = 1;
+		await storage.writeCompletedWorkflowMetadata(workflow.metadata);
+		assert.equal((await storage.readPlanVersion(workflow.files)).number, 2);
+		assert.equal((await readMetadata(workflow.metadata.identifier)).approvedPlanVersion, 1);
 		const harness = createHarness(workflow.repositoryRoot, workflow.worktreePath, workflow.workflowBranch);
 		harness.setPullRequest({
 			number: 17,
@@ -719,12 +740,24 @@ try {
 			baseRefName: "main",
 			headRefName: workflow.workflowBranch,
 		}]);
-		assert.equal((await storage.readWorkflowReview(workflow.files)).headCommit, "head111");
+		const firstReport = await storage.readWorkflowReview(workflow.files);
+		assert.equal(firstReport.headCommit, "head111");
+		assert.equal(firstReport.version, 3);
+		assert.deepEqual(firstReport.plannedChanges.map(({ review, ...change }) => change), validPlan.changes);
 		assert.equal(await storage.pathExists(join(workflow.files.reviews, "0001.json")), true);
 		const firstRunRoles = harness.reviewRequests.map(({ role }) => role);
 		assert.ok(!firstRunRoles.includes("incremental-scope"), "the first review is a full review");
+		for (const { prompt } of harness.reviewRequests) {
+			assert.ok(prompt.includes(join(workflow.files.versions, "v1")), "review prompts reference the exact approved directory");
+			assert.ok(prompt.includes(validPlan.changes[0].content), "reviewers receive the full approved prose");
+			assert.doesNotMatch(prompt, /PC-\d+|PC-\*/);
+		}
+		const stagedPaths = harness.executions.filter(({ args }) => args.includes("add")).flatMap(({ args }) => args);
+		assert.ok(stagedPaths.some((path) => path.endsWith("/plan-versions/v1/planned-changes/complete-verbs/change.md")));
+		assert.ok(stagedPaths.some((path) => path.endsWith("/latest-plan")));
+		assert.ok(!stagedPaths.some((path) => path.endsWith("/plan.md") || path.includes("/versions/0001.md")));
 
-		// Reuse: the same commits are never re-reviewed.
+		// Reuse: the same approved inputs and commits are never re-reviewed.
 		const reviewCtx = harness.currentContext();
 		assert.notEqual(reviewCtx, ctx);
 		assert.equal(harness.getActiveTools().includes("edit"), false, "review sessions stay read-only");
@@ -764,6 +797,11 @@ try {
 		assert.ok(incrementalRoles.includes("incremental-scope"), "a re-review scopes incrementally");
 		assert.equal((await storage.readWorkflowReview(workflow.files)).headCommit, "head222");
 		assert.equal(await storage.pathExists(join(workflow.files.reviews, "0002.json")), true);
+		for (const { prompt } of harness.reviewRequests) {
+			assert.ok(prompt.includes(join(workflow.files.versions, "v1")));
+			assert.ok(prompt.includes(validPlan.changes[0].content));
+			assert.ok(!prompt.includes("Unapproved replacement prose."));
+		}
 
 		// Fallback: when no saved review is a Git ancestor, a full review is generated instead of an error.
 		harness.setHeadCommit("head333");
@@ -830,7 +868,7 @@ try {
 		const workflow = await writeCompletedWorkflow("switching-cleanup");
 		const harness = createHarness(workflow.repositoryRoot, workflow.worktreePath, workflow.workflowBranch);
 		await storage.appendWorkflowReview(workflow.files, {
-			version: 2,
+			version: 3,
 			pullRequestUrls: ["https://example.test/pull/20"],
 			baseCommit: "base000",
 			headCommit: "head111",
@@ -843,14 +881,11 @@ try {
 			},
 			overallConcerns: [],
 			plannedChanges: [{
-				id: "PC-01",
-				title: "Complete the verbs",
-				what: "Support explicit workflow verbs.",
-				why: "The workflow must stay flexible.",
+				...validPlan.changes[0],
 				review: await reviewAgentRunner({ role: "planned-change" }),
 			}],
 			testingCriteria: {
-				originalCriteria: "Verify each verb.",
+				originalCriteria: validPlan.testing,
 				review: await reviewAgentRunner({ role: "testing-criteria" }),
 			},
 		});
@@ -891,7 +926,7 @@ try {
 		const workflow = await writeCompletedWorkflow("stale-review-cleanup");
 		const harness = createHarness(workflow.repositoryRoot, workflow.worktreePath, workflow.workflowBranch);
 		await storage.appendWorkflowReview(workflow.files, {
-			version: 2,
+			version: 3,
 			pullRequestUrls: ["https://example.test/pull/21"],
 			baseCommit: "base000",
 			headCommit: "older-head",
@@ -904,14 +939,11 @@ try {
 			},
 			overallConcerns: [],
 			plannedChanges: [{
-				id: "PC-01",
-				title: "Complete the verbs",
-				what: "Support explicit workflow verbs.",
-				why: "The workflow must stay flexible.",
+				...validPlan.changes[0],
 				review: await reviewAgentRunner({ role: "planned-change" }),
 			}],
 			testingCriteria: {
-				originalCriteria: "Verify each verb.",
+				originalCriteria: validPlan.testing,
 				review: await reviewAgentRunner({ role: "testing-criteria" }),
 			},
 		});

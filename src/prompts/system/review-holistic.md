@@ -4,7 +4,7 @@ Review the complete delivery holistically against the original ask, clarificatio
 Durable sources, in priority order:
 1. Original ask: {{{metadataPath}}}
 2. Later clarifications: {{{clarificationsPath}}}
-3. Complete approved plan: {{{planPath}}}
+3. Exact approved plan version: {{{planPath}}} (the complete structured snapshot is included below)
 
 Implementation range: {{{baseCommit}}}..{{{headCommit}}}
 Pull request stack (bottom to top):
@@ -13,8 +13,10 @@ Pull request stack (bottom to top):
 Each individual planned change, and the testing criteria, will already be reviewed by a dedicated subagent, so focus on things that won't be covered by them.
 This means to focus on interactions between the planned changes, architectural consistency, end-to-end behavior, implementation work that doesn't directly map to any planned change, and requirements that no single planned-change reviewer owns.
 
-Check declared **Depends on** relationships across changes: prerequisite contracts must exist, dependents must use them correctly, and end-to-end tests must cover their integration. Flag missing or incorrect dependencies when they reveal material implementation or design problems. PC numbering is reading order, not execution order; forward references are valid, and the dependency DAG need not match the linear pull request stack. Independent nodes are not proof that shared-file edits or concurrent execution are safe.
+Read the full freeform content of every planned change, together with the goal, introduction, and testing criteria. Requirements are not limited to named fields or headings.
 
-The approved plan, PC IDs, and dependencies are immutable. Report concerns or request clarification; do not rewrite the approved plan. Legacy approved plans may omit **Depends on**. Treat those dependencies as unspecified, not `None`, and do not fail a review solely because the old format lacks declarations.
+Check the structured plan's declared dependsOn relationships across changes: prerequisite contracts must exist, dependents must use them correctly, and end-to-end tests must cover their integration. Flag missing or incorrect dependencies when they reveal material implementation or design problems. Stable slug IDs identify changes; display numbering follows readingOrder, not execution order. Forward references are valid, and the dependency DAG need not match the linear pull request stack. Independent nodes are not proof that shared-file edits or concurrent execution are safe.
+
+The approved plan, slug IDs, and dependencies are immutable. Report concerns or request clarification; do not rewrite the approved plan. An empty dependsOn array declares no prerequisites; do not infer edges from display order.
 
 Judge overall necessity and sufficiency. Report cross-cutting concerns.

@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
-import type { PlannedChange } from "./planned-changes.ts";
+import { isPlannedChangeId, validatePlanDocument, type PlanDocument, type PlannedChange } from "./planned-changes.ts";
 import { formatPullRequestStack, type WorkflowPullRequest } from "./pull-requests.ts";
 import {
 	holisticReviewPrompt,
@@ -41,7 +41,7 @@ import {
 
 const REVIEW_AGENT_EXTENSION = fileURLToPath(new URL("./review-agent-output.ts", import.meta.url));
 const MAX_REVIEW_CONCURRENCY = 4;
-const REVIEW_ROUND_VERSION = 2;
+const REVIEW_ROUND_VERSION = 3;
 
 export type ReviewAgentRole =
 	| "incremental-scope"
@@ -79,8 +79,8 @@ export interface ReviewGenerationInput {
 	planPath: string;
 	clarificationsPath: string;
 	reviewRunsPath: string;
-	plannedChanges: PlannedChange[];
-	testingCriteria: string;
+	/** Exact approved structured plan version; never parsed from the Markdown export. */
+	plan: PlanDocument;
 	previousReview?: WorkflowReviewReport;
 	previousReviewPath?: string;
 	generatedAt?: string;
@@ -127,7 +127,12 @@ export async function generateWorkflowReview(
 	input: ReviewGenerationInput,
 	runAgent: ReviewAgentRunner,
 ): Promise<WorkflowReviewReport> {
-	if (input.plannedChanges.length === 0) throw new Error("The plan has no planned changes to review.");
+	const plannedChanges = plannedChangesInReadingOrder(input.plan);
+	const approvedPlanContext = reviewPlanContext(input.plan, plannedChanges);
+	const runAgentWithPlan: ReviewAgentRunner = (request) => runAgent({
+		...request,
+		prompt: `${request.prompt}\n\n${approvedPlanContext}`,
+	});
 	if ((input.previousReview === undefined) !== (input.previousReviewPath === undefined)) {
 		throw new Error("An incremental review requires both the previous review and its path.");
 	}
@@ -171,13 +176,13 @@ export async function generateWorkflowReview(
 				headCommit: input.headCommit,
 				sourceFingerprint: input.sourceFingerprint,
 				generatedAt: input.generatedAt ?? new Date().toISOString(),
-				plannedChanges: input.plannedChanges.map(({ id, title }) => ({ id, title })),
+				plannedChanges: plannedChanges.map(({ id, title }) => ({ id, title })),
 				...(input.previousReview ? { incrementalFromHeadCommit: input.previousReview.headCommit } : {}),
 			};
 	if (!canReuse) await writeJson(paths.manifest, manifest);
 
 	const generationAbort = new AbortController();
-	let relevantPlannedChangeIds = input.plannedChanges.map(({ id }) => id);
+	let relevantPlannedChangeIds = plannedChanges.map(({ id }) => id);
 	if (input.previousReview) {
 		const previousReview = input.previousReview;
 		const scopeAgent: ReviewAgentIdentity = {
@@ -189,7 +194,7 @@ export async function generateWorkflowReview(
 		let scope = canReuse ? await readJson(paths.incrementalScope, isIncrementalReviewScope) : undefined;
 		const reusableScope =
 			scope !== undefined &&
-			incrementalReviewScopeIsValid(scope, input.plannedChanges) &&
+			incrementalReviewScopeIsValid(scope, plannedChanges) &&
 			arraysEqual(
 				manifest.relevantPlannedChangeIds,
 				scope.relevantPlannedChanges.map(({ id }) => id),
@@ -205,7 +210,7 @@ export async function generateWorkflowReview(
 				await mkdir(paths.plannedChanges, { recursive: true });
 			}
 			scope = await runTrackedAgent(scopeAgent, async () => {
-				const value = await runAgent({
+				const value = await runAgentWithPlan({
 					role: "incremental-scope",
 					outputTool: INCREMENTAL_REVIEW_SCOPE_OUTPUT_TOOL,
 					cwd: input.worktreePath,
@@ -220,7 +225,7 @@ export async function generateWorkflowReview(
 					}),
 					signal: generationAbort.signal,
 				});
-				if (!isIncrementalReviewScope(value) || !incrementalReviewScopeIsValid(value, input.plannedChanges)) {
+				if (!isIncrementalReviewScope(value) || !incrementalReviewScopeIsValid(value, plannedChanges)) {
 					throw new Error("The incremental review scope agent returned an invalid result.");
 				}
 				await writeJson(paths.incrementalScope, value);
@@ -240,13 +245,14 @@ export async function generateWorkflowReview(
 	}
 	const relevantPlannedChanges = new Set(relevantPlannedChangeIds);
 	const plannedChangeAgents = new Map(
-		input.plannedChanges
-			.filter((change) => relevantPlannedChanges.has(change.id))
-			.map((change) => [
+		plannedChanges
+			.map((change, index) => ({ change, number: index + 1 }))
+			.filter(({ change }) => relevantPlannedChanges.has(change.id))
+			.map(({ change, number }) => [
 				change.id,
 				{
 					id: `planned-change:${change.id}`,
-					label: `${change.id}: ${change.title}`,
+					label: `${number}. ${change.title}`,
 					role: "planned-change" as const,
 				},
 			]),
@@ -273,7 +279,7 @@ export async function generateWorkflowReview(
 			| { type: "testing"; value: TestingCriteriaAnalysis }
 		>
 	> = [
-		...input.plannedChanges.map((change) => async () => {
+		...plannedChanges.map((change) => async () => {
 			const resultPath = join(paths.plannedChanges, `${safePathSegment(change.id, "planned-change id")}.json`);
 			const agent = plannedChangeAgents.get(change.id);
 			if (canReuse) {
@@ -294,7 +300,7 @@ export async function generateWorkflowReview(
 			if (!agent) throw new Error(`The review progress identity for ${change.id} is missing.`);
 			analysisChanged = true;
 			return runTrackedAgent(agent, async () => {
-				const value = await runAgent({
+				const value = await runAgentWithPlan({
 					role: "planned-change",
 					outputTool: PLANNED_CHANGE_OUTPUT_TOOL,
 					cwd: input.worktreePath,
@@ -329,7 +335,7 @@ export async function generateWorkflowReview(
 			}
 			analysisChanged = true;
 			return runTrackedAgent(holisticAgent, async () => {
-				const value = await runAgent({
+				const value = await runAgentWithPlan({
 					role: "holistic-review",
 					outputTool: HOLISTIC_REVIEW_OUTPUT_TOOL,
 					cwd: input.worktreePath,
@@ -358,12 +364,12 @@ export async function generateWorkflowReview(
 			}
 			analysisChanged = true;
 			return runTrackedAgent(testingCriteriaAgent, async () => {
-				const value = await runAgent({
+				const value = await runAgentWithPlan({
 					role: "testing-criteria",
 					outputTool: TESTING_CRITERIA_OUTPUT_TOOL,
 					cwd: input.worktreePath,
 					prompt: testingCriteriaReviewPrompt({
-						testingCriteria: input.testingCriteria,
+						testingCriteria: input.plan.testing,
 						metadataPath: input.metadataPath,
 						clarificationsPath: input.clarificationsPath,
 						planPath: input.planPath,
@@ -388,11 +394,11 @@ export async function generateWorkflowReview(
 	const testingCriteriaReview = results.find((result) => result.type === "testing")?.value;
 	if (!holisticReview) throw new Error("The holistic review did not complete.");
 	if (!testingCriteriaReview) throw new Error("The testing criteria review did not complete.");
-	if (analyses.length !== input.plannedChanges.length) throw new Error("One or more planned-change reviews are missing.");
+	if (analyses.length !== plannedChanges.length) throw new Error("One or more planned-change reviews are missing.");
 	await writeJson(paths.manifest, { ...manifest, status: "analysis-complete" });
 	input.onStage?.("analysis-complete");
 
-	const orderedAnalyses = input.plannedChanges.map((change) => {
+	const orderedAnalyses = plannedChanges.map((change) => {
 		const analysis = analyses.find((candidate) => candidate.id === change.id);
 		if (!analysis) throw new Error(`The review for ${change.id} is missing.`);
 		return analysis;
@@ -406,7 +412,7 @@ export async function generateWorkflowReview(
 	let synthesis = !analysisChanged && canReuse ? await readJson(paths.synthesis, isReviewSynthesis) : undefined;
 	if (!synthesis) {
 		synthesis = await runTrackedAgent(synthesisAgent, async () => {
-			const synthesisValue = await runAgent({
+			const synthesisValue = await runAgentWithPlan({
 				role: "synthesizer",
 				outputTool: REVIEW_SYNTHESIS_OUTPUT_TOOL,
 				cwd: input.worktreePath,
@@ -444,19 +450,46 @@ export async function generateWorkflowReview(
 		overallResult: synthesis.overallResult,
 		overallConcerns: synthesis.overallConcerns,
 		holisticReview,
-		plannedChanges: input.plannedChanges.map((change, index) => ({
+		plannedChanges: plannedChanges.map((change, index) => ({
 			id: change.id,
 			title: change.title,
-			what: change.what,
-			why: change.why,
-			...(change.pseudocode === undefined ? {} : { pseudocode: change.pseudocode }),
+			dependsOn: [...change.dependsOn],
+			content: change.content,
 			review: orderedAnalyses[index]!,
 		})),
 		testingCriteria: {
-			originalCriteria: input.testingCriteria,
+			originalCriteria: input.plan.testing,
 			review: testingCriteriaReview,
 		},
 	};
+}
+
+function plannedChangesInReadingOrder(plan: PlanDocument): PlannedChange[] {
+	return validatePlanDocument(plan).changes;
+}
+
+/** Include all approved prose and graph edges directly, without re-reading a mutable Markdown export. */
+function reviewPlanContext(plan: PlanDocument, changes: PlannedChange[]): string {
+	return [
+		"<approved-plan-evidence>",
+		"Goal:",
+		plan.goal,
+		...(plan.intro === undefined ? [] : ["", "Introduction:", plan.intro]),
+		"",
+		`Reading order: ${plan.readingOrder.join(", ")}`,
+		...changes.flatMap((change, index) => [
+			"",
+			`Planned change ${index + 1}: ${change.title}`,
+			`Stable ID: ${change.id}`,
+			`Depends on: ${change.dependsOn.length ? change.dependsOn.join(", ") : "None"}`,
+			"",
+			change.content,
+		]),
+		"",
+		"Testing:",
+		plan.testing,
+		"</approved-plan-evidence>",
+	].join("\n");
 }
 
 function reviewRoundPaths(input: ReviewGenerationInput): ReviewRoundPaths {
@@ -481,15 +514,16 @@ function safePathSegment(value: string, label: string): string {
 }
 
 function manifestMatches(manifest: ReviewRoundManifest, input: ReviewGenerationInput): boolean {
+	const plannedChanges = plannedChangesInReadingOrder(input.plan);
 	return (
 		arraysEqual(manifest.pullRequestUrls, input.pullRequests.map(({ url }) => url)) &&
 		manifest.baseCommit === input.baseCommit &&
 		manifest.headCommit === input.headCommit &&
 		manifest.sourceFingerprint === input.sourceFingerprint &&
 		manifest.incrementalFromHeadCommit === input.previousReview?.headCommit &&
-		manifest.plannedChanges.length === input.plannedChanges.length &&
+		manifest.plannedChanges.length === plannedChanges.length &&
 		manifest.plannedChanges.every((change, index) => {
-			const expected = input.plannedChanges[index];
+			const expected = plannedChanges[index];
 			return change.id === expected?.id && change.title === expected.title;
 		})
 	);
@@ -513,14 +547,14 @@ function isReviewRoundManifest(value: unknown): value is ReviewRoundManifest {
 			(change) =>
 				change !== null &&
 				typeof change === "object" &&
-				typeof (change as { id?: unknown }).id === "string" &&
+				isPlannedChangeId((change as { id?: unknown }).id) &&
 				typeof (change as { title?: unknown }).title === "string",
 		) &&
 		(candidate.incrementalFromHeadCommit === undefined ||
 			typeof candidate.incrementalFromHeadCommit === "string") &&
 		(candidate.relevantPlannedChangeIds === undefined ||
 			(Array.isArray(candidate.relevantPlannedChangeIds) &&
-				candidate.relevantPlannedChangeIds.every((id) => typeof id === "string")))
+				candidate.relevantPlannedChangeIds.every(isPlannedChangeId)))
 	);
 }
 
@@ -530,8 +564,8 @@ function reviewInputsSnapshot(input: ReviewGenerationInput): ReviewInputsSnapsho
 		baseCommit: input.baseCommit,
 		headCommit: input.headCommit,
 		sourceFingerprint: input.sourceFingerprint,
-		testingCriteria: input.testingCriteria,
-		plannedChanges: input.plannedChanges.map(({ id, title }) => ({ id, title })),
+		testingCriteria: input.plan.testing,
+		plannedChanges: plannedChangesInReadingOrder(input.plan).map(({ id, title }) => ({ id, title })),
 	};
 }
 

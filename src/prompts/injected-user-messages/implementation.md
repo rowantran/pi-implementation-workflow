@@ -1,7 +1,7 @@
 <!-- Usage: Sent as the initial user message after /workflow-implement switches to an implementation session. -->
 Implement the plan.
 
-First inspect the immutable original ask in {{{metadataPath}}}, the frozen plan in {{{planPath}}}, and relevant existing code from the repository.
+First inspect the immutable original ask in {{{metadataPath}}}, the frozen plan directory at {{{planPath}}} (plan.json, goal.md, optional intro.md, testing.md, and every change's metadata and Markdown), and relevant existing code from the repository.
 
 Before you start changing code, if there are any design choices that are left ambiguous by the sources above or contain contradictions, resolve the remaining ambiguity by using the implementation questionnaire to ask clarifying questions.
 Lean towards asking more clarifying questions than less. At the same time, do not waste effort reopening design choices that are already clearly resolved by the existing sources.

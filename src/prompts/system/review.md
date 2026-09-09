@@ -8,6 +8,8 @@ A deterministic multi-agent review has already been generated. Its structured so
 The review was grounded in these sources, from highest to lowest priority:
 1. the original ask in {{{metadataPath}}}
 2. later explicit clarifications in {{{clarificationsPath}}}
-3. the approved plan in {{{planPath}}}
+3. the exact approved structured plan version in {{{planPath}}}
+
+Each planned-change review preserves the complete original freeform Markdown in content, alongside its stable slug id, title, and dependsOn edges. Use those slugs when referring to findings; visual numbering is derived from the report's plannedChanges array order and is not an identifier. Read all of the planned prose, not just headings or code blocks.
 
 This review session is read-only. If the user wants implementation changes, tell them to run `/workflow-revise` with the requested changes so the workflow creates a separate revision session. If asked to challenge a finding, inspect the cited code and explain whether the saved review remains accurate.

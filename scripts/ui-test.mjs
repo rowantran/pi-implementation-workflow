@@ -97,17 +97,17 @@ const component = new WorkflowProgressComponent(
 	"Generating implementation review",
 	["Reviewing agents", "Synthesizing overall findings"],
 );
-component.updateSubstep("planned-change:PC-01", "PC-01: Store the report", "queued");
+component.updateSubstep("planned-change:store-report", "1. Store the report", "queued");
 component.updateSubstep("holistic-review", "Holistic reviewer", "running");
 let lines = component.render(80);
-assert.ok(lines.includes("   ○ PC-01: Store the report"));
+assert.ok(lines.includes("   ○ 1. Store the report"));
 assert.ok(lines.some((line) => /^   ⠋ Holistic reviewer$/.test(line)), "a running agent renders its own spinner");
-component.updateSubstep("planned-change:PC-01", "PC-01: Store the report", "complete");
+component.updateSubstep("planned-change:store-report", "1. Store the report", "complete");
 component.updateSubstep("holistic-review", "Holistic reviewer", "reused");
 component.complete("Reviewed agents");
 component.updateSubstep("synthesizer", "Synthesis agent", "running");
 lines = component.render(80);
-assert.ok(lines.includes("   ✓ PC-01: Store the report"));
+assert.ok(lines.includes("   ✓ 1. Store the report"));
 assert.ok(lines.includes("   ↻ Holistic reviewer"));
 assert.ok(lines.some((line) => /^   ⠋ Synthesis agent$/.test(line)), "new substeps attach to the next active stage");
 assert.ok(renderRequests.length >= 6, "substep changes request live renders");

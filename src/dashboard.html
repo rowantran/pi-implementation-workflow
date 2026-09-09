@@ -75,7 +75,7 @@
   <section class="view" id="plan-view">
     <div class="plan-layout">
       <article class="card plan-card">
-        <div class="plan-mode-bar" aria-label="Plan reading mode"><span class="plan-mode-label">Reading mode</span><button class="ds-button" id="plan-guided-mode-button" type="button">Guided view</button><button class="ds-button" id="plan-full-mode-button" type="button">Full document</button><span class="plan-mode-note" id="plan-mode-note" hidden>Guided view needs structured planned-change headings.</span><div class="plan-sidebar-actions"><button class="ds-button sidebar-toggle" id="plan-navigation-sidebar-button" type="button" aria-label="Hide left navigation sidebar (S)" aria-controls="plan-outline" aria-expanded="true" aria-keyshortcuts="S"><span class="sidebar-toggle-label">Hide navigation</span> <kbd class="shortcut-key">S</kbd></button><button class="ds-button sidebar-toggle" id="context-sidebar-button" type="button" aria-label="Hide workflow context sidebar (C)" aria-controls="workflow-context-sidebar" aria-expanded="true" aria-keyshortcuts="C"><span class="sidebar-toggle-label">Hide context</span> <kbd class="shortcut-key">C</kbd></button></div></div>
+        <div class="plan-mode-bar" aria-label="Plan reading mode"><span class="plan-mode-label">Reading mode</span><button class="ds-button" id="plan-guided-mode-button" type="button">Guided view</button><button class="ds-button" id="plan-full-mode-button" type="button">Full document</button><span class="plan-mode-note" id="plan-mode-note" hidden>Guided view is available after the first plan is finalized.</span><div class="plan-sidebar-actions"><button class="ds-button sidebar-toggle" id="plan-navigation-sidebar-button" type="button" aria-label="Hide left navigation sidebar (S)" aria-controls="plan-outline" aria-expanded="true" aria-keyshortcuts="S"><span class="sidebar-toggle-label">Hide navigation</span> <kbd class="shortcut-key">S</kbd></button><button class="ds-button sidebar-toggle" id="context-sidebar-button" type="button" aria-label="Hide workflow context sidebar (C)" aria-controls="workflow-context-sidebar" aria-expanded="true" aria-keyshortcuts="C"><span class="sidebar-toggle-label">Hide context</span> <kbd class="shortcut-key">C</kbd></button></div></div>
         <div class="plan-reader" id="plan-reader">
           <nav class="plan-outline" id="plan-outline" aria-label="Plan outline">
             <div class="plan-outline-sticky">
@@ -112,17 +112,34 @@ let graphRenderSequence = 0;
 let navigationSidebarCollapsed = false, contextSidebarCollapsed = false, currentDiffBlockIndex = -1;
 const readers = {};
 function escapeHtml(value) { return String(value).replace(/[&<>\"]/g, function(character) { if (character === "&") return "&amp;"; if (character === "<") return "&lt;"; if (character === ">") return "&gt;"; return "&quot;"; }); }
-function inlineMarkdown(value) { return escapeHtml(value).replace(/\x60([^\x60]+)\x60/g, "<code>$1</code>").replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>"); }
+function inlineMarkdown(value,context) { return marked.parseInline(String(value || ''),{gfm:true,renderer:markdownRenderer(context)}); }
 function safeMarkdownUrl(value) { const url=String(value || ""), compact=url.replace(/[\u0000-\u0020\u007f]/g,"").toLowerCase(); return /^(?:javascript|vbscript|data):/.test(compact) ? null : url; }
-function renderMarkdown(markdown) {
-  const source=String(markdown || "");
-  if (!source.trim()) return '<div class="empty">The plan is empty.</div>';
+function planMarkdownUrl(value,context) {
+  if(!context || !context.document)return value;
+  const source=String(value || "");let id=null;
+  try {
+    if(/^#(?:plan-change-|review-change-)/.test(source))id=decodeURIComponent(source.replace(/^#(?:plan-change-|review-change-)/,""));
+    else if(source.startsWith("#") && !source.includes("/"))id=decodeURIComponent(source.slice(1));
+    else {
+      const file=/^(?:\.\/)?(?:changes\/)?([a-z0-9-]+)\.md(?:#.*)?$/.exec(source);
+      const directory=/^(?:(?:\.\.\/)*|\.\/)?(?:planned-changes\/)?([a-z0-9-]+)\/change\.md(?:#.*)?$/.exec(source);
+      if(file || directory)id=(file || directory)[1];
+    }
+  } catch { return value; }
+  return id && context.document.changes.some(function(change){return change.id===id;}) ? "#"+(context.reader || "plan")+"/change/"+encodeURIComponent(id) : value;
+}
+function markdownRenderer(context) {
   const renderer=new marked.Renderer();
   renderer.html=function(token){return escapeHtml(token.text);};
   renderer.code=function(token){const language=String(token.lang || "").trim().split(/\s+/,1)[0].toLowerCase();if(language==="mermaid")return '<div class="mermaid">'+escapeHtml(token.text)+"</div>";const languageClass=language ? ' class="language-'+escapeHtml(language)+'"' : "";return "<pre><code"+languageClass+">"+escapeHtml(token.text)+"</code></pre>";};
-  renderer.link=function(token){const text=this.parser.parseInline(token.tokens),href=safeMarkdownUrl(token.href);if(href===null)return text;const title=token.title ? ' title="'+escapeHtml(token.title)+'"' : "";return '<a href="'+escapeHtml(href)+'"'+title+' rel="noopener noreferrer">'+text+"</a>";};
+  renderer.link=function(token){const text=this.parser.parseInline(token.tokens),href=safeMarkdownUrl(planMarkdownUrl(token.href,context));if(href===null)return text;const title=token.title ? ' title="'+escapeHtml(token.title)+'"' : "";return '<a href="'+escapeHtml(href)+'"'+title+' rel="noopener noreferrer">'+text+"</a>";};
   renderer.image=function(token){const href=safeMarkdownUrl(token.href);if(href===null)return escapeHtml(token.text);const title=token.title ? ' title="'+escapeHtml(token.title)+'"' : "";return '<img src="'+escapeHtml(href)+'" alt="'+escapeHtml(token.text)+'"'+title+">";};
-  return marked.parse(source,{gfm:true,breaks:false,renderer:renderer});
+  return renderer;
+}
+function renderMarkdown(markdown,context) {
+  const source=String(markdown || '');
+  if(!source.trim())return '<div class="empty">The plan is empty.</div>';
+  return marked.parse(source,{gfm:true,breaks:false,renderer:markdownRenderer(context)});
 }
 let mermaidLibraryPromise=null;
 function loadMermaidLibrary() {
@@ -162,7 +179,7 @@ function generateDependencyDiagram(graph) {
   if(graph.status!=="valid")return "";
   const identifiers=new Map(graph.nodes.map(function(node,index){return [node.id,"dag_"+index];})), lines=["flowchart TD"];
   for(const [index,node] of graph.nodes.entries()) {
-    const label=[node.id].concat(wrapGraphTitle(node.title)).map(mermaidGraphText).join("<br/>");
+    const label=["Change "+(index+1)].concat(wrapGraphTitle(node.title),[node.id]).map(mermaidGraphText).join("<br/>");
     lines.push('  '+identifiers.get(node.id)+'["'+label+'"]');
     lines.push("  class "+identifiers.get(node.id)+" dag-node-"+index+";");
   }
@@ -171,12 +188,12 @@ function generateDependencyDiagram(graph) {
 }
 function graphDestination(id) { return "plan/graph"+(id ? "/"+encodeURIComponent(id) : ""); }
 function isPlanGraphSection() { return Boolean(readers.plan && readers.plan.mode==="guided" && readers.plan.currentDestination==="graph"); }
-function readerDestinationHash(name) { const reader=readers[name];return name==="plan" && isPlanGraphSection() ? graphDestination(selectedGraphNode) : name+"/"+(reader.mode==="guided" ? encodeURIComponent(reader.currentDestination) : "full"); }
-function planChangeDestination(id) { const change=planStructure && planStructure.changes && planStructure.changes.find(function(item){return item.title.startsWith(id+":");});return change ? change.id : null; }
+function readerDestinationHash(name) { const reader=readers[name];return name==="plan" && isPlanGraphSection() ? graphDestination(selectedGraphNode) : name+"/"+(reader.mode==="guided" ? reader.currentDestination.split("/").map(encodeURIComponent).join("/") : "full"); }
+function planChangeDestination(id) { const change=planStructure && planStructure.changes && planStructure.changes.find(function(item){return item.id===id;});return change ? "change/"+change.id : null; }
 function dependencyLink(graph,id) {
   const node=graph.nodes.find(function(item){return item.id===id;});if(!node)return escapeHtml(id);
-  const destination="plan/"+encodeURIComponent(planChangeDestination(id) || "full");
-  return '<a href="#'+destination+'" data-dependency-node="'+escapeHtml(id)+'" title="'+escapeHtml(node.title)+'">'+escapeHtml(id)+'</a>';
+  const destination="plan/"+(planChangeDestination(id) || "full");
+  return '<a href="#'+destination+'" data-dependency-node="'+escapeHtml(id)+'" title="'+escapeHtml(id)+'">'+(graph.nodes.indexOf(node)+1)+'. '+escapeHtml(node.title)+'</a>';
 }
 function renderDependencyRelations(graph,id) {
   if(graph.status!=="valid")return "";const node=graph.nodes.find(function(item){return item.id===id;});if(!node)return "";
@@ -213,7 +230,7 @@ async function renderDependencyGraphDiagram(graph) {
     }
     for(const [index,node] of graph.nodes.entries()) {
       const element=canvas.querySelector(".node.dag-node-"+index);if(!element)continue;
-      element.setAttribute("role","button");element.setAttribute("tabindex","0");element.setAttribute("aria-label",node.id+": "+node.title+". Requires: "+(node.dependsOn.join(", ") || "none")+". Highlight prerequisites and downstream changes.");
+      element.setAttribute("role","button");element.setAttribute("tabindex","0");element.setAttribute("aria-label","Change "+(index+1)+": "+node.title+" ("+node.id+"). Requires: "+(node.dependsOn.join(", ") || "none")+". Highlight prerequisites and downstream changes.");
       element.addEventListener("click",function(){selectGraphNode(node.id);});element.addEventListener("keydown",function(event){if(event.key==="Enter" || event.key===" "){event.preventDefault();selectGraphNode(node.id);}});
     }
     updateGraphHighlight(graph);
@@ -232,7 +249,7 @@ function renderPlanGraph() {
   return '<section id="plan-dependency-graph" aria-labelledby="plan-graph-title"><div class="dependency-header"><div><div class="guided-kicker">Plan dependencies</div><h2 id="plan-graph-title">How the changes fit together</h2><p>Prerequisite → dependent · Read from top to bottom.</p></div><span class="dependency-count">'+graph.nodes.length+' '+(graph.nodes.length===1 ? 'change' : 'changes')+' · '+edges+' '+(edges===1 ? 'dependency' : 'dependencies')+'</span></div>'+goal+'<div class="dependency-legend" aria-label="Selection legend"><span><i class="legend-selected" aria-hidden="true"></i>Selected</span><span><i class="legend-requires" aria-hidden="true"></i>All prerequisites</span><span><i class="legend-enables" aria-hidden="true"></i>All downstream changes</span></div><div class="dependency-canvas" id="plan-dependency-canvas" role="region" aria-label="Scrollable dependency diagram" tabindex="0"><p class="dependency-render-status">Drawing dependency graph…</p></div></section>';
 }
 function activatePlanGraph() {
-  const graph=currentDependencyGraph();if(graph.status!=="valid")return;
+  const graph=currentDependencyGraph();if(graph.status!=="valid" || !graph.nodes.length)return;
   selectGraphNode(graph.nodes.some(function(node){return node.id===selectedGraphNode;}) ? selectedGraphNode : graph.nodes[0].id,false);void renderDependencyGraphDiagram(graph);
 }
 function handleDependencyNavigation(event) {
@@ -257,7 +274,7 @@ function planDestinationForState(destination,savedMode,savedDestination) {
 }
 function createPlanDestinations(structure) {
   if(!structure.canUseGuidedView)return [];
-  return [{id:"goal",label:"Goal",kind:"goal"},{id:"graph",label:"Dependency graph",kind:"graph"}].concat(structure.changes.map(function(change){return {id:change.id,label:"Change "+change.number,position:"Change "+change.number+" of "+structure.changes.length,kind:"change",change:change};}),[{id:"testing",label:"Testing",kind:"testing"}]);
+  return [{id:"goal",label:"Goal",kind:"goal"},{id:"graph",label:"Dependency graph",kind:"graph"}].concat(structure.changes.map(function(change){return {id:"change/"+change.id,label:"Change "+change.number,position:"Change "+change.number+" of "+structure.changes.length,kind:"change",change:change};}),[{id:"testing",label:"Testing",kind:"testing"}]);
 }
 function dependencyChanges(before,after) {
   if(!before || !after || before.status!=="valid" || after.status!=="valid")return null;
@@ -272,30 +289,11 @@ function renderDependencyChanges(before,after) {
   const items=[];for(const [key,label,kind] of [["addedNodes","Change added","added"],["removedNodes","Change removed","removed"],["addedEdges","Dependency added","added"],["removedEdges","Dependency removed","removed"]])for(const value of changes[key])items.push('<li class="dependency-'+kind+'">'+label+': '+escapeHtml(value)+'</li>');
   return heading+(items.length ? '<ul>'+items.join("")+'</ul>' : '<p>No dependency changes.</p>');
 }
-function headingText(value) { return String(value || "").replace(/\x60([^\x60]+)\x60/g, "$1").replace(/\*\*([^*]+)\*\*/g, "$1").trim(); }
-function parsePlanStructure(markdown) {
-  const source = String(markdown || "").replace(/\r\n/g, "\n"), sourceLines = source.split("\n"), headings = [];
-  let fenceCharacter = null, fenceLength = 0;
-  for (let index=0;index<sourceLines.length;index++) {
-    const raw = sourceLines[index], fence=/^\s*(\x60{3,}|~{3,})/.exec(raw);
-    if(fence){const marker=fence[1];if(!fenceCharacter){fenceCharacter=marker[0];fenceLength=marker.length;}else if(marker[0]===fenceCharacter && marker.length>=fenceLength){fenceCharacter=null;fenceLength=0;}continue;}
-    if (fenceCharacter) continue;
-    const match = /^(#{1,4})\s+(.+)$/.exec(raw);
-    if (match) headings.push({index:index,level:match[1].length,title:headingText(match[2])});
-  }
-  const titleHeading=headings.find(function(item){return item.level===1;}), title=titleHeading ? titleHeading.title : "Implementation plan";
-  function section(name) { return headings.find(function(item){return item.level===2 && item.title.toLowerCase()===name;}); }
-  const goalHeading=section("goal"), changesHeading=section("planned changes"), testingHeading=section("testing");
-  if (!goalHeading || !changesHeading || !testingHeading || !(goalHeading.index < changesHeading.index && changesHeading.index < testingHeading.index)) return {canUseGuidedView:false,title:title};
-  const changeHeadings=headings.filter(function(item){return item.level===3 && item.index>changesHeading.index && item.index<testingHeading.index;});
-  if (!changeHeadings.length) return {canUseGuidedView:false,title:title};
-  function contentBetween(start,end) { return sourceLines.slice(start,end).join("\n").trim(); }
-  const changes=changeHeadings.map(function(item,index){
-    const end=index+1<changeHeadings.length ? changeHeadings[index+1].index : testingHeading.index;
-    const slug=item.title.toLowerCase().replace(/[^a-z0-9]+/g,"-").replace(/^-|-$/g,"").slice(0,48) || "change";
-    return {id:"change-"+(index+1)+"-"+slug,number:index+1,title:item.title,content:contentBetween(item.index+1,end)};
-  });
-  return {canUseGuidedView:true,title:title,goal:contentBetween(goalHeading.index+1,changesHeading.index),changes:changes,testing:contentBetween(testingHeading.index+1,sourceLines.length)};
+function planDocumentStructure(document) {
+  if(!document)return {canUseGuidedView:false,changes:[]};
+  const byId=new Map(document.changes.map(function(change){return [change.id,change];}));
+  const changes=document.readingOrder.map(function(id,index){return Object.assign({},byId.get(id),{number:index+1});});
+  return {canUseGuidedView:true,goal:document.goal,intro:document.intro,testing:document.testing,changes:changes};
 }
 function readState() { try { return JSON.parse(localStorage.getItem(stateKey) || "{}"); } catch { return {}; } }
 function saveState(patch) { try { localStorage.setItem(stateKey, JSON.stringify(Object.assign(readState(), patch))); } catch {} }
@@ -320,7 +318,7 @@ function renderReader(name,destination,focusContent,scrollContent) {
   const reader=readers[name]; if (!reader || !reader.destinations.length) return;
   const graphDestinationRequested=name==="plan" && (destination==="graph" || String(destination).startsWith("graph/"));
   if(graphDestinationRequested && destination.startsWith("graph/"))selectedGraphNode=destination.slice(6);
-  const resolvedDestination=graphDestinationRequested ? "graph" : name==="plan" && /^PC-\d+$/.test(destination || "") ? planChangeDestination(destination) : destination;
+  const resolvedDestination=graphDestinationRequested ? "graph" : reader.destinations.some(function(item){return item.id===destination;}) ? destination : "change/"+destination;
   const selected=reader.destinations.find(function(item){return item.id===resolvedDestination;}) || reader.destinations[0]; reader.currentDestination=selected.id;
   const graphSection=name==="plan" && selected.kind==="graph", content=document.getElementById(name+"-content");
   document.getElementById(name+"-reader").classList.toggle("plan-reader--dependencies",graphSection);
@@ -337,18 +335,18 @@ function setModeButtons(name,mode) {
   for (const item of ["guided","full"]) { const button=document.getElementById(name+"-"+item+"-mode-button"), active=mode===item;if(!button)continue;button.classList.toggle("plan-mode-button--active",active); button.setAttribute("aria-pressed",String(active)); }
 }
 function renderFullPlan() {
-  const planContent=document.getElementById("plan-content"); planContent.className=""; planContent.innerHTML=renderMarkdown(latestPlan ? latestPlan.content : "");
-  const duplicateTitle=planContent.querySelector("h1"); if (duplicateTitle) duplicateTitle.remove();
-  const graph=currentDependencyGraph();if(graph.status==="valid")for(const heading of planContent.querySelectorAll("h3")){const node=graph.nodes.find(function(item){return heading.textContent.startsWith(item.id+":");});if(node){heading.id="plan-change-"+node.id;heading.insertAdjacentHTML("afterend",'<div class="dependency-relations">'+renderDependencyRelations(graph,node.id)+'</div>');}}
+  const planContent=document.getElementById("plan-content"); planContent.className="";
+  planContent.innerHTML=latestPlan && latestPlan.document ? createPlanDestinations(planStructure).filter(function(section){return section.kind!=="graph";}).map(function(section){return '<section class="plan-full-section">'+renderPlanDestination(section,true)+'</section>';}).join("") : '<div class="empty">No saved plan yet. Finalize the working draft to publish the first version.</div>';
   void renderMermaidDiagrams(planContent);
   document.getElementById("plan-pagination").hidden=true;
 }
-function renderPlanDestination(selected) {
+function renderPlanDestination(selected,fullDocument) {
+  const context={document:latestPlan && latestPlan.document,reader:"plan"}, kicker=fullDocument ? "" : '<div class="guided-kicker">Plan section</div>';
   if (selected.kind==="graph") return renderPlanGraph();
-  if (selected.kind==="goal") return '<div class="guided-kicker">Plan section</div><h2>Goal</h2>'+renderMarkdown(planStructure.goal);
-  if (selected.kind==="testing") return '<div class="guided-kicker">Plan section</div><h2>Testing</h2>'+renderMarkdown(planStructure.testing);
-  const graph=currentDependencyGraph(), node=graph.status==="valid" ? graph.nodes.find(function(item){return selected.change.title.startsWith(item.id+":");}) : null;
-  return '<div class="guided-kicker">Change '+selected.change.number+' of '+planStructure.changes.length+'</div><h2>'+inlineMarkdown(selected.change.title)+'</h2>'+(node ? '<div class="dependency-relations">'+renderDependencyRelations(graph,node.id)+'</div>' : '')+renderMarkdown(selected.change.content);
+  if (selected.kind==="goal") return kicker+'<h2>Goal</h2>'+renderMarkdown(planStructure.goal,context)+(planStructure.intro ? '<h3>Introduction</h3>'+renderMarkdown(planStructure.intro,context) : '');
+  if (selected.kind==="testing") return kicker+'<h2>Testing</h2>'+renderMarkdown(planStructure.testing,context);
+  const graph=currentDependencyGraph(), change=selected.change, changeKicker=fullDocument ? '' : '<div class="guided-kicker">Change '+change.number+' of '+planStructure.changes.length+'</div>';
+  return changeKicker+'<h2 id="plan-change-'+escapeHtml(change.id)+'">'+change.number+'. '+inlineMarkdown(change.title)+'</h2><div class="plan-mode-note">'+escapeHtml(change.id)+'</div><div class="dependency-relations">'+renderDependencyRelations(graph,change.id)+'</div>'+renderMarkdown(change.content,context);
 }
 function setReaderMode(name,mode,destination,focusContent) {
   const reader=readers[name]; if (!reader) return; reader.mode=mode==="guided" && reader.destinations.length ? "guided" : "full"; setModeButtons(name,reader.mode);
@@ -367,22 +365,34 @@ function renderVerdicts(necessary,sufficient) { return '<div class="verdicts"><s
 function renderEvidence(items) { if (!items || !items.length) return ""; return '<ul class="evidence-list">'+items.map(function(item){return "<li><code>"+escapeHtml(item.location)+"</code> — "+escapeHtml(item.description)+"</li>";}).join("")+"</ul>"; }
 function renderConcerns(concerns) { if (!concerns || !concerns.length) return '<p class="review-empty">No concerns.</p>'; return '<div class="review-concern-list">'+concerns.map(function(item){return '<section class="review-concern"><div><span class="concern-severity '+escapeHtml(item.severity)+'">'+escapeHtml(item.severity)+'</span><span class="concern-title">'+escapeHtml(item.title)+'</span></div><p class="concern-details review-text">'+escapeHtml(item.details)+'</p>'+renderEvidence(item.evidence)+"</section>";}).join("")+"</div>"; }
 function renderTestingCriterion(criterion) { return '<section class="criterion-result"><h3>'+escapeHtml(criterion.criterion)+'</h3><span class="verdict '+escapeHtml(criterion.status)+'">'+escapeHtml(verdictLabel(criterion.status))+'</span><p class="review-text">'+escapeHtml(criterion.explanation)+'</p>'+renderEvidence(criterion.evidence)+"</section>"; }
+function reviewPlanSnapshot() {
+  // A later approval must not relabel an older report. Its embedded design and
+  // array order are the immutable review context; the snapshot only supplies a label.
+  const snapshot=dashboard.versions.find(function(version){return version.number===dashboard.approvedPlanVersion;}),report=dashboard.review;
+  if(!snapshot || !snapshot.document || !report)return null;
+  const planned=planDocumentStructure(snapshot.document).changes;
+  return planned.length===report.plannedChanges.length && planned.every(function(change,index){const reviewed=report.plannedChanges[index];return change.id===reviewed.id && change.title===reviewed.title && change.content===reviewed.content && JSON.stringify(change.dependsOn.slice().sort())===JSON.stringify(reviewed.dependsOn.slice().sort());}) && snapshot.document.testing===report.testingCriteria.originalCriteria ? snapshot : null;
+}
+function createReviewDestinations(report) {
+  const changes=report.plannedChanges.map(function(change,index){return {id:"change/"+change.id,label:(index+1)+". "+change.title,position:"Change "+(index+1)+" of "+report.plannedChanges.length,kind:"change",number:index+1,change:change};});
+  return [{id:"overall",label:"Overall result",kind:"overall"},{id:"concerns",label:"Overall concerns",kind:"concerns"}].concat(changes,[{id:"testing",label:"Testing criteria",kind:"testing"}]);
+}
 function renderReviewDestination(selected,fullDocument) {
-  const report=dashboard.review, sectionKicker=fullDocument ? "" : '<div class="guided-kicker">Review section</div>';
+  const report=dashboard.review, context={document:{changes:report.plannedChanges},reader:"review"}, sectionKicker=fullDocument ? "" : '<div class="guided-kicker">Review section</div>';
   if (selected.kind==="overall") { const stale=dashboard.reviewStale ? '<div class="stale-warning">The branch head changed after this report was generated. Run /workflow-revise to enter a revision phase before generating another review.</div>' : ""; return sectionKicker+'<h2>Overall result</h2>'+renderVerdicts(report.overallResult.necessary,report.overallResult.sufficient)+'<p class="review-text">'+escapeHtml(report.overallResult.summary)+"</p>"+stale; }
   if (selected.kind==="concerns") return sectionKicker+'<h2>Overall concerns</h2>'+renderConcerns(report.overallConcerns);
-  if (selected.kind==="testing") { const testing=report.testingCriteria,review=testing.review,criteria=review.criteria.length ? review.criteria.map(renderTestingCriterion).join("") : '<p class="review-empty">No individual criteria were identified.</p>'; return sectionKicker+'<h2>Testing criteria</h2><details class="review-collapsible"><summary>Planned tests</summary><div class="testing-original">'+renderMarkdown(testing.originalCriteria)+'</div></details><div class="verdicts"><span class="verdict '+escapeHtml(review.satisfied.status)+'">Satisfied: '+escapeHtml(verdictLabel(review.satisfied.status))+'</span></div><div class="verdict-explanations"><p><strong>Result:</strong> '+escapeHtml(review.satisfied.explanation)+'</p></div><p class="review-text">'+escapeHtml(review.summary)+'</p><h3>Criterion evidence</h3>'+criteria+'<h3>Testing concerns</h3>'+renderConcerns(review.concerns); }
-  const change=selected.change,review=change.review, changeKicker=fullDocument ? "" : '<div class="guided-kicker">Planned change '+selected.number+' of '+report.plannedChanges.length+'</div>', pseudocode=change.pseudocode ? '<h4>Pseudocode</h4><pre><code>'+escapeHtml(change.pseudocode)+'</code></pre>' : "";
-  const implementation='<div class="review-walkthrough">'+renderMarkdown(review.walkthrough)+'</div>';
-  return changeKicker+'<h2><span class="planned-review-id">'+escapeHtml(change.id)+":</span> "+escapeHtml(change.title)+"</h2>"+renderVerdicts(review.necessary,review.sufficient)+'<details class="review-collapsible"><summary>Planned design</summary><div class="review-planned-design"><h4>What</h4><p class="review-text">'+escapeHtml(change.what)+'</p><h4>Why</h4><p class="review-text">'+escapeHtml(change.why)+"</p>"+pseudocode+'</div></details><h3>Actual implementation</h3>'+implementation+"<h3>Concerns</h3>"+renderConcerns(review.concerns);
+  if (selected.kind==="testing") { const testing=report.testingCriteria,review=testing.review,criteria=review.criteria.length ? review.criteria.map(renderTestingCriterion).join("") : '<p class="review-empty">No individual criteria were identified.</p>'; return sectionKicker+'<h2>Testing criteria</h2><details class="review-collapsible"><summary>Planned tests</summary><div class="testing-original">'+renderMarkdown(testing.originalCriteria,context)+'</div></details><div class="verdicts"><span class="verdict '+escapeHtml(review.satisfied.status)+'">Satisfied: '+escapeHtml(verdictLabel(review.satisfied.status))+'</span></div><div class="verdict-explanations"><p><strong>Result:</strong> '+escapeHtml(review.satisfied.explanation)+'</p></div><p class="review-text">'+escapeHtml(review.summary)+'</p><h3>Criterion evidence</h3>'+criteria+'<h3>Testing concerns</h3>'+renderConcerns(review.concerns); }
+  const change=selected.change, review=change.review, changeKicker=fullDocument ? "" : '<div class="guided-kicker">Planned change '+(selected.number || '—')+' of '+report.plannedChanges.length+'</div>';
+  const implementation='<div class="review-walkthrough">'+renderMarkdown(review.walkthrough,context)+'</div>';
+  return changeKicker+'<h2 id="review-change-'+escapeHtml(change.id)+'"><span class="planned-review-id">'+(selected.number ? selected.number+'.' : '')+'</span> '+escapeHtml(change.title)+'</h2><div class="plan-mode-note">'+escapeHtml(change.id)+'</div>'+renderVerdicts(review.necessary,review.sufficient)+'<details class="review-collapsible"><summary>Planned design</summary><div class="review-planned-design">'+renderMarkdown(change.content,context)+'</div></details><h3>Actual implementation</h3>'+implementation+'<h3>Concerns</h3>'+renderConcerns(review.concerns);
 }
 function renderFullReview() { const content=document.getElementById("review-content"); content.className=""; content.innerHTML=readers.review.destinations.map(function(destination){return '<section class="review-full-section">'+renderReviewDestination(destination,true)+"</section>";}).join(""); document.getElementById("review-pagination").hidden=true; void renderMermaidDiagrams(content); }
 function prepareReview() {
   const report=dashboard.review; if (!report) return; document.getElementById("review-tab").hidden=false;
-  const pullRequestUrls=report.pullRequestUrls;
-  document.getElementById("review-meta").textContent=report.baseCommit+" → "+report.headCommit+" · "+new Date(report.generatedAt).toLocaleString();
+  const pullRequestUrls=report.pullRequestUrls, approvedSnapshot=reviewPlanSnapshot();
+  document.getElementById("review-meta").textContent=report.baseCommit+" → "+report.headCommit+" · "+new Date(report.generatedAt).toLocaleString()+(approvedSnapshot ? " · Approved plan version "+approvedSnapshot.number : "");
   const pullRequestActions=document.getElementById("review-pull-requests"); pullRequestUrls.forEach(function(url,index){const link=document.createElement("a"); link.className="ds-button"; link.href=url; link.textContent=pullRequestUrls.length===1 ? "Open pull request" : "Open PR "+(index+1); pullRequestActions.appendChild(link);});
-  const destinations=[{id:"overall",label:"Overall result",kind:"overall"},{id:"concerns",label:"Overall concerns",kind:"concerns"}].concat(report.plannedChanges.map(function(change,index){return {id:"change-"+(index+1),label:change.id+" · "+change.title,position:"Change "+(index+1)+" of "+report.plannedChanges.length,kind:"change",number:index+1,change:change};}),[{id:"testing",label:"Testing criteria",kind:"testing"}]);
+  const destinations=createReviewDestinations(report);
   const changeLinks=document.getElementById("review-change-links");
   for (const destination of destinations.filter(function(item){return item.kind==="change";})) { const button=document.createElement("button"); button.className="plan-outline-button"; button.type="button"; button.dataset.reader="review"; button.dataset.readerDestination=destination.id; button.textContent=destination.label; changeLinks.appendChild(button); }
   configureReader("review",destinations,renderReviewDestination,renderFullReview);
@@ -405,25 +415,26 @@ function lineDiff(before, after) {
   }
   return result;
 }
-function analyzeMarkdown(markdown) {
-  let inCode = false, list = "", orderedIndex = 0;
+function analyzeMarkdown(markdown,context) {
+  let fenceCharacter=null,fenceLength=0,list='',orderedIndex=0;
   return lines(markdown).map(function(raw) {
-    if (/^\s*\x60{3}/.test(raw)) { inCode = !inCode; list = ""; return {type:"fence"}; }
-    if (inCode) return {type:"code", text:raw};
+    const fence=/^\s*(\x60{3,}|~{3,})/.exec(raw);
+    if(fence && (!fenceCharacter || (fence[1][0]===fenceCharacter && fence[1].length>=fenceLength && !raw.slice(fence[0].length).trim()))) { fenceCharacter=fenceCharacter ? null : fence[1][0];fenceLength=fenceCharacter ? fence[1].length : 0;list='';return {type:'fence'}; }
+    if(fenceCharacter)return {type:'code',text:raw};
     const heading = /^(#{1,4})\s+(.+)$/.exec(raw);
-    if (heading) { list = ""; return {type:"heading", level:heading[1].length, html:inlineMarkdown(heading[2])}; }
+    if (heading) { list = ""; return {type:"heading", level:heading[1].length, html:inlineMarkdown(heading[2],context)}; }
     const unordered = /^\s*[-*]\s+(.+)$/.exec(raw), ordered = /^\s*\d+[.)]\s+(.+)$/.exec(raw);
     if (unordered || ordered) {
       const next = unordered ? "ul" : "ol";
       if (list !== next) orderedIndex = 0;
       list = next;
       if (next === "ol") orderedIndex++;
-      return {type:next, html:inlineMarkdown((unordered || ordered)[1]), ordinal:orderedIndex};
+      return {type:next, html:inlineMarkdown((unordered || ordered)[1],context), ordinal:orderedIndex};
     }
     list = "";
     if (!raw.trim()) return {type:"blank"};
     const quote = /^>\s?(.*)$/.exec(raw);
-    return quote ? {type:"quote", html:inlineMarkdown(quote[1])} : {type:"paragraph", html:inlineMarkdown(raw)};
+    return quote ? {type:"quote", html:inlineMarkdown(quote[1],context)} : {type:"paragraph", html:inlineMarkdown(raw,context)};
   });
 }
 function diffBlockStartIndexes(rows, contextLines = 3) {
@@ -436,8 +447,16 @@ function diffBlockStartIndexes(rows, contextLines = 3) {
   }
   return starts;
 }
-function renderRichDiff(rows, before, after) {
-  const oldLines = analyzeMarkdown(before), newLines = analyzeMarkdown(after), blockStarts = diffBlockStartIndexes(rows);
+function renderRichDiff(rows, before, after, contexts) {
+  const oldContext=contexts && contexts.before,newContext=contexts && contexts.after;
+  // Tables and diagrams need whole Markdown blocks. Keep both rich renderings
+  // rather than flattening their syntax into paragraphs or broken source fragments.
+  const blockRich=function(source){return marked.lexer(String(source || '')).some(function(token){return token.type==='table' || token.type==='code' && /^mermaid(?:\s|$)/i.test(token.lang || '');});};
+  if(blockRich(before) || blockRich(after)) {
+    if(before===after)return renderMarkdown(after,newContext);
+    return '<section class="diff-rich-change" data-diff-block-index="0" tabindex="-1"><h3>Before</h3>'+(before ? renderMarkdown(before,oldContext) : '<p>Not present in this version.</p>')+'<h3>After</h3>'+(after ? renderMarkdown(after,newContext) : '<p>Not present in this version.</p>')+'</section>';
+  }
+  const oldLines = analyzeMarkdown(before,oldContext), newLines = analyzeMarkdown(after,newContext), blockStarts = diffBlockStartIndexes(rows);
   let html = "", list = "", code = false;
   function closeList() { if (list) { html += "</" + list + ">"; list = ""; } }
   function closeCode() { if (code) { html += "</code></pre>"; code = false; } }
@@ -482,16 +501,49 @@ function moveDiffBlock(offset) {
   for (const item of anchors) item.classList.remove("diff-block--active");
   currentDiffBlockIndex=nextIndex; anchor.classList.add("diff-block--active"); anchor.focus({preventScroll:true}); anchor.scrollIntoView({block:"start",behavior:"auto"}); updateDiffBlockNavigation();
 }
+function comparePlanDocuments(before,after) {
+  const oldChanges=planDocumentStructure(before).changes, newChanges=planDocumentStructure(after).changes;
+  const oldById=new Map(oldChanges.map(function(change){return [change.id,change];})), newById=new Map(newChanges.map(function(change){return [change.id,change];}));
+  const changes=newChanges.map(function(change){return change.id;}).concat(oldChanges.filter(function(change){return !newById.has(change.id);}).map(function(change){return change.id;})).map(function(id){
+    const oldChange=oldById.get(id),newChange=newById.get(id);
+    return {id:id,before:oldChange,after:newChange,oldNumber:oldChange && oldChange.number,newNumber:newChange && newChange.number,moved:Boolean(oldChange && newChange && oldChange.number!==newChange.number),modified:Boolean(oldChange && newChange && (oldChange.title!==newChange.title || oldChange.content!==newChange.content || JSON.stringify(oldChange.dependsOn.slice().sort())!==JSON.stringify(newChange.dependsOn.slice().sort())))};
+  });
+  return {changes:changes,moves:changes.filter(function(change){return change.moved;}),added:changes.filter(function(change){return !change.before;}),removed:changes.filter(function(change){return !change.after;}),modified:changes.filter(function(change){return change.modified;})};
+}
+function renderPlanComparison(before,after) {
+  const comparison=comparePlanDocuments(before.document,after.document), sections=[];let added=0,removed=0;
+  function body(oldText,newText,context) {
+    if(oldText===newText)return oldText ? renderMarkdown(oldText,context) : '';
+    const rows=lineDiff(oldText || '',newText || '');added+=rows.filter(function(row){return row.kind==='add';}).length;removed+=rows.filter(function(row){return row.kind==='remove';}).length;
+    return renderRichDiff(rows,oldText || '',newText || '',{before:{document:before.document,reader:'plan'},after:{document:after.document,reader:'plan'}});
+  }
+  if(comparison.moves.length)sections.push('<section id="reading-order-diff"><h2>Reading order changes</h2><ul>'+comparison.moves.map(function(change){return '<li data-diff-block-index="0" tabindex="-1">Moved <code>'+escapeHtml(change.id)+'</code>: '+change.oldNumber+' → '+change.newNumber+'</li>';}).join('')+'</ul><p>Numbers are local to each version. Slugs and dependencies keep their identities.</p></section>');
+  for(const [key,label] of [['description','Description'],['intro','Introduction'],['goal','Goal'],['testing','Testing']]) {
+    const oldText=(key==='description' ? before.description : before.document[key]) || '',newText=(key==='description' ? after.description : after.document[key]) || '';
+    if(oldText!==newText)sections.push('<section><h2>'+label+'</h2>'+body(oldText,newText,{document:after.document,reader:'plan'})+'</section>');
+  }
+  for(const change of comparison.changes) {
+    if(!change.modified && !change.moved && change.before && change.after)continue;
+    const oldChange=change.before,newChange=change.after, label=oldChange && newChange ? 'Version '+before.number+': '+change.oldNumber+' → Version '+after.number+': '+change.newNumber : oldChange ? 'Removed · Version '+before.number+': '+change.oldNumber : 'Added · Version '+after.number+': '+change.newNumber;
+    const title=oldChange && newChange && oldChange.title!==newChange.title ? body(oldChange.title,newChange.title) : '<h3>'+inlineMarkdown((newChange || oldChange).title)+'</h3>';
+    const content=body(oldChange && oldChange.content,newChange && newChange.content,{document:newChange ? after.document : before.document,reader:'plan'});
+    sections.push('<section id="diff-change-'+escapeHtml(change.id)+'" data-change-id="'+escapeHtml(change.id)+'"><h2>'+escapeHtml(label)+'</h2><div class="plan-mode-note">'+escapeHtml(change.id)+'</div>'+title+content+'</section>');
+  }
+  let blockIndex=0;const html=sections.join('').replace(/data-diff-block-index="\d+"/g,function(){return 'data-diff-block-index="'+blockIndex+++'"';});
+  return {html:html,added:added,removed:removed,comparison:comparison};
+}
 function renderDiff() {
   const from = Number(document.getElementById("from-version").value), to = Number(document.getElementById("to-version").value);
   const before = dashboard.versions.find(function(version){return version.number===from;}), after = dashboard.versions.find(function(version){return version.number===to;});
-  if (!before || !after) return;
-  const rows = lineDiff(before.content,after.content); const added = rows.filter(function(row){return row.kind==="add";}).length, removed = rows.filter(function(row){return row.kind==="remove";}).length;
-  document.getElementById("diff-summary").textContent = added + " additions · " + removed + " deletions"; currentDiffBlockIndex=-1;
+  currentDiffBlockIndex=-1;
+  if (!before || !after) {
+    document.getElementById("diff-summary").textContent='No saved versions';document.getElementById("dependency-diff").innerHTML='';document.getElementById("diff-content").innerHTML='<div class="diff-empty">No saved plan yet. Finalize a plan before comparing versions.</div>';updateDiffBlockNavigation();return;
+  }
+  const result=renderPlanComparison(before,after);
+  document.getElementById("diff-summary").textContent=result.added+' additions · '+result.removed+' deletions · '+result.comparison.moves.length+' moves';
   document.getElementById("dependency-diff").innerHTML=renderDependencyChanges(before.dependencyGraph,after.dependencyGraph);
-  if (!added && !removed) document.getElementById("diff-content").innerHTML = '<div class="diff-empty">These versions are identical.</div>';
-  else document.getElementById("diff-content").innerHTML = '<article class="markdown diff-document" aria-label="Formatted plan version differences">' + renderRichDiff(rows,before.content,after.content) + "</article>";
-  updateDiffBlockNavigation();
+  document.getElementById("diff-content").innerHTML=result.html ? '<article class="markdown diff-document" aria-label="Formatted plan version differences">'+result.html+'</article>' : '<div class="diff-empty">These versions are identical.</div>';
+  void renderMermaidDiagrams(document.getElementById("diff-content"));updateDiffBlockNavigation();
 }
 function applyDashboardHash() {
   const hash=location.hash, planDestination=hashReaderDestination(hash,"plan"), reviewDestination=hashReaderDestination(hash,"review");
@@ -500,12 +552,12 @@ function applyDashboardHash() {
   else if(hash==="#compare")setView("diff");
 }
 function initialize() {
-  latestPlan=dashboard.versions[dashboard.versions.length-1] || null; planStructure=parsePlanStructure(latestPlan ? latestPlan.content : "");
+  latestPlan=dashboard.versions[dashboard.versions.length-1] || null; planStructure=planDocumentStructure(latestPlan && latestPlan.document);
   const description=dashboard.description || "", slugBadge=document.getElementById("workflow-name"), guidedAvailable=Boolean(planStructure.canUseGuidedView), state=readState(); slugBadge.textContent=dashboard.slug || ""; slugBadge.hidden=!dashboard.slug;
-  document.getElementById("version-badge").textContent=latestPlan ? "Version "+latestPlan.number : "No versions"; document.getElementById("plan-title").textContent=description || planStructure.title || "Implementation plan";
+  document.getElementById("version-badge").textContent=latestPlan ? "Version "+latestPlan.number : "No saved plan"; document.getElementById("plan-title").textContent=latestPlan && latestPlan.description || description || "Implementation plan";
   document.getElementById("plan-guided-mode-button").disabled=!guidedAvailable; document.getElementById("plan-mode-note").hidden=guidedAvailable;
   const planDestinations=createPlanDestinations(planStructure);
-  if (guidedAvailable) { const changeLinks=document.getElementById("plan-change-links"); for (const change of planStructure.changes) { const button=document.createElement("button"); button.className="plan-outline-button"; button.type="button"; button.dataset.reader="plan"; button.dataset.readerDestination=change.id; button.textContent=change.number+". "+change.title; changeLinks.appendChild(button); } }
+  if (guidedAvailable) { const changeLinks=document.getElementById("plan-change-links"); for (const change of planStructure.changes) { const button=document.createElement("button"); button.className="plan-outline-button"; button.type="button"; button.dataset.reader="plan"; button.dataset.readerDestination="change/"+change.id; button.textContent=change.number+". "+change.title; changeLinks.appendChild(button); } }
   configureReader("plan",planDestinations,renderPlanDestination,renderFullPlan); prepareReview(); navigationSidebarCollapsed=Boolean(state.navigationSidebarCollapsed); contextSidebarCollapsed=Boolean(state.contextSidebarCollapsed);
   document.querySelectorAll("[data-reader-destination]").forEach(function(button){button.addEventListener("click",function(){const name=button.dataset.reader;if(readers[name].mode!=="guided")return;renderReader(name,button.dataset.readerDestination,true);});});
   for (const name of ["plan","review"]) { document.getElementById(name+"-guided-mode-button").addEventListener("click",function(){setReaderMode(name,"guided",readers[name].currentDestination,true);}); document.getElementById(name+"-full-mode-button").addEventListener("click",function(){setReaderMode(name,"full");}); document.getElementById(name+"-navigation-sidebar-button").addEventListener("click",function(){setNavigationSidebarCollapsed(!navigationSidebarCollapsed);}); }

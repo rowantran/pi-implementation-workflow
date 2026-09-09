@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { existsSync } from "node:fs";
-import { access, mkdir, mkdtemp, readFile, readdir, realpath, rm, writeFile } from "node:fs/promises";
+import { access, link, mkdir, mkdtemp, readFile, readdir, realpath, rename, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createServer as createNetServer } from "node:net";
@@ -9,6 +9,7 @@ import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
 import { createJiti } from "jiti/static";
+import { planFixture, writePlanFixture } from "./plan-fixture.mjs";
 
 const jiti = createJiti(import.meta.url, { moduleCache: false });
 const workflowModule = await jiti.import(new URL("../src/index.ts", import.meta.url).pathname);
@@ -36,7 +37,7 @@ async function unusedPort() {
 	return address.port;
 }
 
-async function scenario({ args = "", editorResult, planningModel, planningThinkingLevel, expectedIdentifier = "command-workflow", beforeStart, afterFirstStart } = {}) {
+async function scenario({ args = "", editorResult, planningModel, planningThinkingLevel, expectedIdentifier = "command-workflow", beforeStart, beforeApprovalCommit, afterFirstStart } = {}) {
 	const root = await realpath(await mkdtemp(join(tmpdir(), "pi-workflow-command-")));
 	const agentDir = join(root, "agent");
 	const repositoryRoot = join(root, "repository");
@@ -46,6 +47,9 @@ async function scenario({ args = "", editorResult, planningModel, planningThinki
 	process.env.PI_CODING_AGENT_DIR = agentDir;
 	await mkdir(repositoryRoot, { recursive: true });
 	const git = async (cwd, ...args) => {
+		if (args.includes("commit") && args.some((arg) => arg.startsWith("Approve workflow plan:"))) {
+			await beforeApprovalCommit?.({ workflowRoot });
+		}
 		try {
 			const result = await execFileAsync("git", ["-C", cwd, ...args]);
 			return { code: 0, stdout: result.stdout, stderr: result.stderr };
@@ -209,8 +213,8 @@ async function scenario({ args = "", editorResult, planningModel, planningThinki
 		return {
 			agentDir, workflowRoot, editorCalls, notifications, phaseEntries, sentMessages, switches, slugRequests,
 			metadata: (await exists(join(workflowRoot, "metadata.json"))) ? JSON.parse(await readFile(join(workflowRoot, "metadata.json"), "utf8")) : undefined,
-			plan: (await exists(join(workflowRoot, "plan.md"))) ? await readFile(join(workflowRoot, "plan.md"), "utf8") : undefined,
-			workingPlan: (await exists(join(workflowRoot, "working-plan.md"))) ? await readFile(join(workflowRoot, "working-plan.md"), "utf8") : undefined,
+			plan: (await exists(join(workflowRoot, "latest-plan", "plan.json"))) ? await readFile(join(workflowRoot, "latest-plan", "plan.json"), "utf8") : undefined,
+			workingPlan: (await exists(join(workflowRoot, "working-plan", "plan.json"))) ? await readFile(join(workflowRoot, "working-plan", "plan.json"), "utf8") : undefined,
 			activeTools, selectedModels, selectedThinkingLevels,
 		};
 	} finally {
@@ -240,6 +244,7 @@ assert.equal(blank.sentMessages.length, 0);
 
 const fromEmptyEditor = await scenario({ editorResult: "Ask typed into the empty editor" });
 assert.equal(fromEmptyEditor.editorCalls[0].prefill, "");
+assert.ok(fromEmptyEditor.metadata, JSON.stringify(fromEmptyEditor.notifications));
 assert.equal(fromEmptyEditor.metadata.ask, "Ask typed into the empty editor");
 
 const modelOverride = await scenario({
@@ -260,21 +265,24 @@ assert.deepEqual(thinkingOnlyOverride.selectedModels, []);
 assert.deepEqual(thinkingOnlyOverride.selectedThinkingLevels, ["max"]);
 
 const protectedFiles = {
-	plan: "/workflow/plan.md",
-	workingPlan: "/workflow/working-plan.md",
+	root: "/workflow",
+	plan: "/workflow/latest-plan",
+	workingPlan: "/workflow/working-plan",
 	metadata: "/workflow/metadata.json",
+	versions: "/workflow/plan-versions",
+	planDraftBase: "/workflow/plan-draft-base.json",
 };
 assert.equal(
-	workflowModule.workflowWriteBlockReason("planning", protectedFiles, protectedFiles.workingPlan),
+	workflowModule.workflowWriteBlockReason("planning", protectedFiles, join(protectedFiles.workingPlan, "goal.md")),
 	undefined,
 );
 assert.match(
 	workflowModule.workflowWriteBlockReason("planning", protectedFiles, protectedFiles.plan),
-	/only change.*working-plan\.md/,
+	/only change.*working-plan/,
 );
 assert.match(
 	workflowModule.workflowWriteBlockReason("planning", protectedFiles, "/repository/src/index.ts"),
-	/only change.*working-plan\.md/,
+	/only change.*working-plan/,
 );
 assert.match(
 	workflowModule.workflowWriteBlockReason("implementation", protectedFiles, protectedFiles.metadata),
@@ -289,20 +297,39 @@ assert.equal(
 	undefined,
 );
 
-// Dependency diagnostics survive all dashboard-link outcomes in both tool result forms.
+// The native write guard rejects links at any bundle ancestor, not only inside the draft.
+const guardRoot = await realpath(await mkdtemp(join(tmpdir(), "workflow-write-guard-")));
+try {
+	const bundle = join(guardRoot, ".workflows", "guard-plan");
+	const draft = join(bundle, "working-plan");
+	await mkdir(draft, { recursive: true });
+	const guardFiles = { ...protectedFiles, root: bundle, workingPlan: draft };
+	const target = join(draft, "goal.md");
+	await writeFile(target, "Goal\n");
+	assert.equal(workflowModule.workflowWriteBlockReason("planning", guardFiles, target), undefined);
+	for (const ancestor of [draft, bundle, join(guardRoot, ".workflows")]) {
+		const saved = `${ancestor}-saved`;
+		await rename(ancestor, saved);
+		await symlink(saved, ancestor, "dir");
+		assert.match(workflowModule.workflowWriteBlockReason("planning", guardFiles, target), /links/);
+		await rm(ancestor);
+		await rename(saved, ancestor);
+	}
+	await link(target, join(guardRoot, "external-alias.md"));
+	assert.match(workflowModule.workflowWriteBlockReason("planning", guardFiles, target), /hard links/);
+} finally { await rm(guardRoot, { recursive: true, force: true }); }
+
+// Finalization remains successful when only dashboard delivery fails.
 for (const dashboard of [{}, { dashboardUrl: "http://example.test/workflow" }, { dashboardError: "Server unavailable" }]) {
 	let tool;
-	const details = { version: 4, dependencyWarning: "PC-01 depends on unknown ID PC-99; reference an existing planned change", ...dashboard };
+	const details = { action: "finalize", version: 4, ...dashboard };
 	registerWorkflowPlanTool({ registerTool: (definition) => { tool = definition; } }, async () => details);
-	const result = await tool.execute("save-draft", { description: "An incomplete draft" });
+	const result = await tool.execute("save-draft", { action: "finalize", expectedBaseVersion: 3, description: "Save a valid plan" });
 	assert.equal(result.details, details);
-	assert.ok(result.content[0].text.includes(`Dependency warning: ${details.dependencyWarning}`));
-	const colors = [];
+	assert.match(result.content[0].text, /Finalized implementation plan version 4/);
 	const rendered = tool.renderResult(result, {}, {
-		fg: (color, text) => { colors.push(color); return text; },
+		fg: (_color, text) => text,
 	}).render(1000).join("\n");
-	assert.ok(rendered.includes(`Dependency warning: ${details.dependencyWarning}`));
-	assert.ok(colors.includes("warning"));
 	if (dashboard.dashboardError) {
 		assert.ok(result.content[0].text.includes(`Workflow dashboard unavailable: ${dashboard.dashboardError}`));
 		assert.ok(rendered.includes(`Workflow dashboard unavailable: ${dashboard.dashboardError}`));
@@ -317,78 +344,65 @@ const submittedAsk = 'First line\n\nSecond <line> & "quotes".\n';
 const started = await scenario({ args: "inline prefill", editorResult: submittedAsk });
 assert.equal(started.editorCalls[0].prefill, "inline prefill");
 assert.equal(started.metadata.ask, submittedAsk);
-assert.equal(started.plan, "# Implementation plan\n");
-assert.equal(started.workingPlan, started.plan);
+assert.equal(started.plan, undefined, "initialization publishes no incomplete version");
+assert.deepEqual(JSON.parse(started.workingPlan), { schemaVersion: 1, readingOrder: [] });
 assert.ok(started.activeTools.includes("edit"));
 assert.ok(started.activeTools.includes("write"));
-assert.ok(!started.plan.includes(submittedAsk));
+assert.ok(!started.workingPlan.includes(submittedAsk));
 assert.equal(started.phaseEntries.length, 1);
 assert.equal(started.sentMessages.length, 1);
 
 await scenario({
 	editorResult: "Leave a working plan uncommitted",
 	afterFirstStart: async ({ workflowRoot, run, notifications }) => {
-		await writeFile(join(workflowRoot, "working-plan.md"), "# Implementation plan\n\nUncommitted.\n", "utf8");
+		await writeFile(join(workflowRoot, "working-plan", "goal.md"), "Uncommitted.\n", "utf8");
 		await run("workflow-implement");
 		assert.match(notifications.at(-1).message, /working plan has uncommitted changes/);
 	},
 });
 
 await scenario({
-	editorResult: "Commit a working plan",
+	editorResult: "Finalize a structured working plan",
 	afterFirstStart: async ({ workflowRoot, tools, run, notifications }) => {
 		const updatePlan = tools.get("workflow_update_plan");
 		assert.ok(updatePlan);
 		assert.equal(updatePlan.parameters.properties.plan, undefined);
-		assert.ok(updatePlan.parameters.properties.description);
-
-		const updatedPlan = "# Implementation plan\n\n## Scope\n\nCommit the working plan.\n";
-		await writeFile(join(workflowRoot, "working-plan.md"), updatedPlan, "utf8");
-		const result = await updatePlan.execute("update-plan", {
-			description: "Commit the editable working plan",
-		});
-		assert.equal(result.details.version, 2);
-		assert.match(result.details.dependencyWarning, /add a second-level "Planned Changes" section/);
-		assert.ok(result.content[0].text.includes(`Dependency warning: ${result.details.dependencyWarning}`));
-		const theme = { fg: (_color, text) => text, bold: (text) => text };
-		const render = (saved) => updatePlan.renderResult(saved, {}, theme).render(1000).join("\n");
-		assert.ok(render(result).includes(`Dependency warning: ${result.details.dependencyWarning}`));
-		assert.match(render(result), /Saved version 2/);
+		const prepared = await updatePlan.execute("prepare", { action: "prepare" });
+		assert.equal(prepared.details.baseVersion, 0);
+		assert.equal(prepared.details.draftPath, join(workflowRoot, "working-plan"));
+		await assert.rejects(updatePlan.execute("missing-base", { action: "finalize", description: "Save the plan" }), /expectedBaseVersion/);
+		await assert.rejects(updatePlan.execute("empty-draft", { action: "finalize", description: "Save the plan", expectedBaseVersion: 0 }), /invalid|nonempty/);
+		assert.deepEqual(await readdir(join(workflowRoot, "plan-versions")), []);
+		const plan = planFixture();
+		await writePlanFixture(prepared.details.draftPath, plan);
+		const result = await updatePlan.execute("finalize", { action: "finalize", expectedBaseVersion: 0, description: "Preserve workflow records in Git" });
+		assert.equal(result.details.version, 1);
+		assert.match(result.content[0].text, /Finalized implementation plan version 1/);
 		assert.match(result.details.dashboardUrl, /^http:\/\/127\.0\.0\.1:\d+\/implementation-workflow\/workflows\/command-workflow$/);
-		assert.match(result.content[0].text, /Workflow dashboard: http:\/\/127\.0\.0\.1:\d+\/implementation-workflow\/workflows\/command-workflow/);
-		assert.equal(await readFile(join(workflowRoot, "plan.md"), "utf8"), updatedPlan);
-		assert.equal(await readFile(join(workflowRoot, "working-plan.md"), "utf8"), updatedPlan);
-		assert.equal(await readFile(join(workflowRoot, "versions", "0002.md"), "utf8"), updatedPlan);
-		assert.deepEqual((await readdir(join(workflowRoot, "versions"))).sort(), ["0001.md", "0002.md"]);
+		const savedGoal = await readFile(join(workflowRoot, "latest-plan", "goal.md"), "utf8");
+		assert.equal(savedGoal, plan.goal);
+		assert.equal(await readFile(join(workflowRoot, "plan-versions", "v1", "goal.md"), "utf8"), savedGoal);
 
-		const entry = (id, dependsOn) => `### ${id}: Deliver ${id}\n\n${dependsOn === undefined ? "" : `**Depends on**\n${dependsOn}\n\n`}**What**\nImplement ${id}.\n\n**Why**\nDeliver the ask.`;
-		let version = 2;
-		for (const [dependencies, warning] of [
-			[[undefined, undefined], /PC-01 is missing \*\*Depends on\*\*/],
-			[["PC-02", "PC-01"], /dependency cycle: PC-01 -> PC-02 -> PC-01/],
-			[["PC-99", "None"], /PC-01 depends on unknown ID PC-99/],
-			[["PC-02", "None"], undefined],
-			[["None", undefined], /PC-02 is missing \*\*Depends on\*\*/],
-			[["None", "None"], undefined],
-		]) {
-			const plan = `# Implementation plan\n\n## Planned Changes\n\n${entry("PC-01", dependencies[0])}\n\n${entry("PC-02", dependencies[1])}\n\n## Testing\n\nVerify delivery.\n`;
-			await writeFile(join(workflowRoot, "working-plan.md"), plan, "utf8");
-			const saved = await updatePlan.execute("update-plan", { description: "Deliver the planned changes" });
-			assert.equal(saved.details.version, ++version, "invalid plans must still create saved versions");
-			assert.equal(await readFile(join(workflowRoot, "plan.md"), "utf8"), plan);
-			assert.equal(await readFile(join(workflowRoot, "versions", `${String(version).padStart(4, "0")}.md`), "utf8"), plan);
-			if (warning) {
-				assert.match(saved.details.dependencyWarning, warning);
-				assert.ok(saved.content[0].text.includes(`Dependency warning: ${saved.details.dependencyWarning}`));
-				assert.ok(render(saved).includes(`Dependency warning: ${saved.details.dependencyWarning}`));
-				await run("workflow-implement");
-				assert.equal(notifications.at(-1).message, `The plan cannot advance: ${saved.details.dependencyWarning}.`);
-			} else {
-				assert.ok(!Object.hasOwn(saved.details, "dependencyWarning"));
-				assert.ok(!saved.content[0].text.includes("Dependency warning:"));
-				assert.ok(!render(saved).includes("Dependency warning:"));
-			}
-		}
+		const next = await updatePlan.execute("prepare-next", { action: "prepare" });
+		assert.equal(next.details.baseVersion, 1);
+		const metadataPath = join(next.details.draftPath, "planned-changes", plan.readingOrder[0], "change_metadata.json");
+		await writeFile(metadataPath, JSON.stringify({ title: "Store records", dependsOn: ["missing-change"], surprise: true }));
+		await assert.rejects(updatePlan.execute("invalid", { action: "finalize", expectedBaseVersion: 1, description: "Preserve workflow records in Git" }), (error) => {
+			assert.match(error.message, /unknown field/);
+			assert.match(error.message, /unknown change|unknown ID/);
+			return true;
+		});
+		assert.deepEqual((await readdir(join(workflowRoot, "plan-versions"))).sort(), ["v1"]);
+		assert.equal(await readFile(join(workflowRoot, "latest-plan", "goal.md"), "utf8"), savedGoal);
+		await run("workflow-implement");
+		assert.match(notifications.at(-1).message, /working plan has uncommitted changes/);
+		const resumed = await updatePlan.execute("resume-draft", { action: "prepare" });
+		assert.equal(resumed.details.baseVersion, 1);
+		assert.match(await readFile(metadataPath, "utf8"), /surprise/, "prepare must preserve invalid unsaved edits");
+		await writePlanFixture(next.details.draftPath, plan);
+		const second = await updatePlan.execute("finalize-next", { action: "finalize", expectedBaseVersion: 1, description: "Preserve workflow records in Git" });
+		assert.equal(second.details.version, 2, "identical valid content can still create a snapshot");
+		await assert.rejects(updatePlan.execute("stale-base", { action: "finalize", expectedBaseVersion: 1, description: "Stale edit" }), /stale|base version|baseVersion/i);
 	},
 });
 
@@ -403,40 +417,20 @@ await scenario({
 	},
 });
 
-const approvedPlan = `# Implementation plan
-
-## Goal
-Keep workflow records with the delivery.
-
-## Planned Changes
-
-### PC-01: Store workflow records
-
-**Depends on**
-None
-
-**What**
-Save records under .workflows/.
-
-**Why**
-Preserve the original request and plan.
-
-## Testing
-- Verify records survive cleanup in Git.
-`;
+const approvedPlan = planFixture();
 
 await scenario({
 	editorResult: "Preserve all workflow records in the pull request",
 	afterFirstStart: async ({ workflowRoot, tools, run, git, worktreePath, repositoryRoot, identifier, baseCommit, switches }) => {
-		await writeFile(join(workflowRoot, "working-plan.md"), approvedPlan);
-		await tools.get("workflow_update_plan").execute("save-plan", { description: "Preserve workflow records in Git" });
+		await writePlanFixture(join(workflowRoot, "working-plan"), approvedPlan);
+		await tools.get("workflow_update_plan").execute("save-plan", { action: "finalize", expectedBaseVersion: 0, description: "Preserve workflow records in Git" });
 		await writeFile(join(worktreePath, "README.md"), "An unrelated staged code change\n");
 		assert.equal((await git(worktreePath, "add", "README.md")).code, 0);
 		await run("workflow-implement");
 		assert.equal(switches.length, 2, "approval starts implementation in a separate session");
 		const metadataPath = `.workflows/${identifier}/metadata.json`;
 		const saved = JSON.parse((await git(worktreePath, "show", `HEAD:${metadataPath}`)).stdout);
-		assert.equal(saved.approvedPlanVersion, 2);
+		assert.equal(saved.approvedPlanVersion, 1);
 		assert.equal(saved.ask, "Preserve all workflow records in the pull request");
 		for (const key of ["repositoryRoot", "gitCommonDir", "worktreePath", "pullRequests"]) assert.ok(!(key in saved));
 		const paths = (await git(worktreePath, "diff-tree", "--no-commit-id", "--name-only", "-r", "HEAD")).stdout.trim().split("\n");
@@ -447,7 +441,7 @@ await scenario({
 		assert.equal((await git(worktreePath, "status", "--porcelain")).stdout.trim(), "M  README.md");
 		await run("workflow-cleanup");
 		assert.equal(await exists(worktreePath), false);
-		assert.equal((await git(repositoryRoot, "show", `workflow/${identifier}:.workflows/${identifier}/plan.md`)).stdout, approvedPlan);
+		assert.equal((await git(repositoryRoot, "show", `workflow/${identifier}:.workflows/${identifier}/plan-versions/v1/goal.md`)).stdout, approvedPlan.goal);
 		assert.equal(JSON.parse((await git(repositoryRoot, "show", `workflow/${identifier}:${metadataPath}`)).stdout).ask, saved.ask);
 		assert.equal((await git(repositoryRoot, "show", `workflow/${identifier}:README.md`)).stdout, "Workflow fixture\n", "cleanup did not commit unrelated edits");
 	},
@@ -456,18 +450,34 @@ await scenario({
 await scenario({
 	editorResult: "Recover an initial artifact commit failure",
 	afterFirstStart: async ({ workflowRoot, tools, run, git, worktreePath, switches, notifications }) => {
-		await writeFile(join(workflowRoot, "working-plan.md"), approvedPlan);
-		await tools.get("workflow_update_plan").execute("save-plan", { description: "Recover artifact commit failures" });
+		await writePlanFixture(join(workflowRoot, "working-plan"), approvedPlan);
+		await tools.get("workflow_update_plan").execute("save-plan", { action: "finalize", expectedBaseVersion: 0, description: "Recover artifact commit failures" });
 		await git(worktreePath, "config", "commit.gpgsign", "true");
 		await git(worktreePath, "config", "gpg.program", "/missing-workflow-test-signing-program");
 		await run("workflow-implement");
 		assert.equal(switches.length, 1, "failed approval stays in planning");
 		assert.match(notifications.at(-1).message, /Could not commit the approved plan/);
 		assert.equal(JSON.parse(await readFile(join(workflowRoot, "metadata.json"), "utf8")).approvedPlanVersion, undefined);
-		assert.equal(await readFile(join(workflowRoot, "plan.md"), "utf8"), approvedPlan);
+		assert.equal(await readFile(join(workflowRoot, "latest-plan", "goal.md"), "utf8"), approvedPlan.goal);
 		await git(worktreePath, "config", "commit.gpgsign", "false");
 		await run("workflow-implement");
 		assert.equal(switches.length, 2, "approval can be retried without another slug or worktree");
+	},
+});
+
+await scenario({
+	editorResult: "Preserve a draft edit made during approval",
+	beforeApprovalCommit: async ({ workflowRoot }) => {
+		await writeFile(join(workflowRoot, "working-plan", "goal.md"), "A newer draft edit from another session.\n");
+	},
+	afterFirstStart: async ({ workflowRoot, tools, run, notifications, switches }) => {
+		await writePlanFixture(join(workflowRoot, "working-plan"), approvedPlan);
+		await tools.get("workflow_update_plan").execute("save-plan", { action: "finalize", expectedBaseVersion: 0, description: "Preserve concurrent draft edits" });
+		await run("workflow-implement");
+		assert.equal(switches.length, 2);
+		assert.equal(await readFile(join(workflowRoot, "working-plan", "goal.md"), "utf8"), "A newer draft edit from another session.\n");
+		assert.equal(await readFile(join(workflowRoot, "plan-versions", "v1", "goal.md"), "utf8"), approvedPlan.goal);
+		assert.ok(notifications.some(({ message }) => /draft changed during approval and was preserved/.test(message)));
 	},
 });
 

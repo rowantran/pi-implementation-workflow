@@ -1,6 +1,7 @@
-import { appendFile, lstat, mkdir, readFile } from "node:fs/promises";
+import { appendFile, lstat, mkdir, readFile, readdir } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
-import { assertIdentifier, pathExists, type CompletedWorkflowMetadata } from "./storage.ts";
+import { assertIdentifier, pathExists, workflowFiles, type CompletedWorkflowMetadata, type WorkflowFiles } from "./storage.ts";
+import { latestPlanVersionNumber, listPlanVersions } from "./plan-storage.ts";
 
 export interface ExecResult {
 	code: number;
@@ -93,7 +94,14 @@ export async function installWorkflowExcludes(commonDir: string): Promise<void> 
 	const missing = [
 		"/.worktrees/",
 		"/.workflows/active.json",
-		"/.workflows/*/working-plan.md",
+		"/.workflows/*/working-plan/",
+		"/.workflows/*/plan.md",
+		"/.workflows/*/.plan-draft-base.json",
+		"/.workflows/*/.plan.lock",
+		"/.workflows/*/.plan-prepare-*/",
+		"/.workflows/*/.plan-publish-*/",
+		"/.workflows/*/.plan-base-*.tmp",
+		"/.workflows/*/.latest-plan-*.tmp",
 		"/.workflows/*/dashboard.html",
 		"/.workflows/*/review-runs/",
 	].filter((pattern) => !existing.has(pattern));
@@ -127,7 +135,7 @@ export async function commitWorkflowArtifacts(
 
 	const bundle = `.workflows/${workflow.identifier}`;
 	// Do not follow a replaced bundle/history directory outside the worktree.
-	for (const path of [".workflows", bundle, `${bundle}/versions`, `${bundle}/reviews`]) {
+	for (const path of [".workflows", bundle, `${bundle}/plan-versions`, `${bundle}/reviews`]) {
 		try {
 			const info = await lstat(join(cwd, path));
 			if (!info.isDirectory() || info.isSymbolicLink()) {
@@ -138,15 +146,41 @@ export async function commitWorkflowArtifacts(
 		}
 	}
 
-	const durable = ["plan.md", "versions", "clarifications.json", "metadata.json", "reviews", "review.json", "review.md"]
+	const files = workflowFiles(workflow.identifier, cwd);
+	const publishedVersions = await validatePublishedPlanArtifacts(files);
+	const durable = ["latest-plan", "plan-versions", "clarifications.json", "metadata.json", "reviews", "review.json", "review.md"]
 		.map((path) => `:(top,literal)${bundle}/${path}`);
 	// Enumerate existing/tracked paths first: absent optional exports must not
 	// make git add/commit fail, and tracked deletions must still be committed.
 	const listed = await artifactGit(exec, cwd, ["ls-files", "--cached", "--others", "-z", "--", ...durable]);
 	const changed = await artifactGit(exec, cwd, ["diff", "--name-only", "--no-renames", "-z", "HEAD", "--", ...durable]);
 	const listedPaths = [...new Set(listed.stdout.split("\0").filter(Boolean))];
-	const paths = [...new Set([...listedPaths, ...changed.stdout.split("\0").filter(Boolean)])]
-		.map((path) => `:(top,literal)${path}`);
+	const allPaths = [...new Set([...listedPaths, ...changed.stdout.split("\0").filter(Boolean)])];
+	// Check every path component, not only history roots. The one allowed
+	// symlink is validated without following arbitrary filesystem links.
+	for (const path of allPaths) {
+		if (!path.startsWith(`${bundle}/`) || path.split("/").some((part) => part === "." || part === "..")) throw new Error(`Unsafe workflow artifact path: ${path}`);
+		// Include tracked deletions: removing both the pointer and every version
+		// must not turn an existing immutable history into an empty valid plan.
+		const versionName = path.startsWith(`${bundle}/plan-versions/`) ? path.slice(`${bundle}/plan-versions/`.length).split("/")[0] : undefined;
+		if ((versionName !== undefined && !publishedVersions.has(versionName)) || path === `${bundle}/plan-versions` ||
+			(path === `${bundle}/latest-plan` && publishedVersions.size === 0)) {
+			throw new Error(`Cannot commit workflow artifacts: ${path} is missing or is not part of the published plan history. Restore deleted finalized snapshots and latest-plan from Git before retrying; do not commit history deletions.`);
+		}
+		let current = cwd;
+		for (const part of path.split("/")) {
+			current = join(current, part);
+			try {
+				const info = await lstat(current);
+				if (current === join(cwd, bundle, "latest-plan")) {
+					latestPlanVersionNumber(files);
+				} else if (info.isSymbolicLink() || (!info.isDirectory() && !info.isFile())) {
+					throw new Error(`Cannot commit workflow artifacts: symbolic links and special files are not allowed: ${current}`);
+				}
+			} catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") break; throw error; }
+		}
+	}
+	const paths = allPaths.map((path) => `:(top,literal)${path}`);
 	if (paths.length === 0) return undefined;
 	// Force only these allowlisted paths: a repository-wide *.json ignore must
 	// not silently discard saved metadata/reports. Already-staged deletions
@@ -166,6 +200,27 @@ export async function commitWorkflowArtifacts(
 	const head = committed.stdout.trim();
 	if (!head) throw new Error("Workflow artifacts were committed, but Git did not return the new commit ID.");
 	return head;
+}
+
+/** Validate the complete history, not just the pointer, before any Git staging. */
+async function validatePublishedPlanArtifacts(files: WorkflowFiles): Promise<Set<string>> {
+	let published: Set<string>;
+	try {
+		published = new Set((await listPlanVersions(files)).map(({ number }) => `v${number}`));
+	} catch (error) {
+		throw new Error(`Cannot commit workflow artifacts: ${error instanceof Error ? error.message : String(error)}\nRestore damaged or missing finalized snapshots from Git; put edits in working-plan/ and finalize a new version instead.`);
+	}
+	const entries = await readdir(files.versions, { withFileTypes: true }).catch((error: NodeJS.ErrnoException) => {
+		if (error.code === "ENOENT") return [];
+		throw error;
+	});
+	for (const entry of entries) {
+		if (!entry.isDirectory() || entry.isSymbolicLink() || !published.has(entry.name)) {
+			throw new Error(`Cannot commit workflow artifacts: unexpected or unpublished plan version path ${join(files.versions, entry.name)}. Retry after any active finalization finishes. For leftover crash data or invalid names, preserve the contents and move the unexpected entry outside plan-versions/ before retrying; do not edit latest-plan by hand.`);
+		}
+	}
+	if (latestPlanVersionNumber(files) !== published.size) throw new Error("Cannot commit workflow artifacts: the published plan changed during validation. Retry after finalization finishes.");
+	return published;
 }
 
 async function artifactGit(exec: ExecFn, cwd: string, args: string[]): Promise<ExecResult> {

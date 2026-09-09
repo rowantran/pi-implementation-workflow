@@ -23,7 +23,9 @@ export interface WorkflowDashboardData {
 	description?: string;
 	ask?: string;
 	generatedAt: string;
-	versions: Array<Pick<PlanVersion, "number" | "createdAt" | "content">>;
+	versions: Array<Pick<PlanVersion, "number" | "createdAt" | "content" | "document" | "description">>;
+	/** Exact saved snapshot approved for implementation, never the latest draft. */
+	approvedPlanVersion?: number;
 	clarifications: WorkflowClarification[];
 	review?: WorkflowReviewReport;
 	reviewStale?: boolean;
@@ -41,7 +43,8 @@ export async function writeWorkflowDashboard(files: WorkflowFiles, currentHeadCo
 		description: metadata.description?.trim() || undefined,
 		ask: metadata.ask ?? undefined,
 		generatedAt: new Date().toISOString(),
-		versions: versions.map(({ number, createdAt, content }) => ({ number, createdAt, content })),
+		versions: versions.map(({ number, createdAt, content, document, description }) => ({ number, createdAt, content, document, description })),
+		approvedPlanVersion: "approvedPlanVersion" in metadata ? metadata.approvedPlanVersion : undefined,
 		clarifications: clarifications.entries,
 		review,
 		reviewStale: Boolean(review && (
@@ -61,13 +64,13 @@ export async function writeWorkflowDashboardRedirect(from: string, destinationUr
 }
 
 export function renderWorkflowDashboard(data: WorkflowDashboardData): string {
-	// Normalize each snapshot here, including for callers that render without writing to disk.
-	// Legacy plans remain readable, but must never acquire inferred dependency edges.
+	// Structural fields come only from the saved document, never its generated Markdown.
+	// Normalize here too for callers that render without writing to disk.
 	const normalizedData = {
 		...data,
 		versions: data.versions.map((version) => ({
 			...version,
-			dependencyGraph: getPlanDependencyGraph(version.content),
+			dependencyGraph: getPlanDependencyGraph(version.document),
 		})),
 	};
 	const dashboardData = JSON.stringify(normalizedData);

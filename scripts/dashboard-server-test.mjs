@@ -37,7 +37,7 @@ async function createWorkflow(worktreePath, identifier, html) {
 		createdAt: "2026-01-01T00:00:00.000Z",
 	};
 	const files = storage.workflowFiles(identifier, worktreePath);
-	await storage.createWorkflow(files, "# Implementation plan\n", metadata);
+	await storage.createWorkflow(files, metadata);
 	await storage.registerWorkflow(metadata);
 	await writeFile(files.dashboard, html, "utf8");
 	return files;

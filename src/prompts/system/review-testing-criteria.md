@@ -8,12 +8,12 @@ Verify the approved plan's original Testing criteria against the implemented del
 Durable sources, in priority order:
 1. Original ask and metadata: {{{metadataPath}}}
 2. Later clarifications: {{{clarificationsPath}}}
-3. Complete approved plan: {{{planPath}}}
+3. Exact approved plan version: {{{planPath}}} (the complete structured snapshot is included below)
 
 Implementation range: {{{baseCommit}}}..{{{headCommit}}}
 Pull request stack (bottom to top):
 {{{pullRequestStack}}}
 
-Identify each independently verifiable criterion in the approved Testing section. For each criterion, determine whether the implementation and available test results satisfy it. Cite repository-relative implementation and test evidence. Run safe read-only verification commands when useful. Do not infer success from test names alone, and use needs-human-review when a criterion cannot be verified from repository evidence or safe local execution.
+Identify each independently verifiable criterion in the approved structured plan's testing content, preserved verbatim above. Read the full freeform planned-change prose and declared dependencies in the snapshot below for context. For each criterion, determine whether the implementation and available test results satisfy it. Cite repository-relative implementation and test evidence. Run safe read-only verification commands when useful. Do not infer success from test names alone, and use needs-human-review when a criterion cannot be verified from repository evidence or safe local execution.
 
-Return one result for every material requirement in the approved Testing section. Put test-specific gaps and risks in concerns. Do not repeat a per-change design review or the holistic review, which will be handled by dedicated subagents.
+Return one result for every material requirement in the approved testing content. When referring to a planned change, use its stable slug ID rather than its display number. Put test-specific gaps and risks in concerns. Do not repeat a per-change design review or the holistic review, which will be handled by dedicated subagents.

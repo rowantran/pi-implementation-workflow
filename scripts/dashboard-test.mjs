@@ -7,22 +7,31 @@ const { renderWorkflowDashboard } = await jiti.import(
   new URL("../src/dashboard.ts", import.meta.url).pathname,
 );
 
+const { renderPlanMarkdown } = await jiti.import(new URL('../src/planned-changes.ts', import.meta.url).pathname);
+function planWithNodes(nodes, overrides = {}) {
+  return {
+    schemaVersion: 1,
+    readingOrder: nodes.map((node) => node.id),
+    goal: 'Ship the graph.',
+    testing: 'Verify the graph and guided reader.',
+    changes: nodes.map((node) => ({ content: `Implement **${node.id}** safely.\n\n### A heading inside freeform prose\n\nNo prescribed fields are needed.`, ...node })),
+    ...overrides,
+  };
+}
+function version(document, number = 1) {
+  return { number, createdAt: '2025-01-02T03:04:05.000Z', content: renderPlanMarkdown(document), document };
+}
+const baseDocument = planWithNodes([{ id: 'render-review', title: 'Render the review', dependsOn: [], content: 'Render </template><script>unsafe</script> content.' }]);
 const data = {
   slug: 'example</title><script>alert("unsafe")</script>',
   description: "Extract the dashboard template",
   ask: 'First line\n\nSecond </template><script>alert("ask")</script> line.',
   generatedAt: "2025-01-02T03:04:05.000Z",
-  versions: [
-    {
-      number: 1,
-      createdAt: "2025-01-02T03:04:05.000Z",
-      content: "# Plan\n\nRender </template><script>unsafe</script> content.",
-    },
-  ],
+  versions: [version(baseDocument)],
   clarifications: [],
   reviewStale: false,
   review: {
-    version: 2,
+    version: 3,
     pullRequestUrls: ["https://example.test/pull/1", "https://example.test/pull/2"],
     baseCommit: "abc123",
     headCommit: "def456",
@@ -41,13 +50,12 @@ const data = {
       concerns: [],
     },
     plannedChanges: [{
-      id: "PC-01",
+      id: "render-review",
       title: "Render the review",
-      what: "Show the report.",
-      why: "Make review easy.",
-      pseudocode: "render(report)",
+      dependsOn: [],
+      content: "Show the **report**, so review is easy.\n\n```ts\nrender(report)\n```",
       review: {
-        id: "PC-01",
+        id: "render-review",
         title: "Render the review",
         walkthrough: "The dashboard renders it.\n\n```ts\ninterface WorkflowReviewReport {}\n```\n\n> **Decision:** Matches the plan.",
         necessary: { status: "yes", explanation: "Required." },
@@ -121,12 +129,13 @@ assert.ok(!html.includes("</template><script>"));
 assert.ok(html.includes('src="../assets/marked.umd.js"'));
 assert.ok(html.includes('new URL("../assets/mermaid.min.js",location.href)'));
 assert.ok(html.includes("function loadMermaidLibrary()"));
-assert.ok(html.includes("function renderMarkdown(markdown)"));
+assert.ok(html.includes('function renderMarkdown(markdown,context)'));
 assert.ok(html.includes("new marked.Renderer()"));
 assert.ok(html.includes("function renderMermaidDiagrams(root)"));
 assert.ok(html.includes('library.run({nodes:nodes,suppressErrors:true})'));
-assert.ok(html.includes("function renderRichDiff(rows, before, after)"));
-assert.ok(html.includes("function parsePlanStructure(markdown)"));
+assert.ok(html.includes('function renderRichDiff(rows, before, after, contexts)'));
+assert.ok(html.includes("function planDocumentStructure(document)"));
+assert.ok(!html.includes('parsePlanStructure'), 'generated Markdown is not parsed for plan structure');
 assert.ok(!html.includes('id="plan-graph-mode-button"'), "Graph is a guided section, not a reading mode");
 assert.ok(html.includes('data-reader="plan" data-reader-destination="graph">Dependency graph</button>'));
 assert.ok(html.indexOf('data-reader-destination="goal"') < html.indexOf('data-reader-destination="graph"'));
@@ -210,7 +219,8 @@ assert.ok(html.includes('const unseenReview=dashboard.review && state.reviewHead
 assert.ok(html.includes('initialView=unseenReview && !planHashDestination ? "review"'), "explicit plan deep links win over an unseen review");
 assert.ok(!html.includes('<script>alert("review")</script>'));
 assert.ok(html.includes('class="markdown diff-document"'));
-assert.ok(html.includes("renderRichDiff(rows,before.content,after.content)"));
+assert.ok(html.includes('function comparePlanDocuments(before,after)'));
+assert.ok(html.includes('function renderPlanComparison(before,after)'));
 assert.ok(html.includes('id="diff-previous-block"'));
 assert.ok(html.includes('id="diff-next-block"'));
 assert.ok(html.includes("function diffBlockStartIndexes(rows, contextLines = 3)"));
@@ -223,9 +233,9 @@ const helperSource = dashboardScript.slice(
   dashboardScript.indexOf("function escapeHtml"),
   dashboardScript.indexOf("function initialize"),
 );
-const { createPlanDestinations, dependencyChanges, dependencyRelations, diffBlockStartIndexes, generateDependencyDiagram, hashReaderDestination, initialViewForHash, lineDiff, mermaidGraphText, parsePlanStructure, planModeForState, planDestinationForState, renderDependencyChanges, renderMarkdown, renderRichDiff, wrapGraphTitle } = new Function(
+const { comparePlanDocuments, createReviewDestinations, createPlanDestinations, dependencyChanges, dependencyRelations, diffBlockStartIndexes, generateDependencyDiagram, hashReaderDestination, initialViewForHash, lineDiff, mermaidGraphText, planDocumentStructure, planModeForState, planDestinationForState, renderDependencyChanges, renderMarkdown, renderPlanComparison, renderRichDiff, wrapGraphTitle } = new Function(
   "marked",
-  `${helperSource}; return { createPlanDestinations, dependencyChanges, dependencyRelations, diffBlockStartIndexes, generateDependencyDiagram, hashReaderDestination, initialViewForHash, lineDiff, mermaidGraphText, parsePlanStructure, planModeForState, planDestinationForState, renderDependencyChanges, renderMarkdown, renderRichDiff, wrapGraphTitle };`,
+  `${helperSource}; return { comparePlanDocuments, createReviewDestinations, createPlanDestinations, dependencyChanges, dependencyRelations, diffBlockStartIndexes, generateDependencyDiagram, hashReaderDestination, initialViewForHash, lineDiff, mermaidGraphText, planDocumentStructure, planModeForState, planDestinationForState, renderDependencyChanges, renderMarkdown, renderPlanComparison, renderRichDiff, wrapGraphTitle };`,
 )(marked);
 function normalizeRenderedMarkdown(value) { return value.replace(/>\s+</g, "><").replace(/\s+/g, " ").trim(); }
 const softWrappedMarkdown = `A paragraph with **strong text** wraps
@@ -251,6 +261,22 @@ const mermaidMarkdown = renderMarkdown("```mermaid\nflowchart LR\n  A --> B\n```
 assert.ok(mermaidMarkdown.includes('<div class="mermaid">flowchart LR\n  A --&gt; B</div>'));
 assert.ok(!renderMarkdown('<script>alert("unsafe")</script>').includes("<script>"));
 assert.ok(!renderMarkdown("[unsafe](javascript:alert(1))").includes("javascript:"));
+const diagramBefore = '```mermaid\nflowchart LR\n A --> B\n```';
+const diagramAfter = '```mermaid\nflowchart LR\n A --> C\n```';
+const diagramDiff = renderRichDiff(lineDiff(diagramBefore, diagramAfter), diagramBefore, diagramAfter);
+assert.equal(diagramDiff.match(/class="mermaid"/g)?.length, 2, 'changed diagrams keep rich before/after renderings');
+assert.ok(diagramDiff.includes('A --&gt; C'));
+const tableBefore = '| Name | State |\n| --- | --- |\n| Reader | Draft |';
+const tableAfter = tableBefore.replace('Draft', 'Finalized');
+assert.equal(renderRichDiff(lineDiff(tableBefore, tableAfter), tableBefore, tableAfter).match(/<table>/g)?.length, 2, 'changed tables stay tables');
+const fencedBefore = '~~~~text\n### Not a heading\n~~~~';
+const fencedAfter = fencedBefore.replace('Not a heading', 'Still code');
+assert.match(renderRichDiff(lineDiff(fencedBefore, fencedAfter), fencedBefore, fencedAfter), /class="diff-code-line add"[^>]*>### Still code/);
+const linkedBefore = '[Read](#render-review)';
+const linkedAfter = '[Read the design](#render-review)';
+const linkedDiff = renderRichDiff(lineDiff(linkedBefore, linkedAfter), linkedBefore, linkedAfter, { before: { document: baseDocument }, after: { document: baseDocument } });
+assert.ok(linkedDiff.includes('href="#plan/change/render-review"'));
+assert.ok(!renderRichDiff(lineDiff('', '[Unsafe](javascript:alert(1))'), '', '[Unsafe](javascript:alert(1))').includes('javascript:'));
 const { renderReviewDestination } = new Function(
   "dashboard",
   "marked",
@@ -263,13 +289,13 @@ const plannedChangeReview = renderReviewDestination({ kind: "change", number: 1,
 assert.ok(plannedChangeReview.includes('<details class="review-collapsible"><summary>Planned design</summary>'));
 assert.ok(!plannedChangeReview.includes('<details class="review-collapsible" open>'));
 assert.ok(plannedChangeReview.includes('class="review-planned-design"'));
-assert.ok(plannedChangeReview.includes("PC-01:"));
-assert.ok(plannedChangeReview.includes("<h4>Pseudocode</h4>"));
-const changeWithoutPseudocode = { ...data.review.plannedChanges[0] };
-delete changeWithoutPseudocode.pseudocode;
-const reviewWithoutPseudocode = renderReviewDestination({ kind: "change", number: 1, change: changeWithoutPseudocode });
-assert.ok(!reviewWithoutPseudocode.includes("<h4>Pseudocode</h4>"));
-assert.ok(!reviewWithoutPseudocode.includes("undefined"));
+assert.ok(plannedChangeReview.includes('id="review-change-render-review"'));
+assert.ok(plannedChangeReview.includes('<span class="planned-review-id">1.</span>'));
+assert.ok(plannedChangeReview.includes('Show the <strong>report</strong>'));
+assert.ok(plannedChangeReview.includes('render(report)'));
+assert.ok(!plannedChangeReview.includes('<h4>What</h4>'));
+assert.ok(!plannedChangeReview.includes('<h4>Pseudocode</h4>'));
+assert.ok(!plannedChangeReview.includes('undefined'));
 const testingReview = renderReviewDestination({ kind: "testing" });
 assert.ok(testingReview.includes("Testing criteria"));
 assert.ok(testingReview.includes('<details class="review-collapsible"><summary>Planned tests</summary>'));
@@ -519,45 +545,22 @@ assert.equal(diffButtons["diff-next-block"].disabled, true);
 diffNavigation.moveDiffBlock(-1);
 assert.equal(diffAnchors[0].classList.contains("diff-block--active"), true);
 
-const structuredPlan = `# Delivery plan
-
-## Goal
-
-Ship a guided reader.
-
-## Planned Changes
-
-### Parse the plan
-
-**What**: Split structured sections.
-
-\`\`\`text
-### This is code, not another change
-\`\`\`
-
-### Render each change
-
-**Why**: Readers can focus on one idea.
-
-## Testing
-
-Verify guided and full-document modes.`;
-const structure = parsePlanStructure(structuredPlan);
+const structuredPlan = planWithNodes([
+  { id: 'render-change', title: 'Render each change', dependsOn: ['read-document'], content: 'Freeform prose, without labeled fields.' },
+  { id: 'read-document', title: 'Read the document', dependsOn: [], content: '# Not a document title\n\n## Testing\n\n### Not another change\n\n```text\n## Goal\n```\n\n**Depends on**\n\nnot-a-dependency\n\n| A | B |\n| - | - |\n| C | D |' },
+], { readingOrder: ['read-document', 'render-change'], goal: 'Ship a guided reader.', intro: 'Additional **context**.', testing: 'Verify guided and full-document modes.' });
+const structure = planDocumentStructure(structuredPlan);
 assert.equal(structure.canUseGuidedView, true);
-assert.equal(structure.title, "Delivery plan");
-assert.equal(structure.goal, "Ship a guided reader.");
+assert.equal(structure.goal, 'Ship a guided reader.');
+assert.equal(structure.intro, 'Additional **context**.');
 assert.equal(structure.changes.length, 2);
-assert.equal(structure.changes[0].title, "Parse the plan");
-assert.ok(structure.changes[0].content.includes("This is code, not another change"));
-assert.equal(structure.changes[1].id, "change-2-render-each-change");
-assert.equal(structure.testing, "Verify guided and full-document modes.");
-const tildeStructure = parsePlanStructure(structuredPlan.replaceAll("```", "~~~~"));
-assert.equal(tildeStructure.changes.length, 2, "tilde-fenced headings are not planned changes");
-const nestedFenceStructure = parsePlanStructure(structuredPlan.replace("```text", "````text\n```").replace("```\n\n### Render", "```\n````\n\n### Render"));
-assert.equal(nestedFenceStructure.changes.length, 2, "shorter code fences cannot close longer fences");
-const legacyStructure = parsePlanStructure("# Legacy plan\n\nOne long document.");
-assert.equal(legacyStructure.canUseGuidedView, false);
-assert.equal(legacyStructure.title, "Legacy plan");
+assert.equal(structure.changes[0].id, 'read-document');
+assert.equal(structure.changes[0].number, 1);
+assert.ok(structure.changes[0].content.includes('Not another change'));
+assert.equal(structure.changes[1].id, 'render-change');
+assert.equal(structure.changes[1].number, 2);
+assert.equal(structure.testing, 'Verify guided and full-document modes.');
+assert.deepEqual(planDocumentStructure(null), { canUseGuidedView: false, changes: [] });
 assert.equal(hashReaderDestination("#review/full", "review"), "full");
 assert.equal(hashReaderDestination("#plan/testing", "plan"), "testing");
 assert.equal(initialViewForHash("#review/testing", "plan", true), "review");
@@ -578,41 +581,36 @@ function snapshotFromHtml(rendered) {
   }));
 }
 const graphNodes = [
-  { id: "PC-01", title: "Read shared schema", dependsOn: ["PC-03"] }, // Forward references are not reading order.
-  { id: "PC-02", title: "Render graph", dependsOn: ["PC-03"] },
-  { id: "PC-03", title: "Define shared schema", dependsOn: [] },
-  { id: "PC-04", title: "Integrate both branches", dependsOn: ["PC-01", "PC-02"] },
-  { id: "PC-05", title: "Independent documentation", dependsOn: [] },
-  { id: "PC-06", title: 'Escape "quotes" <script>alert(1)</script> %%{init: evil}%% `text` & labels', dependsOn: ["PC-04"] },
+  { id: 'read-schema', title: 'Read shared schema', dependsOn: ['define-schema'] }, // Forward references are not reading order.
+  { id: 'render-graph', title: 'Render graph', dependsOn: ['define-schema'] },
+  { id: 'define-schema', title: 'Define shared schema', dependsOn: [] },
+  { id: 'integrate', title: 'Integrate both branches', dependsOn: ['read-schema', 'render-graph'] },
+  { id: 'document', title: 'Independent documentation', dependsOn: [] },
+  { id: 'escape-labels', title: 'Escape "quotes" <script>alert(1)</script> %%{init: evil}%% `text` & labels', dependsOn: ['integrate'] },
 ];
-function planWithNodes(nodes) {
-  return '# Dependency plan\n\n## Goal\n\nShip the graph.\n\n## Planned Changes\n\n' + nodes.map((node) =>
-    `### ${node.id}: ${node.title}\n\n**Depends on**\n\n${node.dependsOn.join(", ") || "None"}\n\n**What**\n\nImplement **${node.id}** safely.\n\n**Why**\n\nKeep readers informed.\n`,
-  ).join("\n") + '\n## Testing\n\nVerify the graph and legacy reader.\n';
-}
 const graphPlan = planWithNodes(graphNodes);
-const invalidGraphPlan = graphPlan.replace("PC-01, PC-02", "PC-99");
+const invalidGraphPlan = planWithNodes(graphNodes.map((node) => node.id === 'integrate' ? { ...node, dependsOn: ['unknown-change'] } : node));
 const graphData = {
   ...data,
-  versions: [data.versions[0], { number: 2, createdAt: data.generatedAt, content: invalidGraphPlan }, { number: 3, createdAt: data.generatedAt, content: graphPlan }],
+  versions: [data.versions[0], { ...version(graphPlan, 2), document: invalidGraphPlan }, { ...version(graphPlan, 3), document: { ...graphPlan, changes: [...graphPlan.changes].reverse() }, content: '# Ignore this generated export\n\n## Planned Changes\n\n### Not a structural change' }],
 };
 const serializedBeforeRender = JSON.stringify(graphData);
 const graphHtml = renderWorkflowDashboard(graphData);
 const normalized = snapshotFromHtml(graphHtml);
 assert.equal(JSON.stringify(graphData), serializedBeforeRender, "normalization must not mutate callers' snapshots");
-assert.equal(normalized.versions[0].dependencyGraph.status, "unavailable");
+assert.equal(normalized.versions[0].dependencyGraph.status, 'valid');
 assert.ok(!Object.hasOwn(normalized.versions[0], "changeDetails"));
 assert.equal(normalized.versions[1].dependencyGraph.status, "unavailable");
-assert.match(normalized.versions[1].dependencyGraph.reason, /PC-99/);
+assert.match(normalized.versions[1].dependencyGraph.reason, /unknown-change/);
 const graph = normalized.versions[2].dependencyGraph;
 assert.deepEqual(graph, { status: "valid", nodes: graphNodes });
 assert.ok(!Object.hasOwn(normalized.versions[2], "changeDetails"), "graph snapshots no longer duplicate change details");
 assert.ok(!graphHtml.includes('<script>alert(1)</script>'));
 assert.deepEqual(snapshotFromHtml(renderWorkflowDashboard({ ...data, versions: [] })).versions, []);
 const staleGraph = { ...data.versions[0], dependencyGraph: graph };
-assert.equal(snapshotFromHtml(renderWorkflowDashboard({ ...data, versions: [staleGraph] })).versions[0].dependencyGraph.status, "unavailable", "caller-provided graph data is not trusted");
-const legacyGraph = snapshotFromHtml(renderWorkflowDashboard({ ...data, versions: [{ ...data.versions[0], content: graphPlan.replace(/\*\*Depends on\*\*\n\n[^\n]+\n\n/g, "") }] })).versions[0].dependencyGraph;
-assert.equal(legacyGraph.status, "unavailable", "missing legacy dependencies must not imply an edgeless graph");
+assert.deepEqual(snapshotFromHtml(renderWorkflowDashboard({ ...data, versions: [staleGraph] })).versions[0].dependencyGraph.nodes, [{ id: 'render-review', title: 'Render the review', dependsOn: [] }], 'caller-provided graph data is not trusted');
+const unavailableGraph = snapshotFromHtml(renderWorkflowDashboard({ ...data, versions: [{ ...data.versions[0], document: undefined }] })).versions[0].dependencyGraph;
+assert.equal(unavailableGraph.status, 'unavailable', 'missing documents must not imply an edgeless graph');
 const diagram = generateDependencyDiagram(graph);
 assert.ok(diagram.startsWith("flowchart TD\n"));
 assert.equal(diagram.match(/dag_\d+\["/g)?.length, graphNodes.length, "roots and isolated nodes are rendered explicitly");
@@ -629,13 +627,14 @@ assert.equal(mermaidGraphText('"<>`&#;\\'), "#34;#60;#62;#96;#38;#35;#59;#92;");
 assert.ok(wrapGraphTitle("x".repeat(140)).every((line) => line.length <= 28));
 assert.equal(wrapGraphTitle("x".repeat(140)).join(""), "x".repeat(140), "long labels are wrapped, never truncated");
 assert.ok(wrapGraphTitle("😀".repeat(80)).every((line) => Array.from(line).length <= 28));
-assert.equal(generateDependencyDiagram(legacyGraph), "");
-assert.deepEqual([...dependencyRelations(graph, "PC-04").ancestors].sort(), ["PC-01", "PC-02", "PC-03"]);
-assert.deepEqual([...dependencyRelations(graph, "PC-03").downstream].sort(), ["PC-01", "PC-02", "PC-04", "PC-06"]);
-assert.equal(dependencyRelations(graph, "PC-05").ancestors.size, 0);
-assert.equal(dependencyRelations(graph, "PC-05").downstream.size, 0);
-assert.equal(dependencyRelations(legacyGraph, "PC-01").ancestors.size, 0);
-const graphStructure = parsePlanStructure(graphPlan);
+assert.equal(generateDependencyDiagram(unavailableGraph), '');
+assert.ok(diagram.includes('Change 1<br/>Read shared schema<br/>read-schema'), 'numbers are display labels, never graph identifiers');
+assert.deepEqual([...dependencyRelations(graph, 'integrate').ancestors].sort(), ['define-schema', 'read-schema', 'render-graph']);
+assert.deepEqual([...dependencyRelations(graph, 'define-schema').downstream].sort(), ['escape-labels', 'integrate', 'read-schema', 'render-graph']);
+assert.equal(dependencyRelations(graph, 'document').ancestors.size, 0);
+assert.equal(dependencyRelations(graph, 'document').downstream.size, 0);
+assert.equal(dependencyRelations(unavailableGraph, 'read-schema').ancestors.size, 0);
+const graphStructure = planDocumentStructure(graphPlan);
 const sectionHelpers = new Function("latestPlan", "planStructure", "marked", `${helperSource};return { renderPlanGraph, renderDependencyRelations, renderPlanDestination };`)(normalized.versions[2], graphStructure, marked);
 const graphSection = sectionHelpers.renderPlanGraph();
 assert.ok(graphSection.includes('class="dependency-legend"'));
@@ -643,31 +642,34 @@ assert.match(graphSection, /Drawing dependency graph…<\/p><\/div><\/section>$/
 assert.ok(!graphSection.includes("Selected change"));
 assert.ok(!graphSection.includes("Dependency list"));
 const changeSection = sectionHelpers.renderPlanDestination({ kind: "change", change: graphStructure.changes[0] });
-assert.ok(changeSection.includes("<strong>What</strong>"));
-assert.ok(changeSection.includes("<strong>Why</strong>"));
-assert.ok(changeSection.includes("Implement <strong>PC-01</strong> safely."), "planned-change details remain in their own guided section");
-const guidedLinks = sectionHelpers.renderDependencyRelations(graph, "PC-04");
-assert.ok(guidedLinks.includes('href="#plan/change-1-pc-01-read-shared-schema"'));
-assert.ok(guidedLinks.includes("PC-06</a>"));
+assert.ok(changeSection.includes('A heading inside freeform prose'));
+assert.ok(changeSection.includes('id="plan-change-read-schema"'));
+assert.ok(changeSection.includes('Implement <strong>read-schema</strong> safely.'), 'planned-change details remain in their own guided section');
+assert.ok(!changeSection.includes('<strong>What</strong>'));
+const guidedLinks = sectionHelpers.renderDependencyRelations(graph, 'integrate');
+assert.ok(guidedLinks.includes('href="#plan/change/read-schema"'));
+assert.ok(guidedLinks.includes('1. Read shared schema</a>'));
+assert.ok(guidedLinks.includes('data-dependency-node="escape-labels"'));
 assert.equal(hashReaderDestination("#plan-graph", "plan"), "graph");
-assert.equal(hashReaderDestination("#plan-graph/PC-02", "plan"), "graph/PC-02");
-assert.equal(hashReaderDestination("#plan/graph/PC-02", "plan"), "graph/PC-02");
-assert.equal(hashReaderDestination("#plan/PC-02", "plan"), "PC-02");
+assert.equal(hashReaderDestination('#plan-graph/render-graph', 'plan'), 'graph/render-graph');
+assert.equal(hashReaderDestination('#plan/graph/render-graph', 'plan'), 'graph/render-graph');
+assert.equal(hashReaderDestination('#plan/render-graph', 'plan'), 'render-graph');
+assert.equal(hashReaderDestination('#plan/change/render-graph', 'plan'), 'change/render-graph');
 assert.equal(initialViewForHash("#plan-graph", "review", true), "plan");
 assert.equal(planModeForState(null, undefined, true), "guided", "new visits start at Goal in Guided view");
 assert.equal(planModeForState(null, "guided", true), "guided");
 assert.equal(planModeForState(null, "full", true), "full");
 assert.equal(planModeForState("goal", "graph", true), "guided");
-assert.equal(planModeForState("PC-02", "graph", true), "guided");
-assert.equal(planModeForState("graph/PC-02", "full", true), "guided");
+assert.equal(planModeForState('render-graph', 'graph', true), 'guided');
+assert.equal(planModeForState('graph/render-graph', 'full', true), 'guided');
 assert.equal(planModeForState(null, "graph", true), "guided", "restore old Graph mode as Guided view");
 assert.equal(planModeForState(null, undefined, false), "full");
-assert.equal(planModeForState("graph", "full", false), "full", "unstructured legacy documents retain the full-document fallback");
+assert.equal(planModeForState('graph', 'full', false), 'full', 'no saved document shows the empty full-document view');
 assert.equal(planModeForState(null, "garbage", true), "guided");
 assert.equal(planDestinationForState(null, undefined, undefined), "goal");
 assert.equal(planDestinationForState(null, "graph", "goal"), "graph");
 assert.equal(planDestinationForState("goal", "graph", "graph"), "goal");
-assert.equal(planDestinationForState("graph/PC-02", "full", "goal"), "graph/PC-02");
+assert.equal(planDestinationForState('graph/render-graph', 'full', 'goal'), 'graph/render-graph');
 assert.equal(planDestinationForState(null, "guided", "graph"), "graph");
 assert.equal(planDestinationForState("full", "guided", "graph"), "graph");
 const guidedDestinations = createPlanDestinations(graphStructure);
@@ -676,13 +678,13 @@ assert.equal(guidedDestinations[1].id, "graph");
 assert.equal(guidedDestinations[1].label, "Dependency graph");
 assert.deepEqual(createPlanDestinations({ canUseGuidedView: false }), []);
 assert.deepEqual(dependencyChanges(graph, graph), { addedNodes: [], removedNodes: [], addedEdges: [], removedEdges: [] });
-const changedGraph = { status: "valid", nodes: graphNodes.map((node) => node.id === "PC-04" ? { ...node, dependsOn: ["PC-03"] } : node) };
-assert.deepEqual(dependencyChanges(graph, changedGraph), { addedNodes: [], removedNodes: [], addedEdges: ["PC-03 → PC-04"], removedEdges: ["PC-01 → PC-04", "PC-02 → PC-04"] });
-assert.deepEqual(dependencyChanges(graph, { status: "valid", nodes: graph.nodes.slice(0, -1) }), { addedNodes: [], removedNodes: ["PC-06"], addedEdges: [], removedEdges: ["PC-04 → PC-06"] });
-assert.equal(dependencyChanges(legacyGraph, graph), null);
-assert.ok(renderDependencyChanges(legacyGraph, graph).includes("comparison unavailable"));
-assert.ok(renderDependencyChanges(graph, graph).includes("No dependency changes"));
-assert.ok(renderDependencyChanges(graph, changedGraph).includes("Dependency removed: PC-01 → PC-04"));
+const changedGraph = { status: 'valid', nodes: graphNodes.map((node) => node.id === 'integrate' ? { ...node, dependsOn: ['define-schema'] } : node) };
+assert.deepEqual(dependencyChanges(graph, changedGraph), { addedNodes: [], removedNodes: [], addedEdges: ['define-schema → integrate'], removedEdges: ['read-schema → integrate', 'render-graph → integrate'] });
+assert.deepEqual(dependencyChanges(graph, { status: 'valid', nodes: graph.nodes.slice(0, -1) }), { addedNodes: [], removedNodes: ['escape-labels'], addedEdges: [], removedEdges: ['integrate → escape-labels'] });
+assert.equal(dependencyChanges(unavailableGraph, graph), null);
+assert.ok(renderDependencyChanges(unavailableGraph, graph).includes('comparison unavailable'));
+assert.ok(renderDependencyChanges(graph, graph).includes('No dependency changes'));
+assert.ok(renderDependencyChanges(graph, changedGraph).includes('Dependency removed: read-schema → integrate'));
 
 // Exercise the browser-owned SVG handlers and async rendering without trusting Mermaid callbacks.
 const graphElements = {};
@@ -700,7 +702,7 @@ const graphDocument = {
   getElementById(id) { return graphElements[id]; },
   querySelectorAll() { return []; },
 };
-const graphBrowser = new Function("latestPlan", "planStructure", "globalThis", "document", "location", "history", "marked", `let selectedGraphNode="PC-04",graphRenderSequence=0,navigationSidebarCollapsed=false;const readers={plan:{mode:"guided",currentDestination:"graph",destinations:[{id:"goal"},{id:"graph"}]}};${helperSource};return { renderDependencyGraphDiagram, renderPlanGraph, selectGraphNode, handleDependencyNavigation, configureReader, createPlanDestinations, renderPlanDestination, renderFullPlan, renderReader, setReaderMode, moveReader, readers };`)(normalized.versions[2], graphStructure, { mermaid: mermaidStub }, graphDocument, fakeLocation, fakeHistory, marked);
+const graphBrowser = new Function("latestPlan", "planStructure", "globalThis", "document", "location", "history", "marked", `let selectedGraphNode="integrate",graphRenderSequence=0,navigationSidebarCollapsed=false;const readers={plan:{mode:"guided",currentDestination:"graph",destinations:[{id:"goal"},{id:"graph"}]}};${helperSource};return { renderDependencyGraphDiagram, renderPlanGraph, selectGraphNode, handleDependencyNavigation, configureReader, createPlanDestinations, renderPlanDestination, renderFullPlan, renderReader, setReaderMode, moveReader, readers };`)(normalized.versions[2], graphStructure, { mermaid: mermaidStub }, graphDocument, fakeLocation, fakeHistory, marked);
 await graphBrowser.renderDependencyGraphDiagram(graph);
 assert.equal(mermaidOptions.securityLevel, "strict");
 assert.equal(mermaidOptions.theme, "dark");
@@ -714,7 +716,7 @@ assert.equal(svg.style.minWidth, "720px", "labels never shrink below 75%; narrow
 assert.equal(svg.style.height, "auto");
 assert.equal(svgNodes[0].attributes.role, "button");
 assert.equal(svgNodes[0].attributes.tabindex, "0");
-assert.match(svgNodes[0].attributes["aria-label"], /Requires: PC-03/);
+assert.match(svgNodes[0].attributes['aria-label'], /Change 1: Read shared schema \(read-schema\). Requires: define-schema/);
 assert.equal(svgNodes[3].classList.contains("graph-node--selected"), true);
 assert.equal(svgNodes[2].classList.contains("graph-node--ancestor"), true);
 assert.equal(svgNodes[5].classList.contains("graph-node--downstream"), true);
@@ -722,14 +724,14 @@ svgNodes[2].listeners.click();
 assert.equal(svgNodes[2].classList.contains("graph-node--selected"), true);
 assert.equal(svgNodes[3].classList.contains("graph-node--downstream"), true);
 assert.match(svgNodes[2].attributes["aria-label"], /Highlight prerequisites and downstream changes/);
-assert.ok(fakeLocation.href.endsWith("#plan/graph/PC-03"));
+assert.ok(fakeLocation.href.endsWith('#plan/graph/define-schema'));
 let preventedKey = false;
 svgNodes[4].listeners.keydown({ key: " ", preventDefault() { preventedKey = true; } });
 assert.equal(preventedKey, true);
 assert.equal(svgNodes[4].attributes["aria-pressed"], "true");
 assert.equal(svgNodes[3].classList.contains("graph-node--downstream"), false);
 const selectedHash = fakeLocation.href;
-graphBrowser.selectGraphNode('PC-99" onclick="evil');
+graphBrowser.selectGraphNode('unknown-change" onclick="evil');
 assert.equal(fakeLocation.href, selectedHash, "unknown node IDs cannot drive browser navigation");
 assert.equal(svgNodes[4].attributes["aria-pressed"], "true");
 mermaidStub.render = async () => { throw new Error("offline"); };
@@ -772,7 +774,7 @@ assert.equal(graphElements["plan-next-section"].dataset.destination, guidedDesti
 assert.equal(graphElements["plan-reader"].classList.contains("plan-reader--dependencies"), true);
 assert.equal(graphElements["plan-guided-mode-button"].attributes["aria-pressed"], "true");
 assert.match(graphElements["plan-content"].innerHTML, /id="plan-dependency-graph"/);
-graphBrowser.selectGraphNode("PC-03");
+graphBrowser.selectGraphNode('define-schema');
 assert.equal(graphBrowser.readers.plan.currentDestination, "graph", "node selection does not replace the guided destination");
 graphBrowser.moveReader("plan", 1, false);
 assert.equal(graphBrowser.readers.plan.currentDestination, guidedDestinations[2].id);
@@ -780,10 +782,10 @@ assert.equal(graphElements["plan-previous-section"].dataset.destination, "graph"
 assert.equal(graphElements["plan-reader"].classList.contains("plan-reader--dependencies"), false);
 graphBrowser.moveReader("plan", -1, false);
 assert.equal(graphBrowser.readers.plan.currentDestination, "graph");
-assert.ok(fakeLocation.href.endsWith("#plan/graph/PC-03"), "returning to the graph keeps node selection");
-graphBrowser.renderReader("plan", "graph/PC-02", false);
-assert.equal(graphBrowser.readers.plan.currentDestination, "graph");
-assert.ok(fakeLocation.href.endsWith("#plan/graph/PC-02"));
+assert.ok(fakeLocation.href.endsWith('#plan/graph/define-schema'), 'returning to the graph keeps node selection');
+graphBrowser.renderReader('plan', 'graph/render-graph', false);
+assert.equal(graphBrowser.readers.plan.currentDestination, 'graph');
+assert.ok(fakeLocation.href.endsWith('#plan/graph/render-graph'));
 graphBrowser.setReaderMode("plan", "full");
 assert.equal(graphElements["plan-reader"].classList.contains("plan-reader--dependencies"), false);
 assert.equal(graphElements["plan-pagination"].hidden, true);
@@ -791,4 +793,113 @@ graphBrowser.setReaderMode("plan", "guided", undefined, false);
 assert.equal(graphBrowser.readers.plan.currentDestination, "graph");
 assert.equal(graphElements["plan-pagination"].hidden, false);
 
-console.log("Dashboard test passed: normalized DAGs, safe graph navigation, legacy fallback, plan/review readers, and semantic version comparison.");
+// Full rendering also uses the document. An unrelated generated Markdown export cannot create anchors.
+graphBrowser.setReaderMode('plan', 'full');
+assert.ok(graphElements['plan-content'].innerHTML.includes('id="plan-change-read-schema"'));
+assert.ok(graphElements['plan-content'].innerHTML.includes('1. Read shared schema'));
+assert.ok(!graphElements['plan-content'].innerHTML.includes('Ignore this generated export'));
+assert.ok(!graphElements['plan-content'].innerHTML.includes('Not a structural change'));
+graphBrowser.setReaderMode('plan', 'guided', 'read-schema', false);
+assert.equal(graphBrowser.readers.plan.currentDestination, 'change/read-schema', 'direct slug deep links resolve without numbered IDs');
+assert.ok(fakeLocation.href.endsWith('#plan/change/read-schema'));
+
+// Arbitrary section-looking Markdown never affects structure, dependency edges, or identity.
+const prosePlan = { ...version(structuredPlan), dependencyGraph: snapshotFromHtml(renderWorkflowDashboard({ ...data, versions: [version(structuredPlan)] })).versions[0].dependencyGraph };
+const proseRenderer = new Function('latestPlan', 'planStructure', 'marked', `${helperSource};return {renderPlanDestination};`)(prosePlan, structure, marked);
+const proseSection = proseRenderer.renderPlanDestination({ kind: 'change', change: structure.changes[0] });
+assert.ok(proseSection.includes('<table>'));
+assert.ok(proseSection.includes('<h3>Not another change</h3>'));
+assert.ok(proseSection.includes('<h2>Testing</h2>'));
+assert.deepEqual(prosePlan.dependencyGraph.nodes[0].dependsOn, []);
+assert.equal(createPlanDestinations(structure).filter((destination) => destination.kind === 'change').length, 2);
+for (const target of ['#read-document', '#plan-change-read-document', 'read-document.md', 'changes/read-document.md', 'planned-changes/read-document/change.md', '../read-document/change.md']) {
+  assert.ok(renderMarkdown(`[Read](${target})`, { document: structuredPlan, reader: 'plan' }).includes('href="#plan/change/read-document"'), `slug link resolves: ${target}`);
+  assert.ok(renderMarkdown(`[Read](${target})`, { document: structuredPlan, reader: 'review' }).includes('href="#review/change/read-document"'), `review slug link stays in the review: ${target}`);
+}
+assert.ok(renderMarkdown('[Other](#unknown)', { document: structuredPlan }).includes('href="#unknown"'));
+assert.ok(!renderMarkdown('[Unsafe](javascript:alert(1))', { document: structuredPlan }).includes('javascript:'));
+const reservedSlugs = planWithNodes(['goal', 'graph', 'testing', 'full', 'overall'].map((id) => ({ id, title: id, dependsOn: [] })));
+assert.equal(new Set(createPlanDestinations(planDocumentStructure(reservedSlugs)).map((destination) => destination.id)).size, 8, 'section names cannot collide with valid change slugs');
+assert.ok(renderMarkdown('[Graph change](#graph)', { document: reservedSlugs }).includes('href="#plan/change/graph"'));
+
+// Reordering matches by slug, not by number, title, or source heading. It produces no prose deletions/additions.
+const reordered = { ...structuredPlan, readingOrder: [...structuredPlan.readingOrder].reverse() };
+const comparison = comparePlanDocuments(structuredPlan, reordered);
+assert.equal(comparison.moves.length, 2);
+assert.equal(comparison.added.length, 0);
+assert.equal(comparison.removed.length, 0);
+assert.equal(comparison.modified.length, 0);
+assert.deepEqual(comparison.moves.map(({ id, oldNumber, newNumber }) => ({ id, oldNumber, newNumber })), [
+  { id: 'render-change', oldNumber: 2, newNumber: 1 },
+  { id: 'read-document', oldNumber: 1, newNumber: 2 },
+]);
+assert.equal(comparePlanDocuments(structuredPlan, { ...structuredPlan, changes: [...structuredPlan.changes].reverse() }).moves.length, 0, 'storage array order is not reading order');
+const reorderDiff = renderPlanComparison(version(structuredPlan, 1), version(reordered, 2));
+assert.equal(reorderDiff.added, 0);
+assert.equal(reorderDiff.removed, 0);
+assert.ok(reorderDiff.html.includes('Reading order changes'));
+assert.ok(reorderDiff.html.includes('Version 1: 1 → Version 2: 2'));
+assert.ok(reorderDiff.html.includes('Version 1: 2 → Version 2: 1'));
+assert.ok(reorderDiff.html.includes('<table>'), 'unchanged moved Markdown remains rich, not delete/add text');
+assert.ok(!/class="diff-line (add|remove)"/.test(reorderDiff.html));
+assert.equal((reorderDiff.html.match(/data-change-id="read-document"/g) || []).length, 1, 'each slug has one matched comparison section');
+const reorderedGraph = snapshotFromHtml(renderWorkflowDashboard({ ...data, versions: [version(reordered)] })).versions[0].dependencyGraph;
+assert.equal(reorderedGraph.nodes[0].id, 'render-change');
+assert.ok(generateDependencyDiagram(reorderedGraph).includes('Change 1<br/>Render each change<br/>render-change'));
+assert.deepEqual(dependencyChanges(prosePlan.dependencyGraph, reorderedGraph), { addedNodes: [], removedNodes: [], addedEdges: [], removedEdges: [] });
+
+const editedReorder = { ...reordered, changes: reordered.changes.map((change) => change.id === 'read-document' ? { ...change, title: 'Renamed without changing identity', content: change.content + '\n\nNew **prose**.' } : change) };
+const editedDiff = renderPlanComparison(version(structuredPlan, 1), version(editedReorder, 2));
+assert.equal(editedDiff.comparison.modified.length, 1);
+assert.equal(editedDiff.comparison.modified[0].id, 'read-document');
+assert.equal(editedDiff.comparison.added.length, 0);
+assert.equal(editedDiff.comparison.removed.length, 0);
+assert.ok(editedDiff.html.includes('New <strong>prose</strong>.'));
+const diffIndexes = [...editedDiff.html.matchAll(/data-diff-block-index="(\d+)"/g)].map((match) => Number(match[1]));
+assert.deepEqual(diffIndexes, diffIndexes.map((_value, index) => index), 'semantic sections share one diff-navigation sequence');
+const replacement = planWithNodes([{ id: 'replacement', title: 'Different identity', dependsOn: [], content: 'New content.' }]);
+const replacedDiff = comparePlanDocuments(structuredPlan, replacement);
+assert.deepEqual(replacedDiff.added.map((change) => change.id), ['replacement']);
+assert.deepEqual(replacedDiff.removed.map((change) => change.id).sort(), ['read-document', 'render-change']);
+assert.equal(renderPlanComparison({ ...version(structuredPlan), content: 'untrusted export' }, version(structuredPlan)).html, '', 'generated Markdown is not comparison authority');
+
+// Reviews use the exact approved plan, including its order, freeform design, titles, and testing.
+const report = {
+  ...data.review,
+  plannedChanges: structuredPlan.readingOrder.map((id) => ({ ...data.review.plannedChanges[0], ...structuredPlan.changes.find((change) => change.id === id) })),
+  testingCriteria: { ...data.review.testingCriteria, originalCriteria: structuredPlan.testing },
+};
+const approvedDashboard = { ...data, approvedPlanVersion: 1, versions: [version(structuredPlan, 1), version(editedReorder, 2)], review: report };
+const reviewHelpers = new Function('dashboard', 'marked', `${helperSource};return {createReviewDestinations,reviewPlanSnapshot,renderReviewDestination};`)(approvedDashboard, marked);
+const approvedSnapshot = reviewHelpers.reviewPlanSnapshot();
+assert.equal(approvedSnapshot.number, 1);
+const approvedDestinations = reviewHelpers.createReviewDestinations(report).filter((item) => item.kind === 'change');
+assert.deepEqual(approvedDestinations.map(({ id, number }) => ({ id, number })), [{ id: 'change/read-document', number: 1 }, { id: 'change/render-change', number: 2 }]);
+const approvedSection = reviewHelpers.renderReviewDestination(approvedDestinations[0]);
+assert.ok(approvedSection.includes('id="review-change-read-document"'));
+assert.ok(approvedSection.includes('<span class="planned-review-id">1.</span> Read the document'));
+assert.ok(approvedSection.includes('<table>'));
+assert.ok(!approvedSection.includes('Newer content'));
+assert.ok(!approvedSection.includes('Renamed without changing identity'));
+assert.ok(reviewHelpers.renderReviewDestination({ kind: 'testing' }).includes(structuredPlan.testing));
+const reportOnlyDestinations = createReviewDestinations({ ...report, plannedChanges: [...report.plannedChanges].reverse() }).filter((item) => item.kind === 'change');
+assert.equal(reportOnlyDestinations[0].id, 'change/render-change', 'standalone reports retain their saved array order');
+assert.equal(reportOnlyDestinations[0].number, 1);
+const missingApproved = new Function('dashboard', `${helperSource};return reviewPlanSnapshot();`)({ ...approvedDashboard, approvedPlanVersion: 99 });
+assert.equal(missingApproved, null, 'an unavailable approved snapshot is never replaced with the newest version');
+const laterApprovalHelpers = new Function('dashboard', 'marked', `${helperSource};return {reviewPlanSnapshot,renderReviewDestination};`)({ ...approvedDashboard, approvedPlanVersion: 2 }, marked);
+assert.equal(laterApprovalHelpers.reviewPlanSnapshot(), null, 'a later approval cannot relabel an older report');
+assert.equal(laterApprovalHelpers.renderReviewDestination(approvedDestinations[0]), approvedSection, 'later approvals cannot replace the reviewed design or its display number');
+
+// A skeleton working draft does not fabricate a saved version or a graph.
+const emptyElements = Object.fromEntries(['plan-content', 'plan-pagination', 'diff-summary', 'dependency-diff', 'diff-content', 'from-version', 'to-version', 'diff-previous-block', 'diff-next-block'].map((id) => [id, readerElement()]));
+const emptyBrowser = new Function('dashboard', 'document', `let latestPlan=null,planStructure=planDocumentStructure(null),currentDiffBlockIndex=-1;${helperSource};return {renderFullPlan,renderDiff};`)({ versions: [] }, { getElementById(id) { return emptyElements[id]; }, querySelectorAll() { return []; } });
+emptyBrowser.renderFullPlan();
+emptyBrowser.renderDiff();
+assert.ok(emptyElements['plan-content'].innerHTML.includes('No saved plan yet'));
+assert.equal(emptyElements['plan-pagination'].hidden, true);
+assert.ok(emptyElements['diff-content'].innerHTML.includes('No saved plan yet'));
+assert.equal(emptyElements['diff-previous-block'].disabled, true);
+assert.equal(emptyElements['diff-next-block'].disabled, true);
+
+console.log('Dashboard test passed: structured plans, slug navigation, reading-order diffs, approved reviews, safe DAGs, and rich Markdown readers.');

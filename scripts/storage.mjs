@@ -1,10 +1,11 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { access, cp, mkdir, mkdtemp, readFile, readdir, rm, stat, symlink, writeFile } from "node:fs/promises";
+import { access, cp, mkdir, mkdtemp, readFile, readdir, readlink, rename, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import { createJiti } from "jiti/static";
+import { makePlanDocument, writePlanDocument } from "./fixtures/plan-document.mjs";
 
 const temporaryRoot = await mkdtemp(join(tmpdir(), "pi-workflow-storage-"));
 process.env.PI_CODING_AGENT_DIR = join(temporaryRoot, "agent");
@@ -18,12 +19,11 @@ const {
 	atomicWrite, createDraft, createWorkflow, draftFiles, ensureWorkflowFiles, listCompletedWorkflows,
 	listPlanVersions, listSavedReviews, readActiveWorkflow, readCompletedWorkflowMetadata,
 	readWorkflowMetadata, readWorkflowReview, registerWorkflow, resolveWorkflowLocator,
-	savePlanVersion, unregisterWorkflow, workflowFiles, workflowRegistryFiles, workflowsRoot,
+	finalizePlanDraft, preparePlanDraft, unregisterWorkflow, workflowFiles, workflowRegistryFiles, workflowsRoot,
 	writeCompletedWorkflowMetadata, writeDraftWorkflowMetadata,
 } = storage;
 const exec = promisify(execFile);
 const ask = 'Preserve this ask exactly.\n\n- Keep <markup> & "quotes".\n';
-const initialPlan = "# Implementation plan\n\nKeep artifacts in the worktree.\n";
 
 async function exists(path) {
 	try { await access(path); return true; } catch { return false; }
@@ -34,7 +34,7 @@ async function snapshot(root) {
 	const result = {};
 	for (const entry of await readdir(root, { withFileTypes: true })) {
 		const path = join(root, entry.name);
-		result[entry.name] = entry.isDirectory() ? await snapshot(path) : {
+		result[entry.name] = entry.isSymbolicLink() ? { link: await readlink(path) } : entry.isDirectory() ? await snapshot(path) : {
 			content: await readFile(path, "utf8"), mtime: (await stat(path)).mtimeMs,
 		};
 	}
@@ -51,22 +51,21 @@ function metadataFor(identifier, repositoryRoot, overrides = {}) {
 async function initialize(metadata) {
 	await mkdir(metadata.worktreePath, { recursive: true });
 	const files = workflowFiles(metadata.identifier, metadata.worktreePath);
-	await createWorkflow(files, initialPlan, metadata);
+	await createWorkflow(files, metadata);
 	await registerWorkflow(metadata);
 	return files;
 }
 function sampleReview(overrides = {}) {
 	const yes = { status: "yes", explanation: "Covered by the plan." };
 	return {
-		version: 2, pullRequestUrls: ["https://example.test/pull/1"], baseCommit: "abc123",
+		version: 3, pullRequestUrls: ["https://example.test/pull/1"], baseCommit: "abc123",
 		headCommit: "def456", sourceFingerprint: "source789", generatedAt: "2026-01-03T00:00:00.000Z",
 		overallResult: { summary: "The implementation matches the plan.", necessary: yes, sufficient: yes },
 		overallConcerns: [],
 		holisticReview: { summary: "Coherent implementation.", necessary: yes, sufficient: yes, concerns: [] },
 		plannedChanges: [{
-			id: "PC-01", title: "Store the report", what: "Store a report.", why: "Keep the review durable.",
-			pseudocode: "save(report)", review: {
-				id: "PC-01", title: "Store the report", walkthrough: "Stored as JSON and Markdown.",
+			id: "store-report", title: "Store the report", dependsOn: [], content: "Store a report to keep the review durable.\n\n```ts\nsave(report);\n```", review: {
+				id: "store-report", title: "Store the report", walkthrough: "Stored as JSON and Markdown.",
 				necessary: yes, sufficient: yes, concerns: [],
 			},
 		}],
@@ -81,7 +80,7 @@ function sampleReview(overrides = {}) {
 }
 
 try {
-	assert.equal(WORKFLOW_METADATA_VERSION, 5);
+	assert.equal(WORKFLOW_METADATA_VERSION, 6);
 	assert.throws(() => workflowFiles("unknown"), /no locator/);
 	for (const identifier of ["../escape", "a/b", "a\\b", "UPPER", ".", "a".repeat(81)]) {
 		assert.throws(() => workflowFiles(identifier, temporaryRoot), /identifiers/);
@@ -91,8 +90,8 @@ try {
 
 	// Draft exports remain available for fixtures, not as the runtime planning flow.
 	const draft = draftFiles("fixture-draft");
-	const draftMetadata = { version: 5, draftId: "fixture-draft", description: "Fixture", ask, createdAt: "2026-01-01" };
-	await createDraft(draft, initialPlan, draftMetadata);
+	const draftMetadata = { version: 6, draftId: "fixture-draft", description: "Fixture", ask, createdAt: "2026-01-01" };
+	await createDraft(draft, draftMetadata);
 	assert.deepEqual(await readWorkflowMetadata(draft), draftMetadata);
 	await assert.rejects(writeDraftWorkflowMetadata(draft, { ...draftMetadata, ask: "changed" }), /immutable/);
 
@@ -103,16 +102,17 @@ try {
 	const metadata = metadataFor("local-planning", repositoryRoot);
 	const files = workflowFiles(metadata.identifier, metadata.worktreePath);
 	await mkdir(metadata.worktreePath, { recursive: true });
-	await createWorkflow(files, initialPlan, metadata);
+	await createWorkflow(files, metadata);
 	assert.equal(files.root, join(metadata.worktreePath, ".workflows", metadata.identifier));
 	assert.equal(await exists(join(workflowsRoot(), metadata.identifier)), false);
 	assert.equal(await exists(activeWorkflowMarkerPath(metadata.worktreePath)), false);
-	assert.equal(await readFile(files.plan, "utf8"), initialPlan);
-	assert.equal(await readFile(files.workingPlan, "utf8"), initialPlan);
-	assert.deepEqual((await listPlanVersions(files)).map(({ number }) => number), [1]);
+	assert.equal(await exists(files.plan), false);
+	assert.equal((await stat(files.workingPlan)).isDirectory(), true);
+	assert.deepEqual(await json(join(files.workingPlan, "plan.json")), { schemaVersion: 1, readingOrder: [] });
+	assert.deepEqual(await listPlanVersions(files), []);
 	assert.deepEqual(await json(files.clarifications), { version: 1, entries: [] });
-	await assert.rejects(createWorkflow(files, "replacement", metadata), /already exists/);
-	assert.equal(await readFile(files.plan, "utf8"), initialPlan);
+	await assert.rejects(createWorkflow(files, metadata), /already exists/);
+	assert.equal(await exists(files.plan), false);
 	await assert.rejects(readWorkflowMetadata(files), /active marker/);
 	assert.equal(await readActiveWorkflow(metadata.worktreePath), undefined, "a directory alone is not active");
 
@@ -139,6 +139,12 @@ try {
 	assert.equal(ignored.stdout.trim(), ".workflows/active.json");
 	await assert.rejects(exec("git", ["-C", repositoryRoot, "check-ignore", `.workflows/${metadata.identifier}/plan.md`]));
 
+	// Explicit finalization, not initialization, creates the first immutable version.
+	await writePlanDocument(files.workingPlan, makePlanDocument());
+	const firstPlan = await finalizePlanDraft(files, "Initial saved plan", 0);
+	assert.equal(firstPlan.number, 1);
+	metadata.description = firstPlan.description;
+
 	// Fresh Pi discovery rebuilds the index without changing the brief or active marker.
 	const beforeDiscovery = await snapshot(join(metadata.worktreePath, ".workflows"));
 	await rm(workflowsRoot(), { recursive: true });
@@ -149,18 +155,22 @@ try {
 	assert.deepEqual(workflowFiles(metadata.identifier), files);
 
 	// Brief reads never repair direct edits or recreate missing files.
-	await writeFile(files.plan, "# A direct edit must survive a read\n");
-	await rm(files.workingPlan);
+	const exportPath = join(files.root, "plan.md");
+	await writeFile(exportPath, "# A direct edit must survive a read\n");
+	await rm(files.workingPlan, { recursive: true });
 	const beforeRead = await snapshot(files.root);
 	await ensureWorkflowFiles(files);
 	await readActiveWorkflow(metadata.worktreePath);
 	await readCompletedWorkflowMetadata(metadata.identifier);
 	await listCompletedWorkflows();
 	assert.deepEqual(await snapshot(files.root), beforeRead);
-	const secondPlan = await savePlanVersion(files, "# Second saved plan\n");
+	const draftBase = await preparePlanDraft(files);
+	await writePlanDocument(files.workingPlan, makePlanDocument({ goal: "Second saved plan." }));
+	const secondPlan = await finalizePlanDraft(files, "Second saved plan", draftBase.baseVersion);
 	assert.equal(secondPlan.number, 2);
-	assert.equal(await readFile(files.plan, "utf8"), secondPlan.content);
-	assert.equal((await listPlanVersions(files))[0].content, initialPlan);
+	metadata.description = secondPlan.description;
+	assert.equal(await readFile(exportPath, "utf8"), "# A direct edit must survive a read\n", "display exports are not plan authority");
+	assert.equal((await listPlanVersions(files))[0].content, firstPlan.content);
 	await writeCompletedWorkflowMetadata({ ...metadata, approvedPlanVersion: secondPlan.number });
 	assert.equal((await readCompletedWorkflowMetadata(metadata.identifier)).approvedPlanVersion, 2);
 	assert.equal((await json(files.metadata)).approvedPlanVersion, 2);
@@ -212,9 +222,9 @@ try {
 
 	// Unsupported metadata, invalid approval facts, and malformed markers fail closed.
 	const currentPortable = await json(files.metadata);
-	for (const patch of [{ version: 4 }, { ask: " " }, { approvedPlanVersion: -1 }, { repositoryRoot: "/machine/path" }]) {
+	for (const patch of [{ version: 4 }, { version: 5 }, { ask: " " }, { approvedPlanVersion: -1 }, { repositoryRoot: "/machine/path" }]) {
 		await writeJson(files.metadata, { ...currentPortable, ...patch });
-		await assert.rejects(readWorkflowMetadata(files), patch.version ? /unsupported metadata version 4/ : /invalid metadata/);
+		await assert.rejects(readWorkflowMetadata(files), patch.version ? new RegExp(`unsupported metadata version ${patch.version}`) : /invalid metadata/);
 		assert.deepEqual(await listCompletedWorkflows(), []);
 	}
 	await writeJson(files.metadata, currentPortable);
@@ -227,12 +237,12 @@ try {
 	// Registering another bundle in the same worktree never replaces its active workflow.
 	const conflicting = { ...metadata, identifier: "conflicting", workflowBranch: "workflow/conflicting" };
 	const conflictingFiles = workflowFiles(conflicting.identifier, conflicting.worktreePath);
-	await createWorkflow(conflictingFiles, initialPlan, conflicting);
+	await createWorkflow(conflictingFiles, conflicting);
 	await assert.rejects(registerWorkflow(conflicting), /already has active workflow/);
 	assert.equal((await readActiveWorkflow(metadata.worktreePath)).identifier, metadata.identifier);
 	const duplicate = { ...metadata, worktreePath: join(temporaryRoot, "duplicate-worktree") };
 	await mkdir(duplicate.worktreePath);
-	await createWorkflow(workflowFiles(duplicate.identifier, duplicate.worktreePath), initialPlan, duplicate);
+	await createWorkflow(workflowFiles(duplicate.identifier, duplicate.worktreePath), duplicate);
 	await assert.rejects(registerWorkflow(duplicate), /already active/);
 	assert.equal(await exists(activeWorkflowMarkerPath(duplicate.worktreePath)), false);
 
@@ -272,18 +282,18 @@ try {
 	await assert.rejects(readActiveWorkflow(linkedWorktree), /symbolic links/);
 	const outsideFile = join(outside, "keep.txt");
 	await writeFile(outsideFile, "keep");
-	await rm(files.plan);
-	await symlink(outsideFile, files.plan);
-	await assert.rejects(atomicWrite(files.plan, "clobber"), /symbolic links/);
+	await rm(exportPath);
+	await symlink(outsideFile, exportPath);
+	await assert.rejects(atomicWrite(exportPath, "clobber"), /symbolic links/);
 	assert.equal(await readFile(outsideFile, "utf8"), "keep");
-	await rm(files.plan);
-	await atomicWrite(files.plan, secondPlan.content);
-	await rm(files.versions, { recursive: true });
+	await rm(exportPath);
+	await atomicWrite(exportPath, secondPlan.content);
+	await rename(files.versions, `${files.versions}.safe`);
 	await symlink(outside, files.versions);
-	await assert.rejects(savePlanVersion(files, "escape"), /symbolic links/);
+	await assert.rejects(finalizePlanDraft(files, "escape", 2), /symbolic links/);
 	await assert.rejects(listPlanVersions(files), /symbolic links/);
 	await rm(files.versions);
-	await mkdir(files.versions);
+	await rename(`${files.versions}.safe`, files.versions);
 	await rm(registry.locator);
 	await symlink(outsideFile, registry.locator);
 	assert.throws(() => workflowFiles(metadata.identifier), /symbolic links/);
@@ -291,8 +301,9 @@ try {
 	await readActiveWorkflow(metadata.worktreePath);
 
 	// Atomic writes use unique temporary names and leave none behind on success.
-	await Promise.all(Array.from({ length: 16 }, (_, index) => atomicWrite(files.workingPlan, `writer-${index}`)));
-	assert.match(await readFile(files.workingPlan, "utf8"), /^writer-\d+$/);
+	const scratch = join(files.root, "scratch.txt");
+	await Promise.all(Array.from({ length: 16 }, (_, index) => atomicWrite(scratch, `writer-${index}`)));
+	assert.match(await readFile(scratch, "utf8"), /^writer-\d+$/);
 	assert.equal((await readdir(files.root)).some((name) => name.endsWith(".tmp")), false);
 	await unregisterWorkflow(metadata.identifier);
 	await unregisterWorkflow(metadata.identifier);
@@ -302,4 +313,4 @@ try {
 } finally {
 	await rm(temporaryRoot, { recursive: true, force: true });
 }
-console.log("Storage tests passed: v5 local bundles, portable metadata, marker-only discovery, selection, and guards.");
+console.log("Storage tests passed: v6 local bundles, portable metadata, marker-only discovery, selection, and guards.");

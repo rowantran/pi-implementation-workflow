@@ -48,7 +48,7 @@ After you submit the ask, the extension generates a stable slug from it, records
 
 If planning is already active, continue through normal conversation instead of running `/workflow-plan` again. A session or worktree that already belongs to a workflow refuses another `/workflow-plan`; start a fresh session in the original checkout instead. The slug never changes as the plan evolves; its English description can change.
 
-The extension saves the submitted ask verbatim as immutable workflow metadata, starts `plan.md` and `working-plan.md` with only the implementation-plan title, and sends the ask as the planning kickoff message. After each `workflow_update_plan` call, its output includes the HTTP dashboard link. It never opens the browser automatically. The extension serves a single-page dashboard styled with the Isara design system. It has:
+The extension saves the submitted ask verbatim as immutable workflow metadata, creates an empty editable plan directory at `working-plan/`, and sends the ask as the planning kickoff message. No plan version is published until the first successful finalization. After each `workflow_update_plan` finalization, its output includes the HTTP dashboard link. It never opens the browser automatically. The extension serves a single-page dashboard styled with the Isara design system. It has:
 
 - a concise plain-English plan description as the main document title, beside its prominent current version number;
 - a **Plan** view with a guided reader ordered as Goal, Dependency graph, planned changes, and Testing; a full-document fallback; the immutable original ask; and structured user clarifications;
@@ -60,36 +60,52 @@ The extension saves the submitted ask verbatim as immutable workflow metadata, s
 
 Press `Ctrl+Alt+D` or run `/workflow-dashboard` to regenerate the dashboard and show its link again.
 
-The plan has **Goal**, **Planned Changes**, and **Testing** sections. Every planned change uses a stable consecutive identifier (`PC-01`, `PC-02`, and so on) with explicit **Depends on**, **What**, and **Why** fields. A change includes **Pseudocode** only when it clarifies meaningful behavior, state, interfaces, or data flow; mechanical documentation, testing, configuration, data, migration, and wiring changes can omit it. The Testing section contains explicit verification criteria. Planned changes and testing criteria become separate units of the implementation review. Planning cannot advance if the required structure is missing, empty, or ambiguous.
+The plan uses directories for structure, JSON for relationships, and freeform Markdown for explanations. `goal.md` states the desired outcome, optional `intro.md` gives context, and `testing.md` lists explicit verification criteria. Each planned change has a stable descriptive slug, JSON metadata, and a `change.md` explanation. Explain what changes and why; include pseudocode only when it clarifies meaningful behavior, state, interfaces, or data flow. No Markdown heading names, levels, or field order are required. Planned changes and testing criteria become separate units of implementation review.
 
-### Change dependencies
+### Change identity, reading order, and dependencies
 
-Every planned change declares its direct prerequisites before its What field:
+Each change lives under `planned-changes/<slug>/`. Slugs use lowercase kebab-case, start with a letter, and contain at most 80 characters. Keep a slug stable when changing its title, prose, or reading position. Do not reuse a deleted slug for an unrelated change.
 
-```markdown
-### PC-03: Show the graph
+The plan-level `plan.json` has exactly two fields:
 
-**Depends on**
-PC-01, PC-02
-
-**What**
-Render the planned changes and their dependencies.
-
-**Why**
-Readers need to see how the changes fit together.
+```json
+{
+  "schemaVersion": 1,
+  "readingOrder": [
+    "define-redrive-policy",
+    "implement-queue-redrive-mechanism",
+    "test-redrive-failures"
+  ]
+}
 ```
 
-Use the exact value `None` for a change with no prerequisites. Otherwise, write canonical planned-change IDs separated by commas on one line. Dependencies can refer to later entries: the numbered entries provide reading order, while dependencies define execution order. Keep IDs stable when adding a prerequisite; do not renumber the plan to make the graph run in numerical order.
+Every change must appear exactly once in `readingOrder`. The dashboard derives visual numbers from this list for each version. Slugs—not display numbers—identify dependencies, links, review results, and changes across versions. Reordering a change does not change its identity.
 
-An arrow **PC-01 → PC-03** means that PC-03 requires the result of PC-01. For example, `PC-01 → PC-02`, `PC-01 → PC-03`, and `PC-02, PC-03 → PC-04` describe two branches that come together at PC-04. Do not add dependencies solely to force a linear sequence. Independent branches need not wait for each other, but concurrent agents must still coordinate shared files.
+Each `change_metadata.json` contains exactly a title and direct prerequisites:
 
-The **Dependency graph** section in **Guided view** generates a Mermaid diagram directly from these fields. It comes after Goal and before the planned changes, with the same outline, previous/next controls, and `[`/`]` shortcuts as the other sections. Select a node to highlight its prerequisites and downstream changes; the legend explains the colors. The section ends at the graph, without a selection message, change details, or a duplicate dependency list. Read each change through the plan outline or Next. Its Requires and Enables links connect related changes, and its dependency fields remain available if the diagram cannot render. The version comparison also summarizes dependency changes.
+```json
+{
+  "title": "Implement queue redrive",
+  "dependsOn": ["define-redrive-policy"]
+}
+```
 
-`workflow_update_plan` saves incomplete drafts and returns a warning when their graph is unavailable. `/workflow-implement` requires a declaration on every change and rejects unknown IDs, repeated dependencies, self-dependencies, and cycles. Older approved plans without dependency declarations remain readable and reviewable; their graph is explicitly unavailable rather than inferred from entry order.
+Use `[]` for independent work. Dependencies can refer to later reading-order entries. An arrow **define-redrive-policy → implement-queue-redrive-mechanism** means that the redrive implementation requires the policy. Do not invent dependencies to force a linear sequence or match a pull request stack. Independent changes can still conflict in shared files.
 
-The Markdown is the only authoritative graph storage. `working-plan.md`, `plan.md`, and each numbered Markdown version contain the dependencies. The dashboard derives graph data from each version's Markdown; there is no separately editable graph file, progress state, or task scheduler.
+The **Dependency graph** in **Guided view** uses this structured metadata, not parsed Markdown. Select a node to highlight its prerequisites and downstream changes. Requires and Enables links connect the change explanations. The version comparison matches changes by slug and summarizes dependency and reading-order changes. Full-document Markdown is generated for display only; it is never a second editable source.
 
-During planning, the agent uses native `edit` or `write` calls only on `working-plan.md`. It then calls `workflow_update_plan` with a one-sentence-or-less English description. The tool is the only way to commit a plan change: it stores the complete working plan as the next numbered Markdown file under `versions/`, copies the same content to `plan.md`, and updates the description. Calls whose working-plan content matches the prior version still create a new version. `/workflow-implement` refuses to advance while `working-plan.md` differs from the committed `plan.md`.
+### Prepare, edit, and finalize
+
+During planning, the agent uses `workflow_update_plan` in two steps:
+
+1. Call with `{"action":"prepare"}`. The tool copies the latest finalized version into `working-plan/`, or creates a skeleton for the first plan. It returns `draftPath` and `baseVersion`; `0` means no published version. Preparing again preserves existing unsaved edits, including invalid drafts.
+2. Edit the draft's JSON and Markdown files with native `edit` and `write`, then call with `{"action":"finalize","expectedBaseVersion":0,"description":"Describe the entire plan"}`. Use the base version returned by prepare. The description must be at most 18 words and 160 characters.
+
+Finalization checks required files, nonempty prose, strict JSON fields and types, safe slug IDs, complete reading order, and valid dependencies. Unknown changes, duplicate edges, self-dependencies, cycles, unexpected files, and unsafe links are errors. It reports file and field details together where possible. Invalid drafts remain editable and never replace the published plan.
+
+The tool validates an isolated snapshot and publishes `plan-versions/vN/` by atomically updating the relative `latest-plan` symlink. Concurrent finalization uses a cross-process lock and rejects a stale base version. If another session published a plan, preserve your edits separately, remove the stale working draft, prepare from the latest version, and reconcile your edits. Never overwrite finalized versions or manually change draft bookkeeping.
+
+Finalization creates a plan snapshot, **not a Git commit**. Identical valid content can still create another version. `/workflow-implement` refuses to approve while the working draft differs from the latest snapshot, and approval pins the exact version instead of following `latest-plan`.
 
 ### Implement
 
@@ -103,7 +119,7 @@ From the planning session, this approves the saved plan in the existing worktree
 
 1. requires a saved English description, a valid plan, and no unsaved working-plan changes;
 2. records the approved plan version in metadata;
-3. makes the initial workflow-artifact commit under `.workflows/<identifier>/`, including the original ask, plan, complete version history, and clarifications;
+3. makes the initial workflow-artifact commit under `.workflows/<identifier>/`, including the original ask, complete plan-directory version history, latest pointer, and clarifications;
 4. creates and switches to a separate implementation session in the same worktree.
 
 The artifact commit includes only that workflow's durable files; it does not consume unrelated staged changes. Git commit failures leave planning recoverable and do not start implementation. The base commit, slug, artifact paths, and dashboard URL remain unchanged.
@@ -112,7 +128,7 @@ The separate slug-generation request at planning startup uses `low` reasoning fo
 
 The planning conversation remains saved and does not enter implementation context. Running `/workflow-implement` again later — from any session — starts a fresh implementation session in the existing worktree.
 
-Implementation inspects three durable sources before it acts: the immutable original ask in `metadata.json`, the frozen approved scope in `plan.md`, and later explicit answers in `clarifications.json`. If the approved plan has material ambiguity, the agent asks through `workflow_questions`. Submitted answers are appended verbatim to `clarifications.json`, committed locally, and shown in the dashboard. Selected answers retain the exact option label; custom answers retain the exact submitted text. Cancelled questionnaires are not stored.
+Implementation inspects three durable sources before it acts: the immutable original ask in `metadata.json`, the frozen approved scope in its exact `plan-versions/vN/` directory, and later explicit answers in `clarifications.json`. If the approved plan has material ambiguity, the agent asks through `workflow_questions`. Submitted answers are appended verbatim to `clarifications.json`, committed locally, and shown in the dashboard. Selected answers retain the exact option label; custom answers retain the exact submitted text. Cancelled questionnaires are not stored.
 
 The implementer chooses the lightest reviewable delivery. A small cohesive plan uses one pull request. A larger plan can use a linear stack through Graphite, GitHub's native stack tooling, or ordinary Git branches. The initial `workflow/<identifier>` branch is always the bottom branch. Its pull request targets the recorded base branch; every later pull request targets the branch directly below it; and the checked-out branch remains the stack tip. Planning does not add subplans or pull request boundaries.
 
@@ -128,7 +144,7 @@ The command checks the live delivery — the worktree must be clean, and walking
 
 The workflow then deterministically generates the review before entering a separate read-only review session:
 
-1. one isolated, read-only agent reviews each `PC-*` planned change against its What, Why, and optional Pseudocode, producing a literate Markdown walkthrough of what was actually implemented — prose interleaved with key code excerpts and callouts for deviations from the plan;
+1. one isolated, read-only agent reviews each slug-identified planned change against its full Markdown explanation and dependencies, producing a literate Markdown walkthrough of what was actually implemented — prose interleaved with key code excerpts and callouts for deviations from the plan;
 2. one read-only holistic reviewer checks cross-cutting architecture, missing behavior, and implementation outside the plan;
 3. one read-only testing-criteria reviewer verifies every material requirement in the approved Testing section with repository and execution evidence;
 4. one synthesizer receives paths to all three forms of analysis and produces only the overall result and deduplicated overall concerns.
@@ -145,7 +161,7 @@ The extension commits finished reports locally, but never pushes automatically. 
 Running `/workflow-review` again selects the cheapest correct behavior from the saved artifacts and Git history — never an error:
 
 - if the newest report already covers the current commits, plan, and pull requests, it is reused as-is;
-- if a saved report reviewed an earlier state of the same plan and its head commit is a Git ancestor of the current head, the re-review is incremental: a read-only scope agent identifies the `PC-*` planned changes whose prior reviews could be affected, only those are rerun, and unaffected planned-change results carry forward, while the holistic reviewer, testing-criteria reviewer, and synthesizer always rerun against the complete aggregate delivery;
+- if a saved report reviewed an earlier state of the same plan and its head commit is a Git ancestor of the current head, the re-review is incremental: a read-only scope agent identifies by slug the planned changes whose prior reviews could be affected, only those are rerun, and unaffected planned-change results carry forward, while the holistic reviewer, testing-criteria reviewer, and synthesizer always rerun against the complete aggregate delivery;
 - otherwise — after a rebase, history rewrite, or any other mismatch — the workflow says so and generates a full review.
 
 The report and dashboard list every pull request from bottom to top. Review uses the same Guided view and Full document modes as Plan. Guided view shares the one-section-at-a-time outline, previous/next controls, and `[`/`]` shortcuts. Each planned-change section has its literate implementation walkthrough, separate necessary and sufficient verdicts, and its own concerns. A dedicated Testing criteria section shows the original criteria, the testing review's verdict, and source evidence for each criterion.
@@ -180,7 +196,7 @@ Revision requires only the plan and the worktree — it works straight after imp
 /workflow-cleanup
 ```
 
-Cleanup first commits any pending durable workflow artifacts, including an unfinished saved plan. If that commit fails, cleanup stops. It then removes the worktree directory and its Git worktree registration, keeping local branches, remote branches, and pull requests. The artifacts survive in the retained branch under `.workflows/<identifier>/`; no separate archive is needed. Push local artifact commits if you also want them in the pull request.
+Cleanup first commits any pending durable workflow artifacts, including finalized versions of an unapproved plan. It asks before discarding an unsaved working draft; invalid drafts are not published or committed. If that commit fails, cleanup stops. It then removes the worktree directory and its Git worktree registration, keeping local branches, remote branches, and pull requests. The artifacts survive in the retained branch under `.workflows/<identifier>/`; no separate archive is needed. Push local artifact commits if you also want them in the pull request.
 
 Cleanup asks for confirmation before discarding other uncommitted changes or when no saved review covers the current implementation content. When the current session lives inside the worktree, the command switches Pi back to the original repository first and removes the worktree from there; otherwise it removes the worktree in place. The ignored active marker, working draft, dashboard, and review cache are removed with the worktree. The dashboard URL is no longer served after cleanup.
 
@@ -336,13 +352,23 @@ The bundle exists from planning onward. Earlier committed bundles may coexist, b
 
 ```text
 <worktree>/.workflows/<identifier>/
-├── plan.md
-├── versions/
-│   ├── 0001.md
-│   ├── 0002.md
-│   └── ...
+├── plan-versions/
+│   ├── v1/
+│   └── v2/
+│       ├── plan.json            # schemaVersion and readingOrder
+│       ├── goal.md
+│       ├── intro.md            # optional
+│       ├── testing.md
+│       ├── version-metadata.json # tool-owned title, time, and integrity digest
+│       └── planned-changes/
+│           └── implement-queue-redrive-mechanism/
+│               ├── change_metadata.json # title and dependsOn
+│               └── change.md
+├── latest-plan -> plan-versions/v2
 ├── clarifications.json
-├── working-plan.md             # ignored: editable planning draft
+├── working-plan/               # ignored: editable planning directory
+├── .plan-draft-base.json        # ignored: tool-owned draft base
+├── .plan.lock                  # ignored: prepare/finalize operation lock
 ├── dashboard.html              # ignored: generated browser view
 ├── review.json
 ├── review.md
@@ -355,7 +381,7 @@ The bundle exists from planning onward. Earlier committed bundles may coexist, b
 │       ├── manifest.json
 │       ├── incremental-review-scope.json  # re-reviews only
 │       ├── planned-changes/
-│       │   ├── PC-01.json
+│       │   ├── implement-queue-redrive-mechanism.json
 │       │   └── ...
 │       ├── holistic-review.json
 │       ├── testing-criteria-review.json
@@ -363,13 +389,13 @@ The bundle exists from planning onward. Earlier committed bundles may coexist, b
 └── metadata.json
 ```
 
-Tracked `metadata.json` records portable facts: the verbatim, write-once original ask, identifier, English description, base branch and commit, workflow branch, creation time, and the approved plan version when one exists. An absent approval version means the plan is still being drafted. The local `active.json` marker contains the active identifier, repository/worktree paths, Git common directory, and discovered pull requests as a display cache. Machine paths and the marker are not committed.
+Tracked `metadata.json` records portable facts: the verbatim, write-once original ask, identifier, base branch and commit, workflow branch, creation time, and the approved plan version when one exists. Each plan snapshot stores its English description, creation time, and integrity digest in tool-owned `version-metadata.json`. The displayed description comes from the approved snapshot, or the latest finalized snapshot while planning; approval also records that description in workflow metadata. An absent approval version means the plan is still being drafted. The local `active.json` marker contains the active identifier, repository/worktree paths, Git common directory, and discovered pull requests as a display cache. Machine paths and the marker are not committed.
 
 The global `~/.pi/agent/workflows/<identifier>.json` files are small location pointers, not artifact copies. The extension uses them for identifier lookup and shared dashboard routing. Authoritative files stay inside the worktree; after cleanup, their committed versions remain in Git. Pi conversation transcripts continue to use Pi's normal session storage.
 
 Git's local exclude file ignores only the marker and disposable draft/dashboard/review-cache files, not the entire `.workflows/` directory. Plans, versions, clarifications, metadata, and finished reports enter the branch and pull request. There is no stored review round or lifecycle state machine; reviewability and staleness are derived from Git, open pull requests, approval metadata, and saved reports.
 
-The metadata format is version 5. Workflow directories created by earlier releases are not migrated; they are skipped by workflow listing and rejected when targeted directly.
+The metadata format is version 6; plan manifests use schema version 1 and review reports use version 3. Workflow directories created by earlier releases are not migrated; they are skipped by workflow listing and rejected when targeted directly.
 
 Only planning activates `workflow_update_plan`. Implementation and revision activate `workflow_questions`. Review sessions disable `edit` and `write`. Briefing assigns no role and preserves the session's tools. The plan is referenced by path rather than injected into every model request. Review generation launches isolated read-only Pi processes with a maximum concurrency of four. The identifier remains the source of the artifact-directory, branch, and worktree names.
 
@@ -392,7 +418,7 @@ Preview a branching dependency plan with the real dashboard renderer and bundled
 npm run preview:dag
 ```
 
-Open the printed loopback URL. The preview includes two plan versions so you can inspect graph navigation and dependency differences. It uses temporary storage, not your saved workflows, and removes its temporary files when stopped with Ctrl+C. To use another port, run `PORT=43124 npm run preview:dag`. The example Markdown is at `scripts/fixtures/dependency-plan.md`.
+Open the printed loopback URL. The preview includes two plan versions so you can inspect graph navigation and dependency differences. It uses temporary storage, not your saved workflows, and removes its temporary files when stopped with Ctrl+C. To use another port, run `PORT=43124 npm run preview:dag`. The example structured plan is at `scripts/fixtures/dependency-plan.mjs`.
 
 ## License
 

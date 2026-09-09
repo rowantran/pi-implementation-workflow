@@ -1,10 +1,11 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { chmod, mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, readlink, realpath, rename, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { promisify } from "node:util";
 import { createJiti } from "jiti/static";
+import { makePlanDocument, writePlanDocument } from "./fixtures/plan-document.mjs";
 
 const runFile = promisify(execFile);
 const temporaryRoot = await realpath(await mkdtemp(join(tmpdir(), "pi-workflow-artifact-git-")));
@@ -12,6 +13,8 @@ const jiti = createJiti(import.meta.url, { moduleCache: false });
 const { commitWorkflowArtifacts, installWorkflowExcludes, workflowContentHead, worktreeStatus } =
 	await jiti.import(new URL("../src/git.ts", import.meta.url).pathname);
 const { checkDelivery } = await jiti.import(new URL("../src/delivery.ts", import.meta.url).pathname);
+const { createWorkflow, workflowFiles, preparePlanDraft, finalizePlanDraft, readPlanVersion } =
+	await jiti.import(new URL("../src/storage.ts", import.meta.url).pathname);
 const calls = [];
 
 async function exec(command, args, options = {}) {
@@ -65,7 +68,7 @@ async function fixture(name) {
 	const worktreePath = join(root, ".worktrees", "current");
 	await git(root, "worktree", "add", "-b", "workflow/current", worktreePath, "HEAD");
 	const workflow = {
-		version: 1,
+		version: 6,
 		identifier: "current",
 		ask: "Test artifacts",
 		description: "Test artifact persistence",
@@ -112,16 +115,23 @@ try {
 	assert.equal(await commitWorkflowArtifacts(exec, workflow, "No saved artifacts yet"), undefined);
 	assert.equal(await git(cwd, "rev-parse", "HEAD"), baseCommit);
 
-	const durable = ["plan.md", "versions/0001.md", "clarifications.json", "metadata.json", "review.json", "review.md", "reviews/0001.json", "reviews/0001.md"];
-	for (const path of durable) await save(cwd, `${bundle}/${path}`, `Saved ${path}\n`);
-	const disposable = [".workflows/active.json", `${bundle}/working-plan.md`, `${bundle}/dashboard.html`, `${bundle}/review-runs/attempt/result.json`];
+	const durable = ["latest-plan", "plan-versions/v1/plan.json", "plan-versions/v1/goal.md", "plan-versions/v1/intro.md", "plan-versions/v1/testing.md", "plan-versions/v1/version-metadata.json", "plan-versions/v1/planned-changes/store-report/change_metadata.json", "plan-versions/v1/planned-changes/store-report/change.md", "clarifications.json", "metadata.json", "review.json", "review.md", "reviews/0001.json", "reviews/0001.md"];
+	const files = workflowFiles(workflow.identifier, cwd);
+	await createWorkflow(files, workflow);
+	await writePlanDocument(files.workingPlan, makePlanDocument({
+		intro: "Validate saved plan artifacts before committing them.",
+		changes: [{ id: "store-report", title: "Store the report", dependsOn: [], content: "Keep the report with the workflow." }],
+	}));
+	await finalizePlanDraft(files, "First saved plan", 0);
+	for (const path of ["review.json", "review.md", "reviews/0001.json", "reviews/0001.md"]) await save(cwd, `${bundle}/${path}`, `Saved ${path}\n`);
+	const disposable = [".workflows/active.json", `${bundle}/working-plan/plan.json`, `${bundle}/working-plan/goal.md`, `${bundle}/working-plan/planned-changes/store-report/change.md`, `${bundle}/plan.md`, `${bundle}/.plan-draft-base.json`, `${bundle}/.plan.lock`, `${bundle}/.plan-publish-example/goal.md`, `${bundle}/.plan-prepare-example/goal.md`, `${bundle}/.plan-base-example.tmp`, `${bundle}/.latest-plan-example.tmp`, `${bundle}/dashboard.html`, `${bundle}/review-runs/attempt/result.json`];
 	for (const path of disposable) {
 		await save(cwd, path, "generated\n");
 		assert.equal((await exec("git", ["-C", cwd, "check-ignore", "-q", path])).code, 0, `${path} must be ignored`);
 	}
 	assert.equal(await git(cwd, "ls-files", ".workflows/previous/plan.md"), ".workflows/previous/plan.md");
-	await save(cwd, ".workflows/another/plan.md", "Another bundle\n");
-	assert.equal((await exec("git", ["-C", cwd, "check-ignore", "-q", ".workflows/another/plan.md"])).code, 1);
+	await save(cwd, ".workflows/another/plan-versions/v1/goal.md", "Another bundle\n");
+	assert.equal((await exec("git", ["-C", cwd, "check-ignore", "-q", ".workflows/another/plan-versions/v1/goal.md"])).code, 1);
 
 	await save(cwd, "code.txt", "staged code\n");
 	await save(cwd, "partial.txt", "staged partial\n");
@@ -140,6 +150,9 @@ try {
 	assert.ok(initialArtifacts);
 	assert.equal(await git(cwd, "rev-parse", "HEAD"), initialArtifacts);
 	assert.deepEqual((await git(cwd, "diff-tree", "--no-commit-id", "--name-only", "-r", "HEAD")).split("\n").sort(), durable.map((path) => `${bundle}/${path}`).sort());
+	assert.match(await git(cwd, "ls-files", "--stage", `${bundle}/latest-plan`), /^120000 /, "the managed alias is tracked as a symlink");
+	assert.equal(await git(cwd, "show", `HEAD:${bundle}/latest-plan`), "plan-versions/v1");
+	assert.equal(await git(cwd, "ls-files", `${bundle}/working-plan`, `${bundle}/plan.md`, `${bundle}/.plan-draft-base.json`, `${bundle}/.plan.lock`), "");
 	assert.equal(await git(cwd, "diff", "--cached", "--binary", "--", ...unrelated), stagedBefore, "unrelated staged diff is preserved");
 	assert.equal(await git(cwd, "diff", "--binary", "--", ...unrelated), unstagedBefore, "partially staged working files are preserved");
 	assert.equal(await git(cwd, "ls-files", "--stage", "-z", "--", ...unrelated), indexBefore, "unrelated index entries are preserved exactly");
@@ -188,8 +201,8 @@ try {
 	assert.equal((await checkDelivery(withPullRequests([pr(1, "workflow/current", "main", initialArtifacts)]), workflow)).ok, false, "unpushed code must still block delivery");
 
 	await git(cwd, "rm", `${bundle}/review.md`);
-	await rm(join(cwd, `${bundle}/versions/0001.md`));
-	assert.ok(await commitWorkflowArtifacts(exec, workflow, "Remove saved artifacts"), "staged and unstaged durable deletions are committed");
+	await rm(join(cwd, `${bundle}/reviews/0001.md`));
+	assert.ok(await commitWorkflowArtifacts(exec, workflow, "Remove saved artifacts"), "staged and unstaged review deletions are committed");
 	assert.equal(await worktreeStatus(exec, cwd), "");
 	assert.equal(await workflowContentHead(exec, workflow), contentHead);
 	assert.equal(await commitWorkflowArtifacts(exec, workflow, "Repeat deletion"), undefined);
@@ -202,7 +215,7 @@ try {
 	// Every failure must preserve unrelated staged content and leave saved files retryable.
 	await save(cwd, "code.txt", "staged during failed save\n");
 	await git(cwd, "add", "code.txt");
-	await save(cwd, `${bundle}/plan.md`, "Updated saved plan\n");
+	await save(cwd, `${bundle}/review.json`, "Updated saved review\n");
 	const failureIndex = await git(cwd, "ls-files", "--stage", "code.txt");
 	const failureHead = await git(cwd, "rev-parse", "HEAD");
 	for (const failure of ["add", "diff", "commit"]) {
@@ -234,6 +247,29 @@ try {
 	await assert.rejects(commitWorkflowArtifacts(exec, { ...workflow, worktreePath: root }, "Base branch"), /base branch/);
 	await assert.rejects(commitWorkflowArtifacts(exec, { ...workflow, worktreePath: join(cwd, "missing") }, "Missing"), /missing/);
 	await assert.rejects(commitWorkflowArtifacts(exec, { ...workflow, worktreePath: join(cwd, ".workflows") }, "Nested path"), /not the worktree root/);
+	const latestPointer = join(cwd, bundle, "latest-plan");
+	for (const target of [root, "../outside", "plan-versions/../outside", "plan-versions/v01", "plan-versions/v999"]) {
+		await rm(latestPointer);
+		await symlink(target, latestPointer, "dir");
+		await assert.rejects(commitWorkflowArtifacts(exec, workflow, "Unsafe latest alias"), /Unsafe latest-plan|target is missing/);
+		assert.equal(await readlink(latestPointer), target, "validation never repairs a caller's pointer");
+	}
+	await rm(latestPointer);
+	await symlink("plan-versions/v1", latestPointer, "dir");
+	const changeFile = join(cwd, bundle, "plan-versions/v1/planned-changes/store-report/change.md");
+	const originalChange = await readFile(changeFile, "utf8");
+	await rm(changeFile);
+	await symlink(join(root, "code.txt"), changeFile);
+	await assert.rejects(commitWorkflowArtifacts(exec, workflow, "Unsafe nested artifact"), /symbolic links/);
+	await rm(changeFile);
+	await writeFile(changeFile, originalChange);
+	await symlink(root, join(cwd, bundle, "plan-versions/v2"), "dir");
+	await rm(latestPointer);
+	await symlink("plan-versions/v2", latestPointer, "dir");
+	await assert.rejects(commitWorkflowArtifacts(exec, workflow, "Unsafe alias target"), /symbolic links/);
+	await rm(latestPointer);
+	await rm(join(cwd, bundle, "plan-versions/v2"));
+	await symlink("plan-versions/v1", latestPointer, "dir");
 	await rm(join(cwd, `${bundle}/reviews`), { recursive: true });
 	await symlink(root, join(cwd, `${bundle}/reviews`), "dir");
 	await assert.rejects(commitWorkflowArtifacts(exec, workflow, "Symlink escape"), /not a real directory/);
@@ -251,7 +287,7 @@ try {
 	await save(stackCwd, "partial.txt", "top implementation\n");
 	await git(stackCwd, "commit", "-am", "Top code");
 	const top = await git(stackCwd, "rev-parse", "HEAD");
-	await save(stackCwd, `${bundle}/plan.md`, "Stack plan\n");
+	await save(stackCwd, `${bundle}/clarifications.json`, "Stack clarifications\n");
 	const localTop = await commitWorkflowArtifacts(exec, stackWorkflow, "Stack artifacts");
 	const stackPrs = [pr(1, "workflow/current", "main", bottom), pr(2, "workflow/top", "workflow/current", top)];
 	delivery = await checkDelivery(withPullRequests(stackPrs), stackWorkflow);
@@ -274,7 +310,7 @@ try {
 	assert.match((await checkDelivery(withPullRequests([pr(1, "workflow/current", "main", diverged), stackPrs[1]]), stackWorkflow)).message, /does not contain/);
 	assert.match((await checkDelivery(withPullRequests([stackPrs[0], pr(2, "workflow/top", "workflow/current", diverged)]), stackWorkflow)).message, /diverged/);
 	await git(stackCwd, "switch", "-c", "remote-ahead", localTop);
-	await save(stackCwd, `${bundle}/plan.md`, "Remote artifact change\n");
+	await save(stackCwd, `${bundle}/clarifications.json`, "Remote artifact change\n");
 	const remoteAhead = await commitWorkflowArtifacts(exec, stackWorkflow, "Remote artifacts");
 	await git(stackCwd, "switch", "workflow/top");
 	assert.equal((await checkDelivery(withPullRequests([stackPrs[0], pr(2, "workflow/top", "workflow/current", remoteAhead)]), stackWorkflow)).ok, false, "remote-ahead artifact commits are not a local delivery");
@@ -299,6 +335,73 @@ try {
 	const unusualWorkflow = { ...unusual.workflow, baseCommit: alternateBase };
 	assert.equal(await workflowContentHead(exec, unusualWorkflow), alternateBase, "an out-of-base candidate falls back to the base");
 	assert.match((await checkDelivery(withPullRequests([pr(1, "workflow/current", "main", alternateBase)]), unusualWorkflow)).message, /content differs/);
+
+	// Exercise actual storage publication, not just the durable-path allowlist.
+	const published = await fixture("directory-snapshots");
+	const publishedFiles = workflowFiles(published.workflow.identifier, published.cwd);
+	await createWorkflow(publishedFiles, published.workflow);
+	assert.equal(await readPlanVersion(publishedFiles), undefined);
+	await commitWorkflowArtifacts(exec, published.workflow, "Initialize planning metadata");
+	assert.equal(await git(published.cwd, "ls-files", `${bundle}/plan-versions`, `${bundle}/latest-plan`), "", "initialization commits no placeholder version");
+	const document = makePlanDocument();
+	await writePlanDocument(publishedFiles.workingPlan, document);
+	await finalizePlanDraft(publishedFiles, "First finalized snapshot", 0);
+	const savedFirst = await commitWorkflowArtifacts(exec, published.workflow, "Save first finalized plan");
+	assert.equal(await git(published.cwd, "show", `HEAD:${bundle}/latest-plan`), "plan-versions/v1");
+	assert.equal(await git(published.cwd, "show", `HEAD:${bundle}/plan-versions/v1/goal.md`), document.goal);
+	assert.match(await git(published.cwd, "show", `HEAD:${bundle}/plan-versions/v1/version-metadata.json`), /First finalized snapshot/);
+	await preparePlanDraft(publishedFiles);
+	await writePlanDocument(publishedFiles.workingPlan, { ...document, goal: "Publish a second immutable snapshot." });
+	await finalizePlanDraft(publishedFiles, "Second finalized snapshot", 1);
+	const savedSecond = await commitWorkflowArtifacts(exec, published.workflow, "Save second finalized plan");
+	assert.notEqual(savedSecond, savedFirst);
+	assert.equal(await git(published.cwd, "diff", savedFirst, savedSecond, "--", `${bundle}/plan-versions/v1`), "", "later saves never alter tracked version history");
+	assert.equal(await git(published.cwd, "show", `HEAD:${bundle}/latest-plan`), "plan-versions/v2");
+	assert.equal(await git(published.cwd, "ls-files", `${bundle}/working-plan`, `${bundle}/.plan-draft-base.json`, `${bundle}/plan.md`), "");
+	assert.equal(await worktreeStatus(exec, published.cwd), "", "mutable drafts and lock bookkeeping stay ignored");
+
+	// Every invalid history fails before staging, even when only an old version
+	// was changed or the whole history and pointer were deleted together.
+	await save(published.cwd, "code.txt", "Preserve unrelated staged code\n");
+	await git(published.cwd, "add", "code.txt");
+	const safeIndex = await git(published.cwd, "ls-files", "--stage", "-z");
+	async function rejectHistory(pattern) {
+		const start = calls.length;
+		await assert.rejects(commitWorkflowArtifacts(exec, published.workflow, "Reject unsafe history"), pattern);
+		assert.ok(!calls.slice(start).some(([command, ...args]) => command === "git" && (args.includes("add") || args.includes("commit"))), "history validation happens before staging");
+		assert.equal(await git(published.cwd, "ls-files", "--stage", "-z"), safeIndex);
+		assert.equal(await git(published.cwd, "rev-parse", "HEAD"), savedSecond);
+	}
+	const oldGoal = join(publishedFiles.versions, "v1", "goal.md");
+	await writeFile(oldGoal, "A direct edit to an older finalized version.");
+	await rejectHistory(/immutable finalized plan was modified/);
+	await writeFile(oldGoal, document.goal);
+	await rm(oldGoal);
+	await rejectHistory(/goal.md: required file is missing/);
+	await writeFile(oldGoal, document.goal);
+	const snapshotBackup = join(publishedFiles.root, ".plan-publish-backup");
+	await rename(join(publishedFiles.versions, "v1"), snapshotBackup);
+	await rejectHistory(/v1.*ENOENT/s);
+	await rename(snapshotBackup, join(publishedFiles.versions, "v1"));
+	for (const name of ["v3", "v99", "v01", "notes"]) {
+		const path = join(publishedFiles.versions, name);
+		await mkdir(path);
+		await writeFile(join(path, "keep.md"), "Preserve orphan recovery data");
+		await rejectHistory(/unexpected or unpublished plan version path.*move the unexpected entry outside plan-versions/s);
+		assert.equal(await readFile(join(path, "keep.md"), "utf8"), "Preserve orphan recovery data");
+		await rm(path, { recursive: true });
+	}
+	await writeFile(join(publishedFiles.versions, "v3"), "Not a version directory");
+	await rejectHistory(/unexpected or unpublished plan version path/);
+	await rm(join(publishedFiles.versions, "v3"));
+	await rm(publishedFiles.latestPlan);
+	await rejectHistory(/unexpected or unpublished plan version path/);
+	await rename(publishedFiles.versions, snapshotBackup);
+	await rejectHistory(/missing or is not part of the published plan history/);
+	await rename(snapshotBackup, publishedFiles.versions);
+	await symlink("plan-versions/v2", publishedFiles.latestPlan, "dir");
+	assert.equal(await commitWorkflowArtifacts(exec, published.workflow, "History restored"), undefined);
+	assert.equal(await git(published.cwd, "ls-files", "--stage", "-z"), safeIndex);
 
 	assert.ok(!calls.some(([command, ...args]) => command === "git" && args.includes("push")));
 	console.log("Artifact Git tests passed (real worktrees, selective commits, meaningful heads, and PR delivery).");
