@@ -1,9 +1,10 @@
 import type { AutocompleteItem } from "@earendil-works/pi-tui";
-import { isPathInside, repositoryIdentity, type ExecFn } from "./git.ts";
+import { repositoryIdentity, type ExecFn } from "./git.ts";
 import {
 	IDENTIFIER_PATTERN,
 	listCompletedWorkflows,
 	pathExists,
+	readActiveWorkflow,
 	readCompletedWorkflowMetadata,
 	type CompletedWorkflowMetadata,
 } from "./storage.ts";
@@ -28,11 +29,9 @@ export type ResolveWorkflowResult =
 
 /**
  * Resolves which workflow a verb targets, in priority order: explicit
- * argument, session binding, the worktree containing the current directory,
- * then an interactive pick over this repository's workflows.
- *
- * Every worktree verb requires the workflow worktree to exist; only planning
- * completion creates one.
+ * argument, CURRENT WORKTREE active marker, session binding, then an
+ * interactive pick over this repository's registered active worktrees.
+ * Committed workflow directories are never interpreted as active workflows.
  */
 export async function resolveWorkflow(options: ResolveWorkflowOptions): Promise<ResolveWorkflowResult> {
 	const argument = options.argument?.trim();
@@ -40,23 +39,38 @@ export async function resolveWorkflow(options: ResolveWorkflowOptions): Promise<
 		if (!IDENTIFIER_PATTERN.test(argument)) {
 			return { status: "error", message: `${argument} is not a valid workflow identifier.` };
 		}
-		return loadEligible(argument, options.verb);
+		const result = await loadEligible(argument, options.verb);
+		if (result.status === "resolved") return result;
+		// Explicit selection still works in a fresh Pi with no disposable index.
+		const repository = await repositoryIdentity(options.exec, options.cwd);
+		if (repository) {
+			try {
+				const active = await readActiveWorkflow(repository.root);
+				if (active?.identifier === argument) return { status: "resolved", workflow: active };
+			} catch {
+				// Do not replace the explicit identifier's error with an unrelated marker error.
+			}
+		}
+		return result;
+	}
+	const repository = await repositoryIdentity(options.exec, options.cwd);
+	if (repository) {
+		try {
+			const active = await readActiveWorkflow(repository.root);
+			if (active) return { status: "resolved", workflow: active };
+		} catch (error) {
+			return { status: "error", message: error instanceof Error ? error.message : String(error) };
+		}
 	}
 	if (options.sessionIdentifier) return loadEligible(options.sessionIdentifier, options.verb);
 
-	const workflows = await listCompletedWorkflows();
-	const containing = await filterAsync(workflows, (workflow) =>
-		Promise.resolve(isPathInside(options.cwd, workflow.worktreePath)),
-	);
-	if (containing[0]) return loadEligible(containing[0].identifier, options.verb);
-
-	const repository = await repositoryIdentity(options.exec, options.cwd);
 	if (!repository) {
 		return {
 			status: "error",
 			message: `Run /workflow-${options.verb} inside a Git repository, or pass a workflow identifier.`,
 		};
 	}
+	const workflows = await listCompletedWorkflows();
 	const repositoryWorkflows = workflows.filter(
 		(workflow) => workflow.gitCommonDir === repository.commonDir,
 	);

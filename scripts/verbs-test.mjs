@@ -14,6 +14,7 @@ const implementationWorkflow = await jiti.import(new URL("../src/index.ts", impo
 });
 const storage = await jiti.import(new URL("../src/storage.ts", import.meta.url).pathname);
 const dashboardServer = await jiti.import(new URL("../src/dashboard-server.ts", import.meta.url).pathname);
+const { readReviewSourceFingerprint } = await jiti.import(new URL("../src/review-selection.ts", import.meta.url).pathname);
 
 const validPlan = `# Implementation plan
 
@@ -115,6 +116,13 @@ function createHarness(repositoryRoot, worktreePath, workflowBranch) {
 	const switches = [];
 	const userMessages = [];
 	const reviewRequests = [];
+	const toolChanges = [];
+	const modelChanges = [];
+	const thinkingChanges = [];
+	const sessionNames = [];
+	const executions = [];
+	let currentCtx;
+	let generation = 0;
 	let activeTools = ["read", "bash", "edit", "write"];
 	let switchCancelled = false;
 	let pullRequests = [];
@@ -126,11 +134,20 @@ function createHarness(repositoryRoot, worktreePath, workflowBranch) {
 	let confirmResult = true;
 	let selectChoice = (options) => options[0];
 
+	function install() {
+	commands.clear();
+	events.clear();
+	const ownGeneration = ++generation;
+	const assertCurrent = () => assert.equal(ownGeneration, generation, "retired extension API used after session replacement");
 	const pi = {
 		appendEntry(customType, data) {
+			assertCurrent();
 			entries.push({ customType, data });
+			currentCtx?.sessionManager.getBranch().push({ type: "custom", customType, data });
 		},
 		exec: async (command, args, options = {}) => {
+			assertCurrent();
+			executions.push({ command, args });
 			if (command === "gh") {
 				if (args[0] === "pr" && args[1] === "list") {
 					return {
@@ -150,9 +167,10 @@ function createHarness(repositoryRoot, worktreePath, workflowBranch) {
 			}
 			assert.equal(command, "git");
 			const cwd = args[1];
-			const gitArgs = args.slice(2);
+			const gitArgs = args[2] === "-c" ? args.slice(4) : args.slice(2);
 			if (gitArgs[0] === "rev-parse" && gitArgs[1] === "--show-toplevel") {
-				return { code: 0, stdout: `${cwd === worktreePath ? worktreePath : repositoryRoot}\n`, stderr: "" };
+				const root = cwd.includes("/.worktrees/") ? cwd.split("/.worktrees/")[0] + "/.worktrees/" + cwd.split("/.worktrees/")[1].split("/")[0] : repositoryRoot;
+				return { code: 0, stdout: `${root}\n`, stderr: "" };
 			}
 			if (gitArgs[0] === "rev-parse" && gitArgs[1] === "--path-format=absolute") {
 				return { code: 0, stdout: `${join(repositoryRoot, ".git")}\n`, stderr: "" };
@@ -173,6 +191,17 @@ function createHarness(repositoryRoot, worktreePath, workflowBranch) {
 				return ancestorCheck(gitArgs[2], gitArgs[3]) ? { code: 0, stdout: "", stderr: "" } : { code: 1, stdout: "", stderr: "" };
 			}
 			if (gitArgs[0] === "status") return { code: 0, stdout: worktreeStatus, stderr: "" };
+			if (gitArgs[0] === "log" || gitArgs[0] === "rev-list") {
+				assert.ok(gitArgs.some((arg) => arg.includes("exclude") && arg.includes(".workflows")), "content HEAD excludes workflow bookkeeping");
+				return { code: 0, stdout: `${headCommit}\n`, stderr: "" };
+			}
+			if (gitArgs[0] === "show-ref" || (gitArgs[0] === "rev-parse" && gitArgs.includes("--verify"))) return { code: 1, stdout: "", stderr: "" };
+			if (gitArgs[0] === "ls-files") {
+				const bundle = `.workflows/${cwd.split("/").at(-1)}`;
+				return { code: 0, stdout: ["plan.md", "metadata.json", "versions/0001.md", "clarifications.json"].map((name) => `${bundle}/${name}\0`).join(""), stderr: "" };
+			}
+			if (gitArgs[0] === "diff") return { code: gitArgs.includes("--quiet") && gitArgs.includes("--cached") ? 1 : 0, stdout: "", stderr: "" };
+			if (gitArgs[0] === "add" || gitArgs[0] === "commit") return { code: 0, stdout: "", stderr: "" };
 			if (gitArgs[0] === "worktree" && gitArgs[1] === "add") {
 				await mkdir(gitArgs[4], { recursive: true });
 				return { code: 0, stdout: "", stderr: "" };
@@ -186,7 +215,7 @@ function createHarness(repositoryRoot, worktreePath, workflowBranch) {
 			}
 			throw new Error(`Unexpected git command: ${gitArgs.join(" ")} (${options.cwd ?? cwd})`);
 		},
-		getActiveTools: () => [...activeTools],
+		getActiveTools: () => { assertCurrent(); return [...activeTools]; },
 		on(name, handler) {
 			const handlers = events.get(name) ?? [];
 			handlers.push(handler);
@@ -199,12 +228,17 @@ function createHarness(repositoryRoot, worktreePath, workflowBranch) {
 		registerShortcut() {},
 		registerTool() {},
 		sendUserMessage(message) {
+			assertCurrent();
 			userMessages.push(message);
 		},
 		setActiveTools(tools) {
+			assertCurrent();
+			toolChanges.push([...tools]);
 			activeTools = [...tools];
 		},
-		setSessionName() {},
+		async setModel(model) { assertCurrent(); modelChanges.push(model); return true; },
+		setThinkingLevel(level) { assertCurrent(); thinkingChanges.push(level); },
+		setSessionName(name) { assertCurrent(); sessionNames.push(name); },
 	};
 	implementationWorkflow(pi, {
 		reviewAgentRunner: async (request) => {
@@ -212,6 +246,8 @@ function createHarness(repositoryRoot, worktreePath, workflowBranch) {
 			return reviewAgentRunner(request);
 		},
 	});
+	}
+	install();
 
 	function context(cwd, branch) {
 		return {
@@ -232,12 +268,17 @@ function createHarness(repositoryRoot, worktreePath, workflowBranch) {
 			switchSession: async (sessionFile, options = {}) => {
 				switches.push(sessionFile);
 				if (switchCancelled) return { cancelled: true };
+				const saved = await sessionEntries(sessionFile);
+				await emit("session_shutdown", currentCtx, { reason: "resume" });
+				const replacement = context(saved[0].cwd, saved.slice(1));
+				await emit("session_start", replacement, { reason: "resume" });
 				await options.withSession?.({
+					...replacement,
 					sendUserMessage: async (message) => {
+						assert.equal(currentCtx, replacement, "kickoff uses the replacement context after session_start");
+						const instructions = await emit("before_agent_start", replacement, { systemPrompt: "Replacement session" });
+						assert.ok(instructions?.systemPrompt, "role is restored before kickoff");
 						userMessages.push(message);
-					},
-					ui: {
-						notify: (message, level) => notifications.push({ message, level }),
 					},
 				});
 				return { cancelled: false };
@@ -267,13 +308,20 @@ function createHarness(repositoryRoot, worktreePath, workflowBranch) {
 		};
 	}
 
-	async function emit(name, ctx) {
-		// Pi restores each session's own tool set before session_start fires.
-		if (name === "session_start") activeTools = ["read", "bash", "edit", "write"];
-		for (const handler of events.get(name) ?? []) await handler({}, ctx);
+	async function emit(name, ctx = currentCtx, event = {}) {
+		if (name === "session_start") {
+			// A replacement loads a new extension instance, not just a new context.
+			if (currentCtx && currentCtx !== ctx) install();
+			currentCtx = ctx;
+			activeTools = ["read", "bash", "edit", "write"];
+		}
+		let result;
+		for (const handler of events.get(name) ?? []) result = await handler(event, ctx) ?? result;
+		return result;
 	}
 
-	async function run(command, args, ctx) {
+	async function run(command, args = "", ctx = currentCtx) {
+		assert.equal(ctx, currentCtx, "commands must use the current replacement context");
 		return commands.get(command).handler(args, ctx);
 	}
 
@@ -291,6 +339,8 @@ function createHarness(repositoryRoot, worktreePath, workflowBranch) {
 		switches,
 		userMessages,
 		reviewRequests,
+		toolChanges, modelChanges, thinkingChanges, sessionNames, executions,
+		currentContext: () => currentCtx,
 		getActiveTools: () => [...activeTools],
 		setPullRequest(value) {
 			pullRequests = [{ headRefOid: headCommit, ...value }];
@@ -331,11 +381,7 @@ async function writeCompletedWorkflow(identifier, options = {}) {
 	const workflowBranch = `workflow/${identifier}`;
 	await mkdir(join(repositoryRoot, ".git", "info"), { recursive: true });
 	if (options.createWorktree !== false) await mkdir(worktreePath, { recursive: true });
-	const files = storage.workflowFiles(identifier);
-	await mkdir(files.versions, { recursive: true });
-	await writeFile(files.plan, validPlan, "utf8");
-	await writeFile(join(files.versions, "0001.md"), validPlan, "utf8");
-	await writeFile(files.clarifications, '{"version":1,"entries":[]}\n', "utf8");
+	const files = storage.workflowFiles(identifier, worktreePath);
 	const metadata = {
 		version: storage.WORKFLOW_METADATA_VERSION,
 		identifier,
@@ -348,14 +394,16 @@ async function writeCompletedWorkflow(identifier, options = {}) {
 		workflowBranch,
 		worktreePath,
 		createdAt: options.createdAt ?? "2026-01-01T00:00:00.000Z",
+		approvedPlanVersion: 1,
 		...options.metadata,
 	};
-	await storage.writeCompletedWorkflowMetadata(metadata);
+	await storage.createWorkflow(files, validPlan, metadata);
+	await storage.registerWorkflow(metadata);
 	return { files, metadata, repositoryRoot, worktreePath, workflowBranch };
 }
 
 async function readMetadata(identifier) {
-	return JSON.parse(await readFile(storage.workflowFiles(identifier).metadata, "utf8"));
+	return storage.readCompletedWorkflowMetadata(identifier);
 }
 
 async function sessionEntries(sessionFile) {
@@ -374,28 +422,101 @@ async function sessionPhase(sessionFile) {
 const REVIEW_READY_WIDGET = "implementation-workflow-review-ready-notice";
 
 try {
-	// Planning completes through /workflow-implement: freeze, worktree, session switch.
+	// /workflow-brief attaches context, not a role, and preserves the existing session.
+	for (const approved of [false, true]) {
+		const workflow = await writeCompletedWorkflow(`brief-${approved ? "approved" : "draft"}`, {
+			metadata: { approvedPlanVersion: approved ? 1 : undefined },
+		});
+		const harness = createHarness(workflow.repositoryRoot, workflow.worktreePath, workflow.workflowBranch);
+		const ctx = harness.context(join(workflow.worktreePath, "src"), []);
+		await harness.emit("session_start", ctx);
+		const before = {
+			tools: harness.getActiveTools(), toolChanges: harness.toolChanges.length,
+			models: harness.modelChanges.length, thinking: harness.thinkingChanges.length,
+			names: harness.sessionNames.length,
+			plan: await readFile(workflow.files.plan, "utf8"),
+			metadata: await readFile(workflow.files.metadata, "utf8"),
+			clarifications: await readFile(workflow.files.clarifications, "utf8"),
+		};
+		await harness.run("workflow-brief");
+		assert.equal(harness.currentContext(), ctx);
+		assert.equal(harness.switches.length, 0);
+		assert.deepEqual(harness.getActiveTools(), before.tools);
+		assert.equal(harness.toolChanges.length, before.toolChanges);
+		assert.equal(harness.modelChanges.length, before.models);
+		assert.equal(harness.thinkingChanges.length, before.thinking);
+		assert.equal(harness.sessionNames.length, before.names);
+		assert.deepEqual(harness.entries.at(-1), {
+			customType: "implementation-workflow-binding", data: { identifier: workflow.metadata.identifier },
+		});
+		assert.ok(!harness.entries.some(({ customType }) => customType === "implementation-workflow-phase"));
+		const prompt = harness.userMessages.at(-1);
+		for (const file of [workflow.files.metadata, workflow.files.plan, workflow.files.clarifications]) assert.ok(prompt.includes(file));
+		assert.match(prompt, /then wait for my next task/);
+		assert.match(prompt, approved ? /The plan is approved/ : /NOT approved/);
+		assert.equal(await readFile(workflow.files.plan, "utf8"), before.plan);
+		assert.equal(await readFile(workflow.files.metadata, "utf8"), before.metadata);
+		assert.equal(await readFile(workflow.files.clarifications, "utf8"), before.clarifications);
+		assert.ok(!harness.executions.some(({ args }) => args.includes("add") || args.includes("commit")));
+
+		// Only the custom binding must survive resume/compaction; full plans are not injected each turn.
+		const resumed = harness.context(ctx.cwd, [{ type: "custom", ...harness.entries.at(-1) }]);
+		await harness.emit("session_start", resumed);
+		const restored = await harness.emit("before_agent_start", resumed, { systemPrompt: "Base instructions" });
+		assert.ok(restored.systemPrompt.startsWith("Base instructions\n"));
+		assert.ok(restored.systemPrompt.includes(workflow.files.plan));
+		assert.ok(!restored.systemPrompt.includes(validPlan));
+		assert.equal(harness.sessionNames.length, before.names);
+		if (!approved) {
+			await storage.writeCompletedWorkflowMetadata({ ...workflow.metadata, approvedPlanVersion: 1 });
+			const updated = await harness.emit("before_agent_start", resumed, { systemPrompt: "Base" });
+			assert.match(updated.systemPrompt, /The plan is approved/);
+			assert.doesNotMatch(updated.systemPrompt, /NOT approved/);
+		}
+	}
+
+	// Historical committed bundles without an active marker must never be auto-selected.
 	{
-		const repositoryRoot = join(temporaryRoot, "planning-repository");
+		const workflow = await writeCompletedWorkflow("brief-historical");
+		await rm(storage.activeWorkflowMarkerPath(workflow.worktreePath));
+		const harness = createHarness(workflow.repositoryRoot, workflow.worktreePath, workflow.workflowBranch);
+		await harness.emit("session_start", harness.context(workflow.worktreePath, []));
+		await harness.run("workflow-brief");
+		assert.equal(harness.userMessages.length, 0);
+		assert.equal(harness.entries.length, 0);
+		assert.match(harness.notifications.at(-1).message, /No workflows/);
+	}
+
+	// A role-bound session can be briefed on itself without losing its role or tools.
+	{
+		const workflow = await writeCompletedWorkflow("brief-role");
+		const other = await writeCompletedWorkflow("brief-other-role", { repositoryRoot: workflow.repositoryRoot });
+		const harness = createHarness(workflow.repositoryRoot, workflow.worktreePath, workflow.workflowBranch);
+		await harness.emit("session_start", harness.context(workflow.repositoryRoot, [phaseEntry("review", { identifier: workflow.metadata.identifier })]));
+		const tools = harness.getActiveTools();
+		await harness.run("workflow-brief");
+		assert.deepEqual(harness.getActiveTools(), tools);
+		assert.ok(!tools.includes("write"));
+		assert.equal(harness.switches.length, 0);
+		const messageCount = harness.userMessages.length;
+		await harness.run("workflow-brief", other.metadata.identifier);
+		assert.equal(harness.userMessages.length, messageCount);
+		assert.match(harness.notifications.at(-1).message, /already has a role in another workflow/);
+	}
+
+	// Planning already owns its worktree; /workflow-implement approves and switches sessions.
+	{
 		const identifier = "workflow-verbs";
-		const worktreePath = join(repositoryRoot, ".worktrees", identifier);
-		const workflowBranch = `workflow/${identifier}`;
-		await mkdir(join(repositoryRoot, ".git", "info"), { recursive: true });
-		const draftId = "planning-draft";
-		await storage.createDraft(storage.draftFiles(draftId), validPlan, {
-			version: storage.WORKFLOW_METADATA_VERSION,
-			draftId,
-			description: "Untangle the workflow",
-			ask: "Untangle the workflow into explicit verbs.",
-			createdAt: "2026-01-01T00:00:00.000Z",
+		const { repositoryRoot, worktreePath, workflowBranch } = await writeCompletedWorkflow(identifier, {
+			metadata: { approvedPlanVersion: undefined },
 		});
 		const harness = createHarness(repositoryRoot, worktreePath, workflowBranch);
 		assert.deepEqual(
 			[...harness.commands.keys()],
-			["workflow-plan", "workflow-implement", "workflow-review", "workflow-revise", "workflow-cleanup", "workflow-dashboard"],
+			["workflow-plan", "workflow-implement", "workflow-brief", "workflow-review", "workflow-revise", "workflow-cleanup", "workflow-dashboard"],
 		);
 		harness.setHeadCommit("base000");
-		const ctx = harness.context(repositoryRoot, [phaseEntry("planning", { draftId })]);
+		const ctx = harness.context(worktreePath, [phaseEntry("planning", { identifier })]);
 		await harness.emit("session_start", ctx);
 
 		await harness.run("workflow-implement", "some-other-workflow", ctx);
@@ -408,6 +529,8 @@ try {
 		assert.equal("state" in metadata, false, "completed metadata records facts, not lifecycle state");
 		assert.equal(metadata.baseCommit, "base000");
 		assert.equal(metadata.worktreePath, worktreePath);
+		assert.equal(metadata.approvedPlanVersion, 1);
+		assert.ok(!harness.executions.some(({ args }) => args.includes("worktree") && args.includes("add")), "implementation does not create another worktree");
 		assert.match(harness.userMessages.at(-1), /Implement the plan/);
 		assert.deepEqual((await sessionPhase(harness.switches[0])).data, {
 			phase: "implementation",
@@ -415,15 +538,15 @@ try {
 		});
 
 		// Re-entry: /workflow-implement from any session bound to the workflow starts a fresh implementation session.
-		const implementationCtx = harness.context(worktreePath, [phaseEntry("implementation", { identifier })]);
-		await harness.emit("session_start", implementationCtx);
-		await harness.run("workflow-implement", "", implementationCtx);
+		const implementationCtx = harness.currentContext();
+		assert.notEqual(implementationCtx, ctx);
+		await harness.run("workflow-implement");
 		assert.equal(harness.switches.length, 2);
 
 		// /workflow-plan refuses to run in a session bound to a workflow.
-		await harness.run("workflow-plan", "", implementationCtx);
+		await harness.run("workflow-plan");
 		assert.match(harness.notifications.at(-1).message, /belongs to workflow workflow-verbs/);
-		await harness.emit("session_shutdown", implementationCtx);
+		await harness.emit("session_shutdown");
 	}
 
 	// Slug generation must not send reasoning.effort=none to always-reasoning models,
@@ -443,16 +566,10 @@ try {
 		const repositoryRoot = join(temporaryRoot, identifier);
 		const worktreePath = join(repositoryRoot, ".worktrees", identifier);
 		await mkdir(join(repositoryRoot, ".git", "info"), { recursive: true });
-		const draft = storage.draftFiles(identifier);
-		await storage.createDraft(draft, validPlan, {
-			version: storage.WORKFLOW_METADATA_VERSION,
-			draftId: identifier,
-			description: "Generate a slug with supported reasoning",
-			ask: "Complete planning with an always-reasoning model.",
-			createdAt: "2026-01-01T00:00:00.000Z",
-		});
 		const harness = createHarness(repositoryRoot, worktreePath, `workflow/${identifier}`);
-		const ctx = harness.context(repositoryRoot, [phaseEntry("planning", { draftId: identifier })]);
+		const ask = "Start planning with an always-reasoning model.";
+		harness.setEditorResult(ask);
+		const ctx = harness.context(repositoryRoot, []);
 		ctx.model = {
 			id: "gpt-6-astra",
 			name: "GPT-6 Astra",
@@ -474,6 +591,7 @@ try {
 			assert.equal(model, ctx.model, "slug generation keeps the selected model");
 			assert.equal(options.cacheRetention, "none");
 			assert.ok(options.sessionId);
+			assert.ok(context.messages[0].content[0].text.includes(ask), "slug generation uses the submitted ask");
 			if (model.api !== "openai-responses") {
 				assert.equal(options.reasoningEffort, expectedEffort, name);
 				return { stopReason: "stop", content: [{ type: "text", text: identifier }] };
@@ -508,7 +626,7 @@ try {
 			}).result();
 		};
 		await harness.emit("session_start", ctx);
-		await harness.run("workflow-implement", "", ctx);
+		await harness.run("workflow-plan", "", ctx);
 		assert.equal(harness.switches.length, 1, JSON.stringify(harness.notifications));
 		assert.equal(completionCalls, 1, "a supported effort succeeds without retrying");
 		if (ctx.model.api === "openai-responses") {
@@ -517,8 +635,11 @@ try {
 		}
 		assert.equal(ctx.thinkingLevel, "high", "slug generation does not change session thinking");
 		assert.equal((await readMetadata(identifier)).worktreePath, worktreePath);
-		assert.equal(await readFile(storage.workflowFiles(identifier).plan, "utf8"), validPlan);
-		await harness.emit("session_shutdown", ctx);
+		assert.equal(await readFile(storage.workflowFiles(identifier).plan, "utf8"), "# Implementation plan\n");
+		assert.equal((await readMetadata(identifier)).approvedPlanVersion, undefined);
+		assert.equal((await readMetadata(identifier)).ask, ask);
+		assert.deepEqual((await sessionPhase(harness.switches[0])).data, { phase: "planning", identifier });
+		await harness.emit("session_shutdown");
 	}
 
 	// A settled implementation turn suggests /workflow-review only when the worktree is clean with new commits.
@@ -586,7 +707,7 @@ try {
 		]);
 		await harness.emit("session_start", ctx);
 		await harness.run("workflow-review", "", ctx);
-		assert.equal(harness.switches.length, 1);
+		assert.equal(harness.switches.length, 1, JSON.stringify(harness.notifications));
 		assert.deepEqual((await sessionPhase(harness.switches[0])).data, {
 			phase: "review",
 			identifier: workflow.metadata.identifier,
@@ -604,10 +725,8 @@ try {
 		assert.ok(!firstRunRoles.includes("incremental-scope"), "the first review is a full review");
 
 		// Reuse: the same commits are never re-reviewed.
-		const reviewCtx = harness.context(workflow.worktreePath, [
-			phaseEntry("review", { identifier: workflow.metadata.identifier }),
-		]);
-		await harness.emit("session_start", reviewCtx);
+		const reviewCtx = harness.currentContext();
+		assert.notEqual(reviewCtx, ctx);
 		assert.equal(harness.getActiveTools().includes("edit"), false, "review sessions stay read-only");
 		harness.reviewRequests.length = 0;
 		await harness.run("workflow-review", "", reviewCtx);
@@ -633,10 +752,8 @@ try {
 			baseRefName: "main",
 			headRefName: workflow.workflowBranch,
 		});
-		const revisionCtx = harness.context(workflow.worktreePath, [
-			phaseEntry("revision", { identifier: workflow.metadata.identifier }),
-		]);
-		await harness.emit("session_start", revisionCtx);
+		const revisionCtx = harness.currentContext();
+		assert.notEqual(revisionCtx, reviewCtx);
 		assert.equal(harness.getActiveTools().includes("edit"), true);
 		assert.equal(harness.getActiveTools().includes("workflow_questions"), true);
 		await harness.emit("agent_settled", revisionCtx);
@@ -656,7 +773,7 @@ try {
 			baseRefName: "main",
 			headRefName: workflow.workflowBranch,
 		});
-		harness.setAncestorCheck((ancestor) => ancestor === "base000");
+		harness.setAncestorCheck((ancestor, descendant) => ancestor === "base000" || ancestor === descendant);
 		harness.reviewRequests.length = 0;
 		const secondRevisionCtx = harness.context(workflow.worktreePath, [
 			phaseEntry("revision", { identifier: workflow.metadata.identifier }),
@@ -717,7 +834,7 @@ try {
 			pullRequestUrls: ["https://example.test/pull/20"],
 			baseCommit: "base000",
 			headCommit: "head111",
-			sourceFingerprint: "irrelevant",
+			sourceFingerprint: await readReviewSourceFingerprint(workflow.files, workflow.metadata.ask),
 			generatedAt: "2026-01-02T00:00:00.000Z",
 			overallResult: {
 				summary: "Fine.",
@@ -752,19 +869,18 @@ try {
 		});
 		assert.equal((await sessionEntries(harness.switches[0]))[0].cwd, workflow.repositoryRoot);
 
-		const cleanupHarness = createHarness(workflow.repositoryRoot, workflow.worktreePath, workflow.workflowBranch);
-		const cleanupCtx = cleanupHarness.context(workflow.repositoryRoot, [cleanupPhase]);
-		await cleanupHarness.emit("session_start", cleanupCtx);
+		assert.equal(harness.currentContext().cwd, workflow.repositoryRoot);
 		assert.equal(await storage.pathExists(workflow.worktreePath), false);
+		assert.equal(await harness.emit("before_agent_start", harness.currentContext(), { systemPrompt: "Base" }), undefined, "completed cleanup does not keep reading removed files");
 		assert.ok(
-			cleanupHarness.entries.some(
+			harness.entries.some(
 				(entry) =>
 					entry.customType === "implementation-workflow-completion" &&
 					entry.data.title === "Workflow cleanup complete",
 			),
 		);
 		assert.equal(
-			cleanupHarness.entries.at(-1).customType,
+			harness.entries.at(-1).customType,
 			"implementation-workflow-phase",
 			"finished cleanup records the completed session phase",
 		);
@@ -804,7 +920,7 @@ try {
 		await harness.emit("session_start", ctx);
 		await harness.run("workflow-cleanup", "", ctx);
 		assert.equal(harness.confirmations.length, 1);
-		assert.match(harness.confirmations[0].message, /branch changed after the latest review/);
+		assert.match(harness.confirmations[0].message, /branch or workflow sources changed after the latest review/);
 		assert.equal(await storage.pathExists(workflow.worktreePath), true, "a declined confirmation keeps the worktree");
 	}
 
@@ -843,7 +959,7 @@ try {
 
 		// A cleaned-up worktree is reported clearly.
 		await rm(first.worktreePath, { recursive: true, force: true });
-		await harness.run("workflow-implement", "shared-first", ctx);
+		await harness.run("workflow-implement", "shared-first");
 		assert.match(harness.notifications.at(-1).message, /no worktree/i);
 	}
 } finally {
@@ -851,4 +967,4 @@ try {
 	await rm(temporaryRoot, { recursive: true, force: true });
 }
 
-console.log("Verbs test passed: plan, implement, review, revise, and cleanup verbs run from live workflow state.");
+console.log("Verbs test passed: briefing preserves sessions; plan, implement, review, revise, and cleanup use live workflow state.");

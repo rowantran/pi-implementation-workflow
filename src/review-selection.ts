@@ -1,4 +1,15 @@
+import { createHash } from "node:crypto";
 import type { WorkflowReviewReport } from "./review-report.ts";
+import { readText, type WorkflowFiles } from "./storage.ts";
+
+export function reviewSourceFingerprint(ask: string, plan: string, clarifications: string): string {
+	return createHash("sha256").update(JSON.stringify([ask, plan, clarifications])).digest("hex");
+}
+
+export async function readReviewSourceFingerprint(files: WorkflowFiles, ask: string): Promise<string> {
+	const [plan, clarifications] = await Promise.all([readText(files.plan), readText(files.clarifications)]);
+	return reviewSourceFingerprint(ask, plan, clarifications);
+}
 
 /** The live inputs that a review of the current delivery would be generated from. */
 export interface ReviewInputsSnapshot {

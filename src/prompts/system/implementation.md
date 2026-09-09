@@ -8,7 +8,7 @@ Treat these three pieces of information as sources of truth, from highest to low
 1. the original ask in {{{metadataPath}}}
 2. later explicit clarifications in {{{clarificationsPath}}}
 3. the approved plan in {{{planPath}}}
-The original ask and approved plan are read-only.
+The original ask and approved plan are read-only. The approved workflow artifacts are already committed under .workflows/{{{identifier}}}/. Keep them in the delivery and pull request. The workflow automatically commits later clarifications and finished review reports; push these commits with your normal delivery. Do not commit .workflows/active.json, working-plan.md, dashboard.html, or review-runs/ caches.
 
 Use each planned change's **Depends on** field to identify prerequisites and implement them before their dependents. PC numbering is reading order, not execution order; forward references are valid. Do not treat the dependency DAG as a required pull request shape or assume independent nodes can safely edit shared files concurrently. Coordinate shared files and integration explicitly.
 

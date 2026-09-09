@@ -44,7 +44,9 @@ The command opens a required multiline editor. Submit a non-empty ask to start p
 /workflow-plan describe the issue
 ```
 
-If planning is already active, continue through normal conversation instead of running `/workflow-plan` again. A session that already belongs to a frozen workflow refuses `/workflow-plan`; start a fresh session instead.
+After you submit the ask, the extension generates a stable slug from it, records the current branch and commit as the base, creates branch `workflow/<identifier>` and worktree `<repository>/.worktrees/<identifier>`, and switches to a planning session there. It warns first if the original checkout has uncommitted files: those files are not copied into the worktree. Cancelling the editor creates no workflow files, branch, or worktree.
+
+If planning is already active, continue through normal conversation instead of running `/workflow-plan` again. A session or worktree that already belongs to a workflow refuses another `/workflow-plan`; start a fresh session in the original checkout instead. The slug never changes as the plan evolves; its English description can change.
 
 The extension saves the submitted ask verbatim as immutable workflow metadata, starts `plan.md` and `working-plan.md` with only the implementation-plan title, and sends the ask as the planning kickoff message. After each `workflow_update_plan` call, its output includes the HTTP dashboard link. It never opens the browser automatically. The extension serves a single-page dashboard styled with the Isara design system. It has:
 
@@ -97,22 +99,20 @@ When the plan is ready, run the suggested next command in the planning session:
 /workflow-implement
 ```
 
-From the planning session, this freezes the plan and creates the workspace:
+From the planning session, this approves the saved plan in the existing worktree:
 
-1. requires the plan's separate English description to have been saved;
-2. warns before excluding uncommitted files from the original checkout;
-3. shows a live progress checklist while it generates the final plan slug and creates the worktree;
-4. freezes the plan and its version history under `~/.pi/agent/workflows/<identifier>/`;
-5. preserves the planning dashboard URL as a redirect to the completed workflow dashboard;
-6. creates branch `workflow/<identifier>`;
-7. creates `<repository>/.worktrees/<identifier>`;
-8. creates and switches to a separate worktree-bound implementation session.
+1. requires a saved English description, a valid plan, and no unsaved working-plan changes;
+2. records the approved plan version in metadata;
+3. makes the initial workflow-artifact commit under `.workflows/<identifier>/`, including the original ask, plan, complete version history, and clarifications;
+4. creates and switches to a separate implementation session in the same worktree.
 
-The separate slug-generation request uses `low` reasoning for OpenAI-compatible APIs, clamped to the selected model's declared supported levels. This avoids disabling reasoning on models that require it and does not change the session's thinking level. Other APIs keep their default behavior.
+The artifact commit includes only that workflow's durable files; it does not consume unrelated staged changes. Git commit failures leave planning recoverable and do not start implementation. The base commit, slug, artifact paths, and dashboard URL remain unchanged.
+
+The separate slug-generation request at planning startup uses `low` reasoning for OpenAI-compatible APIs, clamped to the selected model's declared supported levels. This avoids disabling reasoning on models that require it and does not change the session's thinking level. Other APIs keep their default behavior.
 
 The planning conversation remains saved and does not enter implementation context. Running `/workflow-implement` again later — from any session — starts a fresh implementation session in the existing worktree.
 
-Implementation inspects three durable sources before it acts: the immutable original ask in `metadata.json`, the frozen approved scope in `plan.md`, and later explicit answers in `clarifications.json`. If the approved plan has material ambiguity, the agent asks through `workflow_questions`. Submitted answers are appended verbatim to `clarifications.json` and shown in the dashboard. Selected answers retain the exact option label; custom answers retain the exact submitted text. Cancelled questionnaires are not stored.
+Implementation inspects three durable sources before it acts: the immutable original ask in `metadata.json`, the frozen approved scope in `plan.md`, and later explicit answers in `clarifications.json`. If the approved plan has material ambiguity, the agent asks through `workflow_questions`. Submitted answers are appended verbatim to `clarifications.json`, committed locally, and shown in the dashboard. Selected answers retain the exact option label; custom answers retain the exact submitted text. Cancelled questionnaires are not stored.
 
 The implementer chooses the lightest reviewable delivery. A small cohesive plan uses one pull request. A larger plan can use a linear stack through Graphite, GitHub's native stack tooling, or ordinary Git branches. The initial `workflow/<identifier>` branch is always the bottom branch. Its pull request targets the recorded base branch; every later pull request targets the branch directly below it; and the checked-out branch remains the stack tip. Planning does not add subplans or pull request boundaries.
 
@@ -138,7 +138,9 @@ The review progress display nests a live status row under the active stage for e
 Reviews are derived artifacts with two storage layers:
 
 - `review-runs/` is the work-in-progress cache of raw per-agent outputs, keyed by commit range and a fingerprint of the original ask, approved plan, and clarifications. A retry reuses every valid completed result, so a synthesis failure does not repeat the earlier reviews. It is safe to delete; deleting it only costs recomputation.
-- `reviews/` is the append-only history of finished reports. Each saved report is the synthesized review of one commit range. `review.json` and `review.md` always mirror the newest report and feed the default **Review** tab in the browser dashboard.
+- `reviews/` is the committed, append-only history of finished reports. Each saved report is the synthesized review of one commit range. `review.json` and `review.md` always mirror the newest report and feed the default **Review** tab in the browser dashboard.
+
+The extension commits finished reports locally, but never pushes automatically. Push the workflow branch to include those commits in the pull request. Implementation and revision agents include artifact commits in their normal push. Reviews, readiness reminders, and dashboard staleness ignore trailing `.workflows/`-only commits, so saving a report does not invalidate that same report. Delivery may accept an unpushed artifact-only suffix when the remote pull request tip is its ancestor and the implementation content is identical; unpushed code changes still block review.
 
 Running `/workflow-review` again selects the cheapest correct behavior from the saved artifacts and Git history — never an error:
 
@@ -151,6 +153,18 @@ The report and dashboard list every pull request from bottom to top. Review uses
 The review session keeps the implementation conversation out of review context, disables `edit` and `write`, and announces the completed report through the dashboard link. A durable transcript card explains how to ask about findings, request changes with `/workflow-revise`, or clean up with `/workflow-cleanup`.
 
 ## Side flows
+
+### Brief any agent session
+
+```text
+/workflow-brief [identifier]
+```
+
+Run this in an existing side-agent session to load the workflow's original ask, saved plan, explicit user clarifications, and latest review when available. The agent reads the context, confirms which workflow and plan status it loaded, then waits for your task. It does not start implementation or advance the workflow.
+
+Briefing does not create a session, change its working directory, rename it, assign a role, select a model, or change its tools. Its workflow association survives resume and compaction. Artifact paths remain available on later turns, so the agent can read updated sources rather than rely on a stale summary. During planning, the briefing explicitly identifies the plan as unapproved and points out any separate working draft. Side agents must coordinate edits because they share the worktree.
+
+An explicit identifier selects a workflow; otherwise the active marker in the current worktree takes priority over a saved session association. A role-bound session cannot be briefed on a different workflow.
 
 ### Revise
 
@@ -166,16 +180,20 @@ Revision requires only the plan and the worktree — it works straight after imp
 /workflow-cleanup
 ```
 
-Cleanup removes the worktree directory and its Git worktree registration, keeping the local branches, remote branches, pull requests, and saved workflow state. It asks for confirmation when the worktree has uncommitted changes (they would be discarded) or when no saved review covers the current head commit. When the current session lives inside the worktree, the command switches Pi back to the original repository first and removes the worktree from there; otherwise it removes the worktree in place. A high-contrast completion card confirms the result.
+Cleanup first commits any pending durable workflow artifacts, including an unfinished saved plan. If that commit fails, cleanup stops. It then removes the worktree directory and its Git worktree registration, keeping local branches, remote branches, and pull requests. The artifacts survive in the retained branch under `.workflows/<identifier>/`; no separate archive is needed. Push local artifact commits if you also want them in the pull request.
+
+Cleanup asks for confirmation before discarding other uncommitted changes or when no saved review covers the current implementation content. When the current session lives inside the worktree, the command switches Pi back to the original repository first and removes the worktree from there; otherwise it removes the worktree in place. The ignored active marker, working draft, dashboard, and review cache are removed with the worktree. The dashboard URL is no longer served after cleanup.
 
 ## Targeting a workflow
 
-Every worktree verb — `/workflow-implement`, `/workflow-review`, `/workflow-revise`, and `/workflow-cleanup` — resolves its target workflow in this order:
+Every worktree verb — `/workflow-brief`, `/workflow-implement`, `/workflow-review`, `/workflow-revise`, and `/workflow-cleanup` — resolves its target workflow in this order:
 
 1. an explicit identifier argument, with autocomplete over known workflows (for example `/workflow-review my-plan-slug`);
-2. the workflow already bound to the current session;
-3. the workflow whose worktree contains the current directory;
-4. otherwise, the workflows recorded for the current repository: a single match is used directly, and multiple matches open an interactive picker sorted by recency.
+2. the workflow identified by `.workflows/active.json` in the current worktree;
+3. the workflow already bound to the current session;
+4. otherwise, the active workflows recorded for the current repository: a single match is used directly, and multiple matches open an interactive picker sorted by recency.
+
+Committed `.workflows/` directories from previous workflows never imply an active workflow. Only the local active marker does. Opening a bound session or running a workflow command in an active worktree can rebuild a missing global locator.
 
 Because the argument position is reserved for identifiers, only `/workflow-plan` accepts inline prefill text.
 
@@ -184,11 +202,10 @@ Because the argument position is reserved for identifiers, only `/workflow-plan`
 The extension serves dashboards over HTTP in local and remote environments. Dashboard addresses are deterministic:
 
 ```text
-/implementation-workflow/drafts/<draft-id>
 /implementation-workflow/workflows/<workflow-id>
 ```
 
-A planning link redirects to the completed workflow address after promotion. The server reads the current `dashboard.html` from workflow storage for every request, so new plans and updated dashboards do not require registration or a server restart.
+The same link works from planning through review. On every request, the server resolves the identifier through the global locator index, validates the worktree's active marker, and reads its current `dashboard.html`. It does not serve historical bundles or removed worktrees.
 
 ## Configuration
 
@@ -280,8 +297,9 @@ One Pi process owns the temporary listener on the configured port. Other Pi proc
 
 ## Commands
 
-- `/workflow-plan [ask]` — open the required multiline ask editor, optionally prefilled with the argument, then start planning. The dashboard link appears after `workflow_update_plan` saves the first plan version.
-- `/workflow-implement [identifier]` — from a planning session, freeze the plan, create the worktree, and switch to an implementation session; otherwise start a fresh implementation session for an existing workflow.
+- `/workflow-plan [ask]` — open the required multiline ask editor, generate a stable slug, create the worktree, and start planning there. The dashboard link appears after `workflow_update_plan` saves the first plan version.
+- `/workflow-brief [identifier]` — load workflow context into the current session without assigning a role or changing its tools.
+- `/workflow-implement [identifier]` — from a planning session, approve and commit the plan and switch to implementation; otherwise start a fresh implementation session for an approved workflow.
 - `/workflow-review [identifier]` — validate the live delivery, generate or reuse the deterministic review, and switch to a read-only review session.
 - `/workflow-revise [identifier]` — open the required change-request editor and start a separate revision session in the workflow worktree.
 - `/workflow-cleanup [identifier]` — remove the workflow worktree, confirming first when work is uncommitted or unreviewed.
@@ -300,46 +318,39 @@ Revise: <identifier> · <description>
 Review: <identifier> · <description>
 ```
 
-Before planning has a final slug, the unavailable slug and separator are omitted:
-
-```text
-Planning: <description>
-```
+Planning has its stable slug from the start. Until a description is saved, the name is `Planning: <identifier>`. Briefing leaves the existing session name unchanged.
 
 After the first agent turn settles, the footer shows the suggested next command for the session's phase: `/workflow-implement when the plan is ready` while planning, `/workflow-review when ready` while implementing or revising, and `/workflow-revise to request changes · /workflow-cleanup to finish` while reviewing. When the checked-out workflow branch has an open pull request, the footer starts with a clickable `PR #<number>` link. For a stack, it shows only the pull request at the checked-out stack tip; implementation and revision guidance then reads `/workflow-review to review`. Implementation and revision sessions additionally show a persistent below-editor `/workflow-review` reminder whenever the worktree is clean with new commits. The review session shows a durable transcript card that identifies the session as read-only and explains how to ask about findings, request changes with `/workflow-revise`, or clean up with `/workflow-cleanup`. The footer reminder and review card stay visible if the session resumes.
 
 ## State
 
-Planning drafts are session-specific:
+Each active worktree contains one marker and a bundle under its stable identifier:
 
 ```text
-~/.pi/agent/workflows/.drafts/<session-id>/
-├── plan.md
-├── working-plan.md
-├── versions/
-├── clarifications.json
-├── dashboard.html
-└── metadata.json
+<worktree>/.workflows/
+├── active.json                 # ignored: active identifier and machine-local paths
+└── <identifier>/
 ```
 
-Completed plans use the same files under their final identifier:
+The bundle exists from planning onward. Earlier committed bundles may coexist, but are not active:
 
 ```text
-~/.pi/agent/workflows/<identifier>/
+<worktree>/.workflows/<identifier>/
 ├── plan.md
 ├── versions/
 │   ├── 0001.md
 │   ├── 0002.md
 │   └── ...
 ├── clarifications.json
-├── dashboard.html
+├── working-plan.md             # ignored: editable planning draft
+├── dashboard.html              # ignored: generated browser view
 ├── review.json
 ├── review.md
 ├── reviews/
 │   ├── 0001.json
 │   ├── 0001.md
 │   └── ...
-├── review-runs/
+├── review-runs/                # ignored: recomputable review cache
 │   └── <base>..<head>/<source-fingerprint>/
 │       ├── manifest.json
 │       ├── incremental-review-scope.json  # re-reviews only
@@ -352,11 +363,15 @@ Completed plans use the same files under their final identifier:
 └── metadata.json
 ```
 
-`metadata.json` records facts only: the verbatim, write-once original ask, the plain-English description, the repository root, the base branch and commit, the workflow branch, the worktree path, and — after a review discovers them — the pull requests in bottom-to-top order as a display cache. There is no stored lifecycle state, review round, or reviewed-commit bookkeeping; whether a workflow is implementable, reviewable, or stale is always derived from the worktree, Git history, open pull requests, and the saved review artifacts. Review files do not exist in planning drafts.
+Tracked `metadata.json` records portable facts: the verbatim, write-once original ask, identifier, English description, base branch and commit, workflow branch, creation time, and the approved plan version when one exists. An absent approval version means the plan is still being drafted. The local `active.json` marker contains the active identifier, repository/worktree paths, Git common directory, and discovered pull requests as a display cache. Machine paths and the marker are not committed.
 
-The metadata format is version 4. Workflow directories created by earlier releases of this extension are not migrated; they are skipped by workflow listing and rejected with a clear error when targeted directly.
+The global `~/.pi/agent/workflows/<identifier>.json` files are small location pointers, not artifact copies. The extension uses them for identifier lookup and shared dashboard routing. Authoritative files stay inside the worktree; after cleanup, their committed versions remain in Git. Pi conversation transcripts continue to use Pi's normal session storage.
 
-Only planning activates `workflow_update_plan`. Implementation and revision activate `workflow_questions`. Review sessions disable `edit` and `write`. The plan is referenced by path rather than injected into every model request. Review generation launches isolated read-only Pi processes with a maximum concurrency of four. The identifier remains the source of the plan-directory, branch, and worktree names.
+Git's local exclude file ignores only the marker and disposable draft/dashboard/review-cache files, not the entire `.workflows/` directory. Plans, versions, clarifications, metadata, and finished reports enter the branch and pull request. There is no stored review round or lifecycle state machine; reviewability and staleness are derived from Git, open pull requests, approval metadata, and saved reports.
+
+The metadata format is version 5. Workflow directories created by earlier releases are not migrated; they are skipped by workflow listing and rejected when targeted directly.
+
+Only planning activates `workflow_update_plan`. Implementation and revision activate `workflow_questions`. Review sessions disable `edit` and `write`. Briefing assigns no role and preserves the session's tools. The plan is referenced by path rather than injected into every model request. Review generation launches isolated read-only Pi processes with a maximum concurrency of four. The identifier remains the source of the artifact-directory, branch, and worktree names.
 
 ## Isara sandbox requirement
 

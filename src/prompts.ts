@@ -1,6 +1,8 @@
 import { readFileSync } from "node:fs";
 import Mustache from "mustache";
 
+const BRIEFING_SYSTEM_TEMPLATE = loadTemplate("system/briefing.md");
+const BRIEFING_USER_TEMPLATE = loadTemplate("injected-user-messages/briefing.md");
 const IMPLEMENTATION_SYSTEM_TEMPLATE = loadTemplate("system/implementation.md");
 const IMPLEMENTATION_USER_TEMPLATE = loadTemplate("injected-user-messages/implementation.md");
 const PLAN_SLUG_SYSTEM_TEMPLATE = loadTemplate("system/plan-slug.md");
@@ -19,6 +21,25 @@ const REVISION_SYSTEM_TEMPLATE = loadTemplate("system/revision.md");
 const REVISION_USER_TEMPLATE = loadTemplate("injected-user-messages/revision.md");
 const UPDATE_PLAN_TOOL_GUIDELINE = loadTemplate("system/update-plan-tool-guideline.md");
 const UPDATE_PLAN_TOOL_SNIPPET = loadTemplate("system/update-plan-tool-snippet.md");
+
+export interface BriefingValues {
+	identifier: string;
+	metadataPath: string;
+	planPath: string;
+	clarificationsPath: string;
+	workingPlanPath: string;
+	reviewPath: string;
+	worktreePath: string;
+	approved: boolean;
+}
+
+export function briefingSystemPrompt(values: BriefingValues): string {
+	return render(BRIEFING_SYSTEM_TEMPLATE, { ...values });
+}
+
+export function briefingUserMessage(values: BriefingValues): string {
+	return render(BRIEFING_USER_TEMPLATE, { context: briefingSystemPrompt(values) });
+}
 
 export function implementationSystemPrompt(values: {
 	identifier: string | undefined;
@@ -46,8 +67,8 @@ export function planSlugSystemPrompt(): string {
 	return PLAN_SLUG_SYSTEM_TEMPLATE;
 }
 
-export function planSlugUserMessage(plan: string): string {
-	return render(PLAN_SLUG_USER_TEMPLATE, { plan });
+export function planSlugUserMessage(ask: string): string {
+	return render(PLAN_SLUG_USER_TEMPLATE, { ask });
 }
 
 export function planningSystemPrompt(values: {

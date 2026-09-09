@@ -14,6 +14,7 @@ import {
 } from "./storage.ts";
 import type { WorkflowReviewReport } from "./review-report.ts";
 import { getPlanDependencyGraph } from "./planned-changes.ts";
+import { readReviewSourceFingerprint } from "./review-selection.ts";
 
 const DASHBOARD_TEMPLATE = readFileSync(new URL("./dashboard.html", import.meta.url), "utf8");
 
@@ -43,7 +44,10 @@ export async function writeWorkflowDashboard(files: WorkflowFiles, currentHeadCo
 		versions: versions.map(({ number, createdAt, content }) => ({ number, createdAt, content })),
 		clarifications: clarifications.entries,
 		review,
-		reviewStale: Boolean(review && currentHeadCommit && review.headCommit !== currentHeadCommit),
+		reviewStale: Boolean(review && (
+			(currentHeadCommit && review.headCommit !== currentHeadCommit) ||
+			review.sourceFingerprint !== await readReviewSourceFingerprint(files, metadata.ask)
+		)),
 	};
 	await atomicWrite(files.dashboard, renderWorkflowDashboard(data));
 }

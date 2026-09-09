@@ -1,253 +1,305 @@
 import assert from "node:assert/strict";
-import { access, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { execFile } from "node:child_process";
+import { access, cp, mkdir, mkdtemp, readFile, readdir, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { promisify } from "node:util";
 import { createJiti } from "jiti/static";
 
 const temporaryRoot = await mkdtemp(join(tmpdir(), "pi-workflow-storage-"));
 process.env.PI_CODING_AGENT_DIR = join(temporaryRoot, "agent");
-
 const jiti = createJiti(import.meta.url, { moduleCache: false });
+const storage = await jiti.import(new URL("../src/storage.ts", import.meta.url).pathname);
+const { resolveWorkflow, workflowIdentifierCompletions } = await jiti.import(
+	new URL("../src/workflow-select.ts", import.meta.url).pathname,
+);
 const {
-	WORKFLOW_METADATA_VERSION,
-	appendWorkflowReview,
-	createDraft,
-	ensureWorkflowFiles,
-	listCompletedWorkflows,
-	listSavedReviews,
-	promoteDraft,
-	readWorkflowMetadata,
-	readWorkflowReview,
-	workflowFiles,
-	writeDraftWorkflowMetadata,
-	writeWorkflowMetadata,
-} = await jiti.import(new URL("../src/storage.ts", import.meta.url).pathname);
-
-const workflowsRoot = join(temporaryRoot, "agent", "workflows");
-
-function filesAt(root) {
-	return {
-		root,
-		plan: join(root, "plan.md"),
-		workingPlan: join(root, "working-plan.md"),
-		versions: join(root, "versions"),
-		clarifications: join(root, "clarifications.json"),
-		dashboard: join(root, "dashboard.html"),
-		metadata: join(root, "metadata.json"),
-		review: join(root, "review.json"),
-		reviewMarkdown: join(root, "review.md"),
-		reviews: join(root, "reviews"),
-		reviewRuns: join(root, "review-runs"),
-	};
-}
+	WORKFLOW_METADATA_VERSION, activeWorkflowMarkerPath, appendClarifications, appendWorkflowReview,
+	atomicWrite, createDraft, createWorkflow, draftFiles, ensureWorkflowFiles, listCompletedWorkflows,
+	listPlanVersions, listSavedReviews, readActiveWorkflow, readCompletedWorkflowMetadata,
+	readWorkflowMetadata, readWorkflowReview, registerWorkflow, resolveWorkflowLocator,
+	savePlanVersion, unregisterWorkflow, workflowFiles, workflowRegistryFiles, workflowsRoot,
+	writeCompletedWorkflowMetadata, writeDraftWorkflowMetadata,
+} = storage;
+const exec = promisify(execFile);
+const ask = 'Preserve this ask exactly.\n\n- Keep <markup> & "quotes".\n';
+const initialPlan = "# Implementation plan\n\nKeep artifacts in the worktree.\n";
 
 async function exists(path) {
-	try {
-		await access(path);
-		return true;
-	} catch {
-		return false;
-	}
+	try { await access(path); return true; } catch { return false; }
 }
-
-function sampleReview(overrides = {}) {
+async function json(path) { return JSON.parse(await readFile(path, "utf8")); }
+async function writeJson(path, value) { await writeFile(path, `${JSON.stringify(value, null, 2)}\n`); }
+async function snapshot(root) {
+	const result = {};
+	for (const entry of await readdir(root, { withFileTypes: true })) {
+		const path = join(root, entry.name);
+		result[entry.name] = entry.isDirectory() ? await snapshot(path) : {
+			content: await readFile(path, "utf8"), mtime: (await stat(path)).mtimeMs,
+		};
+	}
+	return result;
+}
+function metadataFor(identifier, repositoryRoot, overrides = {}) {
 	return {
-		version: 2,
-		pullRequestUrls: ["https://example.test/pull/1"],
-		baseCommit: "abc123",
-		headCommit: "def456",
-		sourceFingerprint: "source789",
-		generatedAt: "2026-01-03T00:00:00.000Z",
-		overallResult: {
-			summary: "The implementation matches the plan.",
-			necessary: { status: "yes", explanation: "No unrelated work." },
-			sufficient: { status: "yes", explanation: "All planned behavior exists." },
-		},
+		version: WORKFLOW_METADATA_VERSION, identifier, description: `Plan ${identifier}`, ask,
+		repositoryRoot, gitCommonDir: join(repositoryRoot, ".git"), baseBranch: "main", baseCommit: "abc123",
+		workflowBranch: `workflow/${identifier}`, worktreePath: join(repositoryRoot, ".worktrees", identifier),
+		createdAt: "2026-01-01T00:00:00.000Z", ...overrides,
+	};
+}
+async function initialize(metadata) {
+	await mkdir(metadata.worktreePath, { recursive: true });
+	const files = workflowFiles(metadata.identifier, metadata.worktreePath);
+	await createWorkflow(files, initialPlan, metadata);
+	await registerWorkflow(metadata);
+	return files;
+}
+function sampleReview(overrides = {}) {
+	const yes = { status: "yes", explanation: "Covered by the plan." };
+	return {
+		version: 2, pullRequestUrls: ["https://example.test/pull/1"], baseCommit: "abc123",
+		headCommit: "def456", sourceFingerprint: "source789", generatedAt: "2026-01-03T00:00:00.000Z",
+		overallResult: { summary: "The implementation matches the plan.", necessary: yes, sufficient: yes },
 		overallConcerns: [],
-		holisticReview: {
-			summary: "The pull request is coherent as a whole.",
-			necessary: { status: "yes", explanation: "No unrelated work." },
-			sufficient: { status: "yes", explanation: "All planned behavior exists." },
-			concerns: [],
-		},
+		holisticReview: { summary: "Coherent implementation.", necessary: yes, sufficient: yes, concerns: [] },
 		plannedChanges: [{
-			id: "PC-01",
-			title: "Store the report",
-			what: "Store a report.",
-			why: "Keep the review durable.",
-			pseudocode: "save(report)",
-			review: {
-				id: "PC-01",
-				title: "Store the report",
-				walkthrough: "Stored as JSON and Markdown.",
-				necessary: { status: "yes", explanation: "Required by the plan." },
-				sufficient: { status: "yes", explanation: "Both files are stored." },
-				concerns: [],
+			id: "PC-01", title: "Store the report", what: "Store a report.", why: "Keep the review durable.",
+			pseudocode: "save(report)", review: {
+				id: "PC-01", title: "Store the report", walkthrough: "Stored as JSON and Markdown.",
+				necessary: yes, sufficient: yes, concerns: [],
 			},
 		}],
 		testingCriteria: {
-			originalCriteria: "Verify the stored report.",
-			review: {
-				summary: "The report storage test passes.",
-				satisfied: { status: "yes", explanation: "Both formats are verified." },
-				criteria: [{
-					criterion: "Verify the stored report.",
-					status: "yes",
-					explanation: "JSON and Markdown are read back.",
-					evidence: [{ location: "scripts/storage.mjs:1", description: "Verifies both report files." }],
-				}],
-				concerns: [],
+			originalCriteria: "Verify the stored report.", review: {
+				summary: "The report storage test passes.", satisfied: yes,
+				criteria: [{ criterion: "Verify the stored report.", status: "yes", explanation: "Both formats verified.",
+					evidence: [{ location: "scripts/storage.mjs:1", description: "Verifies report files." }] }], concerns: [],
 			},
-		},
-		...overrides,
+		}, ...overrides,
 	};
 }
 
 try {
-	const ask = 'Preserve this ask exactly.\n\n- Keep <markup> & "quotes".\n';
-	const draftId = "new-draft";
-	const draftFiles = filesAt(join(workflowsRoot, ".drafts", draftId));
-	const draftMetadata = {
-		version: WORKFLOW_METADATA_VERSION,
-		draftId,
-		description: "",
-		ask,
-		createdAt: "2026-01-01T00:00:00.000Z",
-	};
-	await createDraft(draftFiles, "# Implementation plan\n", draftMetadata);
-	assert.deepEqual(JSON.parse(await readFile(draftFiles.metadata, "utf8")), draftMetadata);
-	assert.equal(await readFile(draftFiles.plan, "utf8"), "# Implementation plan\n");
-	assert.equal(await readFile(draftFiles.workingPlan, "utf8"), "# Implementation plan\n");
-	assert.ok(!(await readFile(draftFiles.plan, "utf8")).includes(ask));
+	assert.equal(WORKFLOW_METADATA_VERSION, 5);
+	assert.throws(() => workflowFiles("unknown"), /no locator/);
+	for (const identifier of ["../escape", "a/b", "a\\b", "UPPER", ".", "a".repeat(81)]) {
+		assert.throws(() => workflowFiles(identifier, temporaryRoot), /identifiers/);
+		assert.throws(() => workflowRegistryFiles(identifier), /identifiers/);
+	}
+	assert.throws(() => workflowFiles("valid", "relative/path"), /absolute/);
 
-	// A direct plan edit is repaired back to the committed version history.
-	await writeFile(draftFiles.plan, "# Uncommitted direct change\n", "utf8");
-	await ensureWorkflowFiles(draftFiles);
-	assert.equal(await readFile(draftFiles.plan, "utf8"), "# Implementation plan\n");
-	assert.deepEqual(await readdir(draftFiles.versions), ["0001.md"]);
+	// Draft exports remain available for fixtures, not as the runtime planning flow.
+	const draft = draftFiles("fixture-draft");
+	const draftMetadata = { version: 5, draftId: "fixture-draft", description: "Fixture", ask, createdAt: "2026-01-01" };
+	await createDraft(draft, initialPlan, draftMetadata);
+	assert.deepEqual(await readWorkflowMetadata(draft), draftMetadata);
+	await assert.rejects(writeDraftWorkflowMetadata(draft, { ...draftMetadata, ask: "changed" }), /immutable/);
 
-	const missingAskFiles = filesAt(join(workflowsRoot, ".drafts", "missing-ask"));
-	await assert.rejects(
-		createDraft(missingAskFiles, "# Implementation plan\n", {
-			...draftMetadata,
-			draftId: "missing-ask",
-			ask: "  ",
-		}),
-		/non-empty original ask/,
-	);
-	assert.equal(await exists(missingAskFiles.root), false);
+	// A new workflow is allocated directly inside its worktree, without a global artifact directory.
+	const repositoryRoot = join(temporaryRoot, "repository");
+	await mkdir(repositoryRoot);
+	await exec("git", ["init", "-q", repositoryRoot]);
+	const metadata = metadataFor("local-planning", repositoryRoot);
+	const files = workflowFiles(metadata.identifier, metadata.worktreePath);
+	await mkdir(metadata.worktreePath, { recursive: true });
+	await createWorkflow(files, initialPlan, metadata);
+	assert.equal(files.root, join(metadata.worktreePath, ".workflows", metadata.identifier));
+	assert.equal(await exists(join(workflowsRoot(), metadata.identifier)), false);
+	assert.equal(await exists(activeWorkflowMarkerPath(metadata.worktreePath)), false);
+	assert.equal(await readFile(files.plan, "utf8"), initialPlan);
+	assert.equal(await readFile(files.workingPlan, "utf8"), initialPlan);
+	assert.deepEqual((await listPlanVersions(files)).map(({ number }) => number), [1]);
+	assert.deepEqual(await json(files.clarifications), { version: 1, entries: [] });
+	await assert.rejects(createWorkflow(files, "replacement", metadata), /already exists/);
+	assert.equal(await readFile(files.plan, "utf8"), initialPlan);
+	await assert.rejects(readWorkflowMetadata(files), /active marker/);
+	assert.equal(await readActiveWorkflow(metadata.worktreePath), undefined, "a directory alone is not active");
 
-	const describedDraft = { ...draftMetadata, description: "Store workflow asks in metadata" };
-	await writeDraftWorkflowMetadata(draftFiles, describedDraft);
-	assert.deepEqual(await readWorkflowMetadata(draftFiles), describedDraft);
-	await assert.rejects(
-		writeDraftWorkflowMetadata(draftFiles, { ...describedDraft, ask: "A replacement ask" }),
-		/original ask is immutable/,
-	);
-	assert.equal((await readWorkflowMetadata(draftFiles)).ask, ask);
+	await registerWorkflow(metadata);
+	assert.deepEqual(workflowFiles(metadata.identifier), files);
+	assert.deepEqual(await readCompletedWorkflowMetadata(metadata.identifier), metadata);
+	const markerPath = activeWorkflowMarkerPath(metadata.worktreePath);
+	const registry = workflowRegistryFiles(metadata.identifier);
+	const marker = await json(markerPath);
+	assert.deepEqual(resolveWorkflowLocator(metadata.identifier), marker);
+	assert.deepEqual(await json(registry.locator), marker);
+	assert.deepEqual(Object.keys(marker).sort(), ["gitCommonDir", "identifier", "repositoryRoot", "version", "worktreePath"]);
+	const portable = await json(files.metadata);
+	for (const key of ["repositoryRoot", "gitCommonDir", "worktreePath", "pullRequests", "state", "approvedPlanVersion"]) {
+		assert.equal(key in portable, false, `${key} must not be stored in planning metadata`);
+	}
+	assert.equal(portable.ask, ask);
+	assert.ok(!(await readFile(files.metadata, "utf8")).includes(temporaryRoot));
+	assert.equal((await listCompletedWorkflows()).length, 1, "planning workflows are discoverable");
+	// The common Git exclude applies to every linked worktree but not to bundle files.
+	const exclude = await readFile(join(metadata.gitCommonDir, "info", "exclude"), "utf8");
+	assert.match(exclude, /^\/\.workflows\/active\.json$/m);
+	const ignored = await exec("git", ["-C", repositoryRoot, "check-ignore", ".workflows/active.json"]);
+	assert.equal(ignored.stdout.trim(), ".workflows/active.json");
+	await assert.rejects(exec("git", ["-C", repositoryRoot, "check-ignore", `.workflows/${metadata.identifier}/plan.md`]));
 
-	// Planning completion writes completed metadata into the draft directory and promotes it.
-	const identifier = "promoted-workflow";
-	const completedFiles = workflowFiles(identifier);
-	const completedMetadata = {
-		version: WORKFLOW_METADATA_VERSION,
-		identifier,
-		description: describedDraft.description,
-		ask,
-		repositoryRoot: "/repository",
-		gitCommonDir: "/repository/.git",
-		baseBranch: "main",
-		baseCommit: "abc123",
-		workflowBranch: `workflow/${identifier}`,
-		worktreePath: `/repository/.worktrees/${identifier}`,
-		createdAt: describedDraft.createdAt,
-	};
-	await writeWorkflowMetadata(draftFiles, completedMetadata);
-	await promoteDraft(draftFiles, completedFiles);
-	assert.equal((await readWorkflowMetadata(completedFiles)).ask, ask);
-	assert.equal(await exists(completedFiles.workingPlan), false);
+	// Fresh Pi discovery rebuilds the index without changing the brief or active marker.
+	const beforeDiscovery = await snapshot(join(metadata.worktreePath, ".workflows"));
+	await rm(workflowsRoot(), { recursive: true });
+	assert.throws(() => workflowFiles(metadata.identifier), /no locator/);
+	assert.deepEqual(await readActiveWorkflow(metadata.worktreePath), metadata);
+	assert.deepEqual(await snapshot(join(metadata.worktreePath, ".workflows")), beforeDiscovery);
+	assert.deepEqual(await readdir(workflowsRoot()), [`${metadata.identifier}.json`]);
+	assert.deepEqual(workflowFiles(metadata.identifier), files);
 
-	// The pull request cache and the ask immutability guard.
-	const withPullRequests = {
-		...completedMetadata,
-		pullRequests: [{
-			number: 1,
-			url: "https://example.test/pull/1",
-			baseRefName: "main",
-			headRefName: `workflow/${identifier}`,
-		}],
-	};
-	await writeWorkflowMetadata(completedFiles, withPullRequests);
-	assert.deepEqual((await readWorkflowMetadata(completedFiles)).pullRequests, withPullRequests.pullRequests);
-	await assert.rejects(
-		writeWorkflowMetadata(completedFiles, { ...withPullRequests, ask: "changed" }),
-		/original ask is immutable/,
-	);
+	// Brief reads never repair direct edits or recreate missing files.
+	await writeFile(files.plan, "# A direct edit must survive a read\n");
+	await rm(files.workingPlan);
+	const beforeRead = await snapshot(files.root);
+	await ensureWorkflowFiles(files);
+	await readActiveWorkflow(metadata.worktreePath);
+	await readCompletedWorkflowMetadata(metadata.identifier);
+	await listCompletedWorkflows();
+	assert.deepEqual(await snapshot(files.root), beforeRead);
+	const secondPlan = await savePlanVersion(files, "# Second saved plan\n");
+	assert.equal(secondPlan.number, 2);
+	assert.equal(await readFile(files.plan, "utf8"), secondPlan.content);
+	assert.equal((await listPlanVersions(files))[0].content, initialPlan);
+	await writeCompletedWorkflowMetadata({ ...metadata, approvedPlanVersion: secondPlan.number });
+	assert.equal((await readCompletedWorkflowMetadata(metadata.identifier)).approvedPlanVersion, 2);
+	assert.equal((await json(files.metadata)).approvedPlanVersion, 2);
+	assert.deepEqual(await json(markerPath), marker, "approval does not replace runtime facts");
+	await assert.rejects(writeCompletedWorkflowMetadata({ ...metadata, approvedPlanVersion: 0 }), /invalid metadata/);
+	await assert.rejects(writeCompletedWorkflowMetadata({ ...metadata, ask: "changed" }), /immutable/);
+	await assert.rejects(writeCompletedWorkflowMetadata({ ...metadata, repositoryRoot: temporaryRoot }), /runtime paths/);
 
-	// Reviews are an append-only numbered history plus a latest export.
+	// Pull-request refreshes touch only the ignored display cache, not tracked metadata.
+	const approved = await readCompletedWorkflowMetadata(metadata.identifier);
+	const metadataBeforeCache = { content: await readFile(files.metadata, "utf8"), mtime: (await stat(files.metadata)).mtimeMs };
+	const pullRequests = [{ number: 1, url: "https://example.test/pull/1", baseRefName: "main", headRefName: metadata.workflowBranch }];
+	await writeCompletedWorkflowMetadata({ ...approved, pullRequests });
+	assert.deepEqual((await json(markerPath)).pullRequests, pullRequests);
+	assert.deepEqual((await readCompletedWorkflowMetadata(metadata.identifier)).pullRequests, pullRequests);
+	assert.equal((await stat(files.metadata)).mtimeMs, metadataBeforeCache.mtime);
+	assert.equal(await readFile(files.metadata, "utf8"), metadataBeforeCache.content);
+	await writeCompletedWorkflowMetadata(approved);
+	assert.deepEqual((await json(markerPath)).pullRequests, pullRequests, "omitting the cache preserves it");
+	assert.equal("pullRequests" in await json(registry.locator), false);
+
+	await appendClarifications(files, [{ id: "q1", label: "Scope", question: "Local?", answer: "Yes", custom: false, optionIndex: 0, answeredAt: "2026-01-02" }]);
+	assert.equal((await json(files.clarifications)).entries.length, 1);
 	const firstReview = sampleReview();
-	const firstSaved = await appendWorkflowReview(completedFiles, firstReview);
-	assert.equal(firstSaved.number, 1);
-	assert.deepEqual(await readWorkflowReview(completedFiles), firstReview);
-	assert.match(await readFile(completedFiles.reviewMarkdown, "utf8"), /## Review of planned changes/);
-	const secondReview = sampleReview({ headCommit: "fed654", generatedAt: "2026-01-04T00:00:00.000Z" });
-	const secondSaved = await appendWorkflowReview(completedFiles, secondReview);
-	assert.equal(secondSaved.number, 2);
-	assert.deepEqual(await readWorkflowReview(completedFiles), secondReview);
-	assert.deepEqual(
-		(await readdir(completedFiles.reviews)).sort(),
-		["0001.json", "0001.md", "0002.json", "0002.md"],
-	);
+	assert.equal((await appendWorkflowReview(files, firstReview)).number, 1);
+	assert.deepEqual(await readWorkflowReview(files), firstReview);
+	assert.match(await readFile(files.reviewMarkdown, "utf8"), /## Review of planned changes/);
+	const secondReview = sampleReview({ headCommit: "fed654" });
+	assert.equal((await appendWorkflowReview(files, secondReview)).number, 2);
+	await writeJson(join(files.reviews, "0003.json"), {});
+	assert.deepEqual((await listSavedReviews(files)).map(({ number }) => number), [1, 2]);
+	await writeJson(files.review, {});
+	await assert.rejects(readWorkflowReview(files), /invalid structure/);
 
-	// Unreadable saved reviews are skipped; unreadable latest reviews are surfaced.
-	await writeFile(join(completedFiles.reviews, "0003.json"), "{}\n", "utf8");
-	const savedReviews = await listSavedReviews(completedFiles);
-	assert.deepEqual(savedReviews.map(({ number }) => number), [1, 2]);
-	assert.deepEqual(savedReviews.map(({ report }) => report.headCommit), ["def456", "fed654"]);
-	await writeFile(completedFiles.review, "{}\n", "utf8");
-	await assert.rejects(readWorkflowReview(completedFiles), /invalid structure/);
+	// Historical tracked bundles never become active, even when a locator points at them.
+	const historicalRoot = join(temporaryRoot, "historical-checkout");
+	await mkdir(join(historicalRoot, ".workflows"), { recursive: true });
+	await cp(files.root, join(historicalRoot, ".workflows", metadata.identifier), { recursive: true });
+	assert.equal(await readActiveWorkflow(historicalRoot), undefined);
+	await assert.rejects(readCompletedWorkflowMetadata(metadata.identifier, historicalRoot), /active marker/);
+	await rm(markerPath);
+	assert.equal(await readActiveWorkflow(metadata.worktreePath), undefined);
+	assert.throws(() => workflowFiles(metadata.identifier), /active marker/);
+	assert.deepEqual(await listCompletedWorkflows(), []);
+	await writeJson(markerPath, { ...marker, pullRequests });
+	await writeJson(registry.locator, { ...marker, worktreePath: historicalRoot });
+	assert.throws(() => workflowFiles(metadata.identifier), /active marker/);
+	await readActiveWorkflow(metadata.worktreePath); // repairs the stale locator
 
-	// Listing skips drafts, invalid directories, and unsupported metadata versions.
-	const legacyIdentifier = "legacy-workflow";
-	const legacyFiles = workflowFiles(legacyIdentifier);
-	await mkdir(legacyFiles.root, { recursive: true });
-	await writeFile(
-		legacyFiles.metadata,
-		`${JSON.stringify({
-			...completedMetadata,
-			version: 3,
-			identifier: legacyIdentifier,
-			state: { phase: "reviewing", step: "active", round: 1 },
-			workflowBranch: `workflow/${legacyIdentifier}`,
-			worktreePath: `/repository/.worktrees/${legacyIdentifier}`,
-		})}\n`,
-		"utf8",
-	);
-	await assert.rejects(readWorkflowMetadata(legacyFiles), /unsupported metadata version 3/);
-	assert.deepEqual(
-		(await listCompletedWorkflows()).map(({ identifier: id }) => id),
-		[identifier],
-	);
+	// Unsupported metadata, invalid approval facts, and malformed markers fail closed.
+	const currentPortable = await json(files.metadata);
+	for (const patch of [{ version: 4 }, { ask: " " }, { approvedPlanVersion: -1 }, { repositoryRoot: "/machine/path" }]) {
+		await writeJson(files.metadata, { ...currentPortable, ...patch });
+		await assert.rejects(readWorkflowMetadata(files), patch.version ? /unsupported metadata version 4/ : /invalid metadata/);
+		assert.deepEqual(await listCompletedWorkflows(), []);
+	}
+	await writeJson(files.metadata, currentPortable);
+	for (const patch of [{ identifier: "../escape" }, { worktreePath: historicalRoot }, { version: 4 }]) {
+		await writeJson(markerPath, { ...marker, ...patch });
+		await assert.rejects(readActiveWorkflow(metadata.worktreePath), /active marker is invalid/);
+	}
+	await writeJson(markerPath, { ...marker, pullRequests });
 
-	// Metadata with a blank ask is rejected outright.
-	const statefulIdentifier = "blank-ask-workflow";
-	const statefulFiles = workflowFiles(statefulIdentifier);
+	// Registering another bundle in the same worktree never replaces its active workflow.
+	const conflicting = { ...metadata, identifier: "conflicting", workflowBranch: "workflow/conflicting" };
+	const conflictingFiles = workflowFiles(conflicting.identifier, conflicting.worktreePath);
+	await createWorkflow(conflictingFiles, initialPlan, conflicting);
+	await assert.rejects(registerWorkflow(conflicting), /already has active workflow/);
+	assert.equal((await readActiveWorkflow(metadata.worktreePath)).identifier, metadata.identifier);
+	const duplicate = { ...metadata, worktreePath: join(temporaryRoot, "duplicate-worktree") };
+	await mkdir(duplicate.worktreePath);
+	await createWorkflow(workflowFiles(duplicate.identifier, duplicate.worktreePath), initialPlan, duplicate);
+	await assert.rejects(registerWorkflow(duplicate), /already active/);
+	assert.equal(await exists(activeWorkflowMarkerPath(duplicate.worktreePath)), false);
 
-	await mkdir(statefulFiles.root, { recursive: true });
-	await writeFile(
-		statefulFiles.metadata,
-		`${JSON.stringify({
-			...completedMetadata,
-			identifier: statefulIdentifier,
-			ask: "  ",
-			workflowBranch: `workflow/${statefulIdentifier}`,
-			worktreePath: `/repository/.worktrees/${statefulIdentifier}`,
-		})}\n`,
-		"utf8",
-	);
-	await assert.rejects(readWorkflowMetadata(statefulFiles), /invalid metadata/);
+	// Resolution priority is explicit id, current marker, session binding, repository picker.
+	const other = metadataFor("other-planning", repositoryRoot, { createdAt: "2026-01-02T00:00:00.000Z" });
+	await initialize(other);
+	const roots = [metadata.worktreePath, other.worktreePath, historicalRoot];
+	const fakeExec = async (_command, args) => ({ code: 0, stderr: "", stdout: `${args.includes("--show-toplevel")
+		? roots.find((root) => args[1] === root || args[1].startsWith(`${root}/`)) ?? repositoryRoot : metadata.gitCommonDir}\n` });
+	const options = { exec: fakeExec, cwd: join(metadata.worktreePath, "src"), verb: "implement", sessionIdentifier: other.identifier,
+		select: async () => { throw new Error("Unexpected picker"); } };
+	assert.equal((await resolveWorkflow(options)).workflow.identifier, metadata.identifier);
+	assert.equal((await resolveWorkflow({ ...options, argument: other.identifier })).workflow.identifier, other.identifier);
+	await unregisterWorkflow(metadata.identifier);
+	assert.equal((await resolveWorkflow({ ...options, argument: metadata.identifier })).workflow.identifier, metadata.identifier);
+	assert.equal((await resolveWorkflow({ ...options, cwd: repositoryRoot })).workflow.identifier, other.identifier);
+	assert.equal((await resolveWorkflow({ ...options, cwd: historicalRoot })).workflow.identifier, other.identifier);
+	let pickerLabels;
+	const picked = await resolveWorkflow({ ...options, cwd: repositoryRoot, sessionIdentifier: undefined, select: async (_title, labels) => {
+		pickerLabels = labels; return labels[1];
+	} });
+	assert.equal(picked.workflow.identifier, metadata.identifier);
+	assert.deepEqual(pickerLabels, [`${other.identifier} — ${other.description}`, `${metadata.identifier} — ${metadata.description}`]);
+	assert.deepEqual((await workflowIdentifierCompletions("other-")).map(({ value }) => value), [other.identifier]);
+	assert.deepEqual((await listCompletedWorkflows()).map(({ identifier }) => identifier), [metadata.identifier, other.identifier]);
+	await rm(other.worktreePath, { recursive: true });
+	assert.equal((await listCompletedWorkflows()).length, 1);
+	assert.match((await resolveWorkflow({ ...options, argument: other.identifier })).message, /no worktree/);
+
+	// File and directory symlinks cannot redirect storage writes or discovery.
+	const outside = join(temporaryRoot, "outside");
+	await mkdir(outside);
+	const linkedWorktree = join(temporaryRoot, "linked-worktree");
+	await mkdir(linkedWorktree);
+	await symlink(outside, join(linkedWorktree, ".workflows"));
+	assert.throws(() => workflowFiles("escape", linkedWorktree), /symbolic links/);
+	await assert.rejects(readActiveWorkflow(linkedWorktree), /symbolic links/);
+	const outsideFile = join(outside, "keep.txt");
+	await writeFile(outsideFile, "keep");
+	await rm(files.plan);
+	await symlink(outsideFile, files.plan);
+	await assert.rejects(atomicWrite(files.plan, "clobber"), /symbolic links/);
+	assert.equal(await readFile(outsideFile, "utf8"), "keep");
+	await rm(files.plan);
+	await atomicWrite(files.plan, secondPlan.content);
+	await rm(files.versions, { recursive: true });
+	await symlink(outside, files.versions);
+	await assert.rejects(savePlanVersion(files, "escape"), /symbolic links/);
+	await assert.rejects(listPlanVersions(files), /symbolic links/);
+	await rm(files.versions);
+	await mkdir(files.versions);
+	await rm(registry.locator);
+	await symlink(outsideFile, registry.locator);
+	assert.throws(() => workflowFiles(metadata.identifier), /symbolic links/);
+	await rm(registry.locator);
+	await readActiveWorkflow(metadata.worktreePath);
+
+	// Atomic writes use unique temporary names and leave none behind on success.
+	await Promise.all(Array.from({ length: 16 }, (_, index) => atomicWrite(files.workingPlan, `writer-${index}`)));
+	assert.match(await readFile(files.workingPlan, "utf8"), /^writer-\d+$/);
+	assert.equal((await readdir(files.root)).some((name) => name.endsWith(".tmp")), false);
+	await unregisterWorkflow(metadata.identifier);
+	await unregisterWorkflow(metadata.identifier);
+	assert.equal(await exists(registry.locator), false);
+	assert.equal(await exists(files.metadata), true, "unregister only removes the locator");
+	assert.equal(await exists(markerPath), true);
 } finally {
 	await rm(temporaryRoot, { recursive: true, force: true });
 }
-
-console.log("Storage test passed: version-4 metadata stays fact-only, asks remain immutable, and reviews append.");
+console.log("Storage tests passed: v5 local bundles, portable metadata, marker-only discovery, selection, and guards.");

@@ -10,6 +10,8 @@ const temporaryRoot = await mkdtemp(join(tmpdir(), "pi-workflow-dashboard-notifi
 const agentDirectory = join(temporaryRoot, "agent");
 const repositoryRoot = join(temporaryRoot, "repository");
 const gitCommonDir = join(repositoryRoot, ".git");
+const identifier = "notification-workflow";
+const worktreePath = join(repositoryRoot, ".worktrees", identifier);
 process.env.PI_CODING_AGENT_DIR = agentDirectory;
 
 async function unusedPort() {
@@ -35,6 +37,20 @@ await writeFile(
 
 const jiti = createJiti(import.meta.url, { moduleCache: false });
 const implementationWorkflow = await jiti.import(new URL("../src/index.ts", import.meta.url).pathname, { default: true });
+const storage = await jiti.import(new URL("../src/storage.ts", import.meta.url).pathname);
+const dashboardServer = await jiti.import(new URL("../src/dashboard-server.ts", import.meta.url).pathname);
+await mkdir(worktreePath, { recursive: true });
+const metadata = {
+	version: storage.WORKFLOW_METADATA_VERSION,
+	identifier,
+	description: "Serve the shared dashboard",
+	ask: "Serve the workflow dashboard through one shared HTTP listener.",
+	repositoryRoot, gitCommonDir, worktreePath,
+	baseBranch: "main", baseCommit: "base000", workflowBranch: `workflow/${identifier}`,
+	createdAt: "2026-01-01T00:00:00.000Z",
+};
+await storage.createWorkflow(storage.workflowFiles(identifier, worktreePath), "# Implementation plan\n", metadata);
+await storage.registerWorkflow(metadata);
 
 function createHarness() {
 	const commands = new Map();
@@ -48,8 +64,11 @@ function createHarness() {
 		exec: async (command, args) => {
 			executions.push({ command, args });
 			assert.equal(command, "git", "dashboard presentation must not launch a browser command");
-			if (args.includes("--show-toplevel")) return { code: 0, stdout: `${repositoryRoot}\n`, stderr: "" };
+			if (args.includes("--show-toplevel")) return { code: 0, stdout: `${worktreePath}\n`, stderr: "" };
 			if (args.includes("--git-common-dir")) return { code: 0, stdout: `${gitCommonDir}\n`, stderr: "" };
+			if (args.includes("rev-parse") && args.includes("HEAD")) return { code: 0, stdout: "base000\n", stderr: "" };
+			if (args.includes("merge-base")) return { code: 0, stdout: "", stderr: "" };
+			if (args.includes("log") || args.includes("rev-list")) return { code: 0, stdout: "base000\n", stderr: "" };
 			throw new Error(`Unexpected git command: ${args.join(" ")}`);
 		},
 		getActiveTools: () => [...activeTools],
@@ -72,7 +91,7 @@ function createHarness() {
 
 function context(branch, mode = "rpc") {
 	return {
-		cwd: repositoryRoot,
+		cwd: worktreePath,
 		mode,
 		sessionManager: {
 			getBranch: () => branch,
@@ -101,14 +120,14 @@ let activeNotifications;
 try {
 	const first = createHarness();
 	activeNotifications = first.notifications;
-	const draftBranch = [{
+	const planningBranch = [{
 		type: "custom",
 		customType: "implementation-workflow-phase",
-		data: { phase: "planning", draftId: "notification-session" },
+		data: { phase: "planning", identifier },
 	}];
-	const rpcContext = context(draftBranch);
-	await first.commands.get("workflow-plan").handler("", rpcContext);
-	const expectedUrl = `http://127.0.0.1:${port}/implementation-workflow/drafts/notification-session`;
+	const rpcContext = context(planningBranch);
+	await emit(first, "session_start", { reason: "startup" }, rpcContext);
+	const expectedUrl = `http://127.0.0.1:${port}/implementation-workflow/workflows/${identifier}`;
 	assert.equal(dashboardNotifications(first.notifications).length, 0, "planning starts without a dashboard notification");
 	assert.equal(first.commands.get("workflow-dashboard").description, "Show the active implementation workflow dashboard link");
 	assert.match(first.shortcuts.get("ctrl+alt+d").description, /^Show /);
@@ -127,7 +146,7 @@ try {
 	setCapabilities({ images: "none", trueColor: false, hyperlinks: true });
 	const second = createHarness();
 	activeNotifications = second.notifications;
-	const tuiContext = context(draftBranch, "tui");
+	const tuiContext = context(planningBranch, "tui");
 	await emit(second, "session_start", { reason: "resume" }, tuiContext);
 	assert.equal(dashboardNotifications(second.notifications).length, 0, "planning resumes without an automatic notification");
 	assert.equal((await fetch(expectedUrl)).status, 200);
@@ -152,8 +171,9 @@ try {
 	process.env.PI_CODING_AGENT_DIR = invalidAgentDirectory;
 	const invalidConfigHarness = createHarness();
 	activeNotifications = invalidConfigHarness.notifications;
-	await invalidConfigHarness.commands.get("workflow-plan").handler("", context([]));
-	await invalidConfigHarness.commands.get("workflow-dashboard").handler("", context([]));
+	const invalidContext = context(planningBranch);
+	await emit(invalidConfigHarness, "session_start", { reason: "resume" }, invalidContext);
+	await invalidConfigHarness.commands.get("workflow-dashboard").handler("", invalidContext);
 	const dashboardConfigError = invalidConfigHarness.notifications.find(({ message }) =>
 		/Could not configure.*implementation-workflow.*config\.toml/i.test(message),
 	);
@@ -165,6 +185,7 @@ try {
 	assert.doesNotMatch(source, /xdg-open|pathToFileURL|\/c["']\s*,\s*["']start/i);
 	console.log("Dashboard-notification test passed: links replace browser launches, deduplicate automatically, and survive session switches.");
 } finally {
+	await dashboardServer.closeOwnedDashboardServer();
 	resetCapabilitiesCache();
 	await rm(temporaryRoot, { recursive: true, force: true });
 }

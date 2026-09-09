@@ -5,6 +5,8 @@ import { createJiti } from "jiti/static";
 
 // Use the actual dashboard renderer, HTTP server, and bundled browser assets.
 // Keep demo artifacts separate from real workflow storage and configuration.
+const root = await mkdtemp(join(tmpdir(), "pi-dependency-preview-"));
+process.env.PI_CODING_AGENT_DIR = join(root, "agent");
 const jiti = createJiti(import.meta.url, { moduleCache: false });
 const { renderWorkflowDashboard } = await jiti.import(new URL("../src/dashboard.ts", import.meta.url).pathname);
 const { ensureSharedDashboardServer, closeOwnedDashboardServer, dashboardServerConfig } = await jiti.import(
@@ -15,9 +17,11 @@ const config = dashboardServerConfig({
   configPath: "dependency graph preview (no configuration file)",
   dashboard: { mode: "local", listen_port: port },
 });
-const root = await mkdtemp(join(tmpdir(), "pi-dependency-preview-"));
+const storage = await jiti.import(new URL("../src/storage.ts", import.meta.url).pathname);
 const id = "plan-dependency-example";
-const directory = join(root, id);
+const worktreePath = join(root, "worktree");
+const files = storage.workflowFiles(id, worktreePath);
+const directory = files.root;
 const plan = await readFile(new URL("./fixtures/dependency-plan.md", import.meta.url), "utf8");
 const earlierPlan = plan.replace("PC-02, PC-04, PC-05, PC-06", "PC-02, PC-04, PC-05");
 const versions = [earlierPlan, plan].map((content, index) => ({
@@ -32,7 +36,16 @@ async function cleanup() {
 }
 
 try {
-  await mkdir(join(directory, "versions"), { recursive: true });
+  await mkdir(worktreePath, { recursive: true });
+  const metadata = {
+    version: storage.WORKFLOW_METADATA_VERSION, identifier: id,
+    description: "Show how planned changes fit together", ask: "Demonstrate a branching dependency plan.",
+    repositoryRoot: root, gitCommonDir: join(root, ".git"), worktreePath,
+    baseBranch: "main", baseCommit: "preview", workflowBranch: `workflow/${id}`,
+    createdAt: new Date().toISOString(),
+  };
+  await storage.createWorkflow(files, plan, metadata);
+  await storage.registerWorkflow(metadata);
   await Promise.all([
     writeFile(join(directory, "plan.md"), plan),
     ...versions.map((version) => writeFile(join(directory, "versions", `${String(version.number).padStart(4, "0")}.md`), version.content)),
@@ -45,7 +58,7 @@ try {
       clarifications: [],
     })),
   ]);
-  const result = await ensureSharedDashboardServer(config, root);
+  const result = await ensureSharedDashboardServer(config, storage.workflowsRoot());
   if (result.status === "error") throw new Error(result.message);
   console.log(`Dependency graph preview: ${config.publicBaseUrl}/implementation-workflow/workflows/${id}#plan/graph`);
   console.log(`Example plan and rendered dashboard: ${directory}`);
