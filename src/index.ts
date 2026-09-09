@@ -1,5 +1,4 @@
-import { createHash } from "node:crypto";
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, rm, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { clampThinkingLevel, type Message, uuidv7 } from "@earendil-works/pi-ai";
 import {
@@ -25,11 +24,13 @@ import {
 	ensureSharedDashboardServer,
 	type DashboardServerConfig,
 } from "./dashboard-server.ts";
-import { writeWorkflowDashboard, writeWorkflowDashboardRedirect } from "./dashboard.ts";
+import { writeWorkflowDashboard } from "./dashboard.ts";
 import { checkDelivery, findCurrentPullRequest } from "./delivery.ts";
 import {
+	commitWorkflowArtifacts,
 	gitValue,
-	installWorktreeExclude,
+	installWorkflowExcludes,
+	workflowContentHead,
 	isAncestor,
 	isPathInside,
 	repositoryIdentity,
@@ -50,6 +51,8 @@ import {
 	type UpdatePlanResult,
 } from "./plan-tool.ts";
 import {
+	briefingSystemPrompt,
+	briefingUserMessage,
 	implementationSystemPrompt,
 	implementationUserMessage,
 	planSlugSystemPrompt,
@@ -72,35 +75,35 @@ import {
 } from "./review.ts";
 import type { WorkflowReviewReport } from "./review-report.ts";
 import {
+	readReviewSourceFingerprint,
 	reviewCanSeedIncremental,
 	reviewIsCurrent,
+	reviewSourceFingerprint,
 	type ReviewInputsSnapshot,
 } from "./review-selection.ts";
 import {
 	appendClarifications,
 	appendWorkflowReview,
-	createDraft,
-	draftFiles,
+	createWorkflow,
 	ensureWorkflowFiles,
-	isDraftWorkflowMetadata,
+	listCompletedWorkflows,
+	listPlanVersions,
 	listSavedReviews,
 	pathExists,
-	promoteDraft,
+	readActiveWorkflow,
+	registerWorkflow,
 	readCompletedWorkflowMetadata,
 	readText,
 	readWorkflowReview,
 	savePlanVersion,
 	WORKFLOW_METADATA_VERSION,
 	type CompletedWorkflowMetadata,
-	type DraftWorkflowMetadata,
 	type SavedWorkflowReview,
 	type WorkflowClarification,
 	type WorkflowFiles,
 	workflowFiles,
 	workflowsRoot,
 	writeCompletedWorkflowMetadata,
-	writeDraftWorkflowMetadata,
-	writeWorkflowMetadata,
 } from "./storage.ts";
 import {
 	PHASE_REMINDER_ENTRY,
@@ -117,18 +120,18 @@ type SessionWorkflowPhase = "planning" | "implementation" | "review" | "revision
 
 interface WorkflowPhaseData {
 	phase: SessionWorkflowPhase;
-	draftId?: string;
 	identifier?: string;
 	/** Cleanup sessions: remove the worktree with --force after the user confirmed discarding changes. */
 	force?: boolean;
 }
 
 const PHASE_ENTRY = "implementation-workflow-phase";
+const BINDING_ENTRY = "implementation-workflow-binding";
 const DASHBOARD_SHORTCUT = "ctrl+alt+d";
 const WORKFLOW_BRANCH_PREFIX = "workflow/";
 const REVIEW_DISABLED_TOOLS = new Set(["edit", "write"]);
 
-type WorktreeVerb = "implement" | "review" | "revise" | "cleanup";
+type WorktreeVerb = "implement" | "review" | "revise" | "cleanup" | "brief";
 
 export interface ImplementationWorkflowDependencies {
 	reviewAgentRunner?: ReviewAgentRunner;
@@ -144,11 +147,10 @@ export default function implementationWorkflow(
 	const exec: ExecFn = (command, args, options) => pi.exec(command, args, options);
 
 	let phase: SessionWorkflowPhase | undefined;
-	let draftId: string | undefined;
 	let identifier: string | undefined;
+	let briefed = false;
 	let cleanupForce = false;
 	let metadata: CompletedWorkflowMetadata | undefined;
-	let draftMetadata: DraftWorkflowMetadata | undefined;
 	let activeFiles: WorkflowFiles | undefined;
 	let planDescription = "";
 	let baseTools: string[] = [];
@@ -166,16 +168,19 @@ export default function implementationWorkflow(
 		}
 		const files = activeFiles;
 		return withFileMutationQueue(files.workingPlan, async () => {
-			if (!draftMetadata) throw new Error("The workflow draft has no metadata.");
+			if (identifier) metadata = await readCompletedWorkflowMetadata(identifier);
+			if (!metadata || metadata.approvedPlanVersion !== undefined) {
+				throw new Error("Only an unapproved workflow plan can be updated.");
+			}
 			const plan = await readText(files.workingPlan);
 			const description = normalizePlanDescription(rawDescription);
 			const dependencyGraph = getPlanDependencyGraph(plan);
 			const dependencyWarning = dependencyGraph.status === "unavailable" ? dependencyGraph.reason : undefined;
 			const version = await savePlanVersion(files, plan);
-			draftMetadata = { ...draftMetadata, description };
-			await writeDraftWorkflowMetadata(files, draftMetadata);
+			metadata = { ...metadata, description };
+			await writeCompletedWorkflowMetadata(metadata);
 			planDescription = description;
-			pi.setSessionName(workflowSessionName("Planning", undefined, description));
+			pi.setSessionName(workflowSessionName("Planning", identifier, description));
 			await writeWorkflowDashboard(files);
 			let dashboardUrl: string | undefined;
 			let dashboardError: string | undefined;
@@ -199,6 +204,8 @@ export default function implementationWorkflow(
 			throw new Error("Implementation clarifications can only be saved during implementation or revision.");
 		}
 		await saveClarifications(activeFiles, result);
+		if (!metadata) throw new Error("The workflow has no metadata.");
+		await commitWorkflowArtifacts(exec, metadata, `Record workflow clarifications: ${metadata.identifier}`);
 		await writeWorkflowDashboard(activeFiles);
 	});
 
@@ -207,6 +214,17 @@ export default function implementationWorkflow(
 			const entry = entries[index];
 			if (entry.type === "custom" && entry.customType === PHASE_ENTRY) {
 				return entry.data as WorkflowPhaseData;
+			}
+		}
+		return undefined;
+	}
+
+	function latestBinding(entries: SessionEntry[]): string | undefined {
+		for (let index = entries.length - 1; index >= 0; index--) {
+			const entry = entries[index];
+			if (entry.type === "custom" && entry.customType === BINDING_ENTRY) {
+				const value = entry.data as { identifier?: unknown };
+				if (typeof value?.identifier === "string") return value.identifier;
 			}
 		}
 		return undefined;
@@ -224,7 +242,6 @@ export default function implementationWorkflow(
 
 	function appendPhase(data: WorkflowPhaseData): void {
 		phase = data.phase;
-		draftId = data.draftId;
 		identifier = data.identifier;
 		cleanupForce = data.force ?? false;
 		phaseReminderVisible = false;
@@ -277,7 +294,7 @@ export default function implementationWorkflow(
 		if (phaseReminderVisible) return;
 		if (phase !== "planning" && phase !== "implementation" && phase !== "revision" && phase !== "review") return;
 		phaseReminderVisible = true;
-		pi.appendEntry(PHASE_REMINDER_ENTRY, { phase, draftId, identifier });
+		pi.appendEntry(PHASE_REMINDER_ENTRY, { phase, identifier });
 		updatePhaseStatus(ctx);
 	}
 
@@ -372,7 +389,6 @@ export default function implementationWorkflow(
 
 	function activeDashboardReference() {
 		if (!activeFiles) return undefined;
-		if (draftId) return dashboardReference(activeFiles, "draft", draftId);
 		if (identifier) return dashboardReference(activeFiles, "workflow", identifier);
 		return undefined;
 	}
@@ -396,7 +412,7 @@ export default function implementationWorkflow(
 			ctx.ui.notify("No workflow dashboard is available in this session.", "info");
 			return;
 		}
-		const currentHead = metadata ? await gitValue(exec, metadata.worktreePath, ["rev-parse", "HEAD"]) : undefined;
+		const currentHead = metadata ? await workflowContentHead(exec, metadata) : undefined;
 		await writeWorkflowDashboard(activeFiles, currentHead);
 		if (dashboardAnnounced && !force) return;
 
@@ -429,7 +445,7 @@ export default function implementationWorkflow(
 		return false;
 	}
 
-	async function createPhaseSession(cwd: string, data: WorkflowPhaseData): Promise<string> {
+	async function createPhaseSession(cwd: string, data: WorkflowPhaseData, ctx: ExtensionContext): Promise<string> {
 		const manager = SessionManager.create(cwd);
 		const sessionFile = manager.getSessionFile();
 		const header = manager.getHeader();
@@ -437,6 +453,8 @@ export default function implementationWorkflow(
 		await mkdir(dirname(sessionFile), { recursive: true });
 		await writeFile(sessionFile, `${JSON.stringify(header)}\n`, { encoding: "utf8", flag: "wx" });
 		const persisted = SessionManager.open(sessionFile);
+		if (ctx.model?.provider && ctx.model.id) persisted.appendModelChange(ctx.model.provider, ctx.model.id);
+		if (ctx.thinkingLevel) persisted.appendThinkingLevelChange(ctx.thinkingLevel);
 		persisted.appendCustomEntry(PHASE_ENTRY, data);
 		return sessionFile;
 	}
@@ -445,15 +463,9 @@ export default function implementationWorkflow(
 		const workflowMetadata = await ensureWorkflowFiles(files);
 		activeFiles = files;
 		planDescription = workflowMetadata.description?.trim() ?? "";
-		if (isDraftWorkflowMetadata(workflowMetadata)) {
-			draftMetadata = workflowMetadata;
-			metadata = undefined;
-			currentPullRequest = undefined;
-		} else {
-			metadata = workflowMetadata;
-			draftMetadata = undefined;
-			currentPullRequest = workflowMetadata.pullRequests?.at(-1);
-		}
+		if (!("identifier" in workflowMetadata)) throw new Error("Legacy planning drafts are not supported.");
+		metadata = workflowMetadata;
+		currentPullRequest = workflowMetadata.pullRequests?.at(-1);
 		await writeWorkflowDashboard(files);
 	}
 
@@ -479,86 +491,109 @@ export default function implementationWorkflow(
 			ctx.ui.notify(result.message, "error");
 			return undefined;
 		}
-		if (!(await requireLaunchRepository(ctx, result.workflow))) return undefined;
+		if (verb !== "brief" && !(await requireLaunchRepository(ctx, result.workflow))) return undefined;
 		return result.workflow;
 	}
 
 	pi.registerCommand("workflow-plan", {
-		description: "Capture an ask in the multiline editor and start a persistent WHAT/WHY implementation plan",
+		description: "Capture an ask, create its worktree, and start a persistent implementation plan",
 		getArgumentCompletions: () => null,
 		handler: async (args, ctx) => {
 			await ctx.waitForIdle();
-
-			if (phase === "planning" && draftId) {
-				ctx.ui.notify(
-					"Workflow planning is already active. Continue planning through normal conversation instead of running /workflow-plan again.",
-					"info",
-				);
+			if (phase === "planning" && identifier) {
+				ctx.ui.notify("Workflow planning is already active. Continue planning through normal conversation instead of running /workflow-plan again.", "info");
 				return;
 			}
 			if (identifier) {
-				ctx.ui.notify(
-					`This session belongs to workflow ${identifier}. Start planning from a fresh session (/new).`,
-					"error",
-				);
+				ctx.ui.notify(`This session belongs to workflow ${identifier}. Start planning from a fresh session (/new) in the original checkout.`, "error");
 				return;
 			}
-
 			const repository = await repositoryIdentity(exec, ctx.cwd);
 			if (!repository) {
 				ctx.ui.notify("Workflow planning must start inside a Git repository.", "error");
 				return;
 			}
-
+			try {
+				const active = await readActiveWorkflow(repository.root);
+				if (active) {
+					ctx.ui.notify(`This worktree already has active workflow ${active.identifier}. Start a new plan in the original checkout.`, "error");
+					return;
+				}
+			} catch (error) {
+				ctx.ui.notify(errorMessage(error), "error");
+				return;
+			}
 			const ask = await ctx.ui.editor("Describe what this workflow should accomplish", args);
 			if (ask === undefined || !ask.trim()) {
 				ctx.ui.notify("Planning did not start because no ask was submitted.", "info");
 				return;
 			}
-
-			const nextDraftId = ctx.sessionManager.getSessionId().replaceAll(/[^a-zA-Z0-9-]/g, "-");
-			const files = draftFiles(nextDraftId);
-			if (await pathExists(files.root)) {
-				const existing = await ensureWorkflowFiles(files);
-				if (!isDraftWorkflowMetadata(existing) || existing.ask !== ask) {
-					ctx.ui.notify(
-						"Planning did not start because this session already has a draft with a different immutable original ask.",
-						"error",
-					);
-					return;
-				}
-			} else {
-				const initialMetadata: DraftWorkflowMetadata = {
-					version: WORKFLOW_METADATA_VERSION,
-					draftId: nextDraftId,
-					description: "",
-					ask,
-					createdAt: new Date().toISOString(),
-				};
-				await createDraft(files, `${PLAN_TITLE}\n`, initialMetadata);
+			const [baseBranch, baseCommit, status] = await Promise.all([
+				gitValue(exec, repository.root, ["branch", "--show-current"]),
+				gitValue(exec, repository.root, ["rev-parse", "HEAD"]),
+				worktreeStatus(exec, repository.root),
+			]);
+			if (!baseBranch || !baseCommit || status === undefined) {
+				ctx.ui.notify("Planning requires a named branch with a valid HEAD and readable Git status.", "error");
+				return;
 			}
+			if (status !== "" && !(await ctx.ui.confirm(
+				"Original checkout has uncommitted files",
+				"The worktree will start from the recorded HEAD and will not include those files. Continue?",
+			))) return;
 
-			appendPhase({ phase: "planning", draftId: nextDraftId });
-			metadata = undefined;
-			draftMetadata = undefined;
-			baseTools = pi
-				.getActiveTools()
-				.filter((name) => name !== WORKFLOW_QUESTION_TOOL && name !== WORKFLOW_UPDATE_PLAN_TOOL);
-			await applyPhaseOverride(ctx);
-			applyPhaseTools();
-			updatePhaseStatus(ctx);
-			pi.setSessionName("");
-			await prepareActivePlan(files);
-			pi.sendUserMessage(startPlanningUserMessage(ask));
+			let workflow: CompletedWorkflowMetadata;
+			try {
+				workflow = await runWorkflowProgress(ctx, "Starting workflow planning", ["Generating workflow slug", "Creating worktree"], async (progress) => {
+					const nextIdentifier = await uniqueIdentifier(ask, ctx, repository.root);
+					progress.complete(`Generated workflow slug: ${nextIdentifier}`);
+					const worktreePath = join(repository.root, ".worktrees", nextIdentifier);
+					const workflowBranch = `${WORKFLOW_BRANCH_PREFIX}${nextIdentifier}`;
+					const initial: CompletedWorkflowMetadata = {
+						version: WORKFLOW_METADATA_VERSION, identifier: nextIdentifier, description: "", ask,
+						repositoryRoot: repository.root, gitCommonDir: repository.commonDir,
+						baseBranch, baseCommit, workflowBranch, worktreePath, createdAt: new Date().toISOString(),
+					};
+					await installWorkflowExcludes(repository.commonDir);
+					await mkdir(dirname(worktreePath), { recursive: true });
+					const added = await exec("git", ["-C", repository.root, "worktree", "add", "-b", workflowBranch, worktreePath, baseCommit]);
+					// A failed add may be a race with another process. Never remove a branch or directory we did not create.
+					if (added.code !== 0) throw new Error(`Could not create worktree: ${added.stderr || added.stdout}`);
+					try {
+						await createWorkflow(workflowFiles(nextIdentifier, worktreePath), `${PLAN_TITLE}\n`, initial);
+						await registerWorkflow(initial);
+					} catch (error) {
+						const removed = await exec("git", ["-C", repository.root, "worktree", "remove", "--force", worktreePath]);
+						if (removed.code === 0) {
+							await exec("git", ["-C", repository.root, "branch", "-D", workflowBranch]);
+						}
+						throw new Error(`${errorMessage(error)}${removed.code === 0 ? "" : `; could not roll back worktree: ${worktreePath}`}`);
+					}
+					progress.complete("Created worktree");
+					return initial;
+				});
+			} catch (error) {
+				ctx.ui.notify(`Could not start planning: ${errorMessage(error)}`, "error");
+				return;
+			}
+			const sessionFile = await createPhaseSession(workflow.worktreePath, { phase: "planning", identifier: workflow.identifier }, ctx);
+			const switched = await ctx.switchSession(sessionFile, {
+				withSession: async (replacementCtx) => {
+					await replacementCtx.sendUserMessage(startPlanningUserMessage(ask));
+				},
+			});
+			if (switched.cancelled) {
+				ctx.ui.notify(`Planning worktree saved at ${workflow.worktreePath}. Resume the planning session at ${sessionFile}.`, "info");
+			}
 		},
 	});
 
 	pi.registerCommand("workflow-implement", {
-		description: "Freeze the current plan into a worktree, or start an implementation session for a workflow",
+		description: "Approve and commit the current plan, or start an implementation session for an approved workflow",
 		getArgumentCompletions: (prefix) => workflowIdentifierCompletions(prefix),
 		handler: async (args, ctx) => {
 			await ctx.waitForIdle();
-			if (phase === "planning" && draftId && activeFiles) {
+			if (phase === "planning" && identifier && activeFiles) {
 				if (args.trim()) {
 					ctx.ui.notify(
 						"This planning session freezes its own plan. Run /workflow-implement without an identifier.",
@@ -570,7 +605,7 @@ export default function implementationWorkflow(
 				return;
 			}
 			const workflow = await resolveTargetWorkflow(ctx, args, "implement");
-			if (!workflow) return;
+			if (!workflow || !requireApprovedPlan(ctx, workflow)) return;
 			const validation = await validateWorktree(exec, workflow);
 			if (validation) {
 				ctx.ui.notify(`Cannot start implementation: ${validation}.`, "error");
@@ -584,11 +619,18 @@ export default function implementationWorkflow(
 		ctx: ExtensionCommandContext,
 		workflow: CompletedWorkflowMetadata,
 	): Promise<void> {
+		// Retry an interrupted initial artifact commit before entering implementation.
+		try {
+			await commitWorkflowArtifacts(exec, workflow, `Save approved workflow artifacts: ${workflow.identifier}`);
+		} catch (error) {
+			ctx.ui.notify(`Cannot start implementation before committing its plan: ${errorMessage(error)}`, "error");
+			return;
+		}
 		const files = workflowFiles(workflow.identifier);
 		const sessionFile = await createPhaseSession(workflow.worktreePath, {
 			phase: "implementation",
 			identifier: workflow.identifier,
-		});
+		}, ctx);
 		await ctx.switchSession(sessionFile, {
 			withSession: async (replacementCtx) => {
 				await replacementCtx.sendUserMessage(
@@ -604,164 +646,87 @@ export default function implementationWorkflow(
 	}
 
 	async function freezePlanAndImplement(ctx: ExtensionCommandContext): Promise<void> {
-		if (!draftId || !activeFiles || !draftMetadata) {
-			ctx.ui.notify("This planning session has no workflow draft metadata.", "error");
+		if (!identifier || !activeFiles || !metadata) {
+			ctx.ui.notify("This planning session has no workflow metadata.", "error");
 			return;
 		}
-		const currentDraftMetadata = draftMetadata;
-		const draft = activeFiles;
-		const [plan, workingPlan] = await Promise.all([readText(draft.plan), readText(draft.workingPlan)]);
+		const workflow = await readCompletedWorkflowMetadata(identifier);
+		if (workflow.approvedPlanVersion !== undefined) {
+			await enterImplementationSession(ctx, workflow);
+			return;
+		}
+		const files = activeFiles;
+		const [plan, workingPlan] = await Promise.all([readText(files.plan), readText(files.workingPlan)]);
 		if (workingPlan !== plan) {
-			ctx.ui.notify(
-				`The working plan has uncommitted changes. Call ${WORKFLOW_UPDATE_PLAN_TOOL} before advancing to implementation.`,
-				"error",
-			);
+			ctx.ui.notify(`The working plan has uncommitted changes. Call ${WORKFLOW_UPDATE_PLAN_TOOL} before advancing to implementation.`, "error");
 			return;
 		}
-		const completionError = planningCompletionError(plan, planDescription);
+		const completionError = planningCompletionError(plan, workflow.description);
 		if (completionError) {
 			ctx.ui.notify(completionError, "error");
 			return;
 		}
-		const description = planDescription.trim();
-		const repository = await repositoryIdentity(exec, ctx.cwd);
-		if (!repository) {
-			ctx.ui.notify("The planning session is no longer inside a Git repository.", "error");
+		const validation = await validateWorktree(exec, workflow);
+		if (validation) {
+			ctx.ui.notify(`Cannot approve plan: ${validation}.`, "error");
 			return;
 		}
-		const [baseBranch, baseCommit] = await Promise.all([
-			gitValue(exec, repository.root, ["branch", "--show-current"]),
-			gitValue(exec, repository.root, ["rev-parse", "HEAD"]),
-		]);
-		if (!baseBranch || !baseCommit) {
-			ctx.ui.notify("Planning completion requires a named branch with a valid HEAD.", "error");
+		const latest = (await listPlanVersions(files)).at(-1);
+		if (!latest || latest.content !== plan) {
+			ctx.ui.notify(`The saved plan does not match its latest version. Save it again with ${WORKFLOW_UPDATE_PLAN_TOOL} before approval.`, "error");
 			return;
 		}
-
-		const statusResult = await pi.exec("git", ["-C", repository.root, "status", "--porcelain", "--untracked-files=all"]);
-		if (statusResult.code !== 0) {
-			ctx.ui.notify("Could not inspect the original checkout.", "error");
-			return;
-		}
-		const meaningfulChanges = statusResult.stdout
-			.split("\n")
-			.filter((line) => line && !line.slice(3).startsWith(".worktrees/"));
-		if (meaningfulChanges.length > 0) {
-			const confirmed = await ctx.ui.confirm(
-				"Original checkout has uncommitted files",
-				"The worktree will start from the recorded HEAD and will not include those files. Continue?",
-			);
-			if (!confirmed) return;
-		}
-
-		let result: {
-			nextIdentifier: string;
-			destination: WorkflowFiles;
-			nextMetadata: CompletedWorkflowMetadata;
-			dashboardWarnings: string[];
-		};
+		const approved: CompletedWorkflowMetadata = { ...workflow, approvedPlanVersion: latest.number };
 		try {
-			result = await runWorkflowProgress(
-				ctx,
-				"Completing planning",
-				["generating final plan slug", "creating worktree"],
-				async (progress) => {
-					let nextIdentifier: string;
-					try {
-						nextIdentifier = await uniqueIdentifier(plan, ctx);
-					} catch (error) {
-						progress.fail("Could not generate final plan slug");
-						throw new Error(`Could not generate final plan slug: ${errorMessage(error)}`);
-					}
-					progress.complete(`generated plan slug: ${nextIdentifier}`);
-
-					const destination = workflowFiles(nextIdentifier);
-					const worktreePath = join(repository.root, ".worktrees", nextIdentifier);
-					const workflowBranch = `${WORKFLOW_BRANCH_PREFIX}${nextIdentifier}`;
-					const nextMetadata: CompletedWorkflowMetadata = {
-						version: currentDraftMetadata.version,
-						identifier: nextIdentifier,
-						description,
-						ask: currentDraftMetadata.ask,
-						repositoryRoot: repository.root,
-						gitCommonDir: repository.commonDir,
-						baseBranch,
-						baseCommit,
-						workflowBranch,
-						worktreePath,
-						createdAt: currentDraftMetadata.createdAt,
-					};
-
-					await installWorktreeExclude(repository.commonDir);
-					await mkdir(dirname(worktreePath), { recursive: true });
-					const addResult = await pi.exec("git", [
-						"-C",
-						repository.root,
-						"worktree",
-						"add",
-						"-b",
-						workflowBranch,
-						worktreePath,
-						baseCommit,
-					]);
-					if (addResult.code !== 0) {
-						await pi.exec("git", ["-C", repository.root, "worktree", "remove", "--force", worktreePath]);
-						await pi.exec("git", ["-C", repository.root, "branch", "-D", workflowBranch]);
-						progress.fail("Could not create worktree");
-						throw new Error(`Could not create worktree:\n${addResult.stderr || addResult.stdout}`);
-					}
-					try {
-						await writeWorkflowMetadata(draft, nextMetadata);
-						await promoteDraft(draft, destination);
-					} catch (error) {
-						let restoreError: unknown;
-						if (await pathExists(draft.root)) {
-							try {
-								await writeDraftWorkflowMetadata(draft, currentDraftMetadata);
-							} catch (candidate) {
-								restoreError = candidate;
-							}
-						}
-						await pi.exec("git", ["-C", repository.root, "worktree", "remove", "--force", worktreePath]);
-						await pi.exec("git", ["-C", repository.root, "branch", "-D", workflowBranch]);
-						progress.fail("Could not save completed plan");
-						const restoreDetail = restoreError
-							? `; could not restore draft metadata: ${errorMessage(restoreError)}`
-							: "";
-						throw new Error(`Could not save completed plan: ${errorMessage(error)}${restoreDetail}`);
-					}
-
-					const dashboardWarnings: string[] = [];
-					try {
-						const config = await dashboardConfig();
-						const completedReference = dashboardReference(destination, "workflow", nextIdentifier);
-						await writeWorkflowDashboardRedirect(draft.dashboard, dashboardUrl(completedReference, config));
-					} catch (error) {
-						dashboardWarnings.push(`could not preserve the planning dashboard URL: ${errorMessage(error)}`);
-					}
-					try {
-						await writeWorkflowDashboard(destination);
-					} catch (error) {
-						dashboardWarnings.push(`could not refresh the completed workflow dashboard: ${errorMessage(error)}`);
-					}
-					progress.complete("created worktree");
-					return { nextIdentifier, destination, nextMetadata, dashboardWarnings };
-				},
-			);
+			await writeCompletedWorkflowMetadata(approved);
+			await commitWorkflowArtifacts(exec, approved, `Approve workflow plan: ${identifier}`);
 		} catch (error) {
-			ctx.ui.notify(`Could not complete planning: ${errorMessage(error)}`, "error");
+			// Approval is not complete until its initial artifact commit succeeds.
+			await writeCompletedWorkflowMetadata(workflow);
+			ctx.ui.notify(`Could not commit the approved plan: ${errorMessage(error)}`, "error");
 			return;
 		}
-
-		const { nextIdentifier, destination, nextMetadata, dashboardWarnings } = result;
-		appendPhase({ phase: "complete", identifier: nextIdentifier });
-		metadata = nextMetadata;
-		draftMetadata = undefined;
-		activeFiles = destination;
+		await rm(files.workingPlan, { force: true });
+		appendPhase({ phase: "complete", identifier });
+		metadata = approved;
 		updatePhaseStatus(ctx);
-		pi.setSessionName(workflowSessionName("Planning", nextIdentifier, nextMetadata.description));
-		if (dashboardWarnings.length > 0) ctx.ui.notify(dashboardWarnings.join("\n"), "warning");
-		await enterImplementationSession(ctx, nextMetadata);
+		await enterImplementationSession(ctx, approved);
+	}
+
+	function requireApprovedPlan(ctx: ExtensionContext, workflow: CompletedWorkflowMetadata): boolean {
+		if (workflow.approvedPlanVersion !== undefined) return true;
+		ctx.ui.notify(`Workflow ${workflow.identifier} is still being planned. Approve it with /workflow-implement in its planning session first.`, "error");
+		return false;
+	}
+
+	pi.registerCommand("workflow-brief", {
+		description: "Brief this session on a workflow without assigning a role or changing its tools",
+		getArgumentCompletions: (prefix) => workflowIdentifierCompletions(prefix),
+		handler: async (args, ctx) => {
+			await ctx.waitForIdle();
+			const workflow = await resolveTargetWorkflow(ctx, args, "brief");
+			if (!workflow) return;
+			if (phase && identifier && identifier !== workflow.identifier) {
+				ctx.ui.notify("This session already has a role in another workflow. Brief a fresh session instead.", "error");
+				return;
+			}
+			identifier = workflow.identifier;
+			briefed = true;
+			metadata = workflow;
+			activeFiles = workflowFiles(identifier, workflow.worktreePath);
+			pi.appendEntry(BINDING_ENTRY, { identifier });
+			pi.sendUserMessage(briefingUserMessage(briefingValues(workflow, activeFiles)));
+		},
+	});
+
+	function briefingValues(workflow: CompletedWorkflowMetadata, files: WorkflowFiles) {
+		return {
+			identifier: workflow.identifier,
+			metadataPath: files.metadata, planPath: files.plan, clarificationsPath: files.clarifications,
+			workingPlanPath: files.workingPlan, reviewPath: files.reviewMarkdown,
+			worktreePath: workflow.worktreePath,
+			approved: workflow.approvedPlanVersion !== undefined,
+		};
 	}
 
 	pi.registerCommand("workflow-review", {
@@ -770,7 +735,7 @@ export default function implementationWorkflow(
 		handler: async (args, ctx) => {
 			await ctx.waitForIdle();
 			const workflow = await resolveTargetWorkflow(ctx, args, "review");
-			if (!workflow) return;
+			if (!workflow || !requireApprovedPlan(ctx, workflow)) return;
 			const validation = await validateWorktree(exec, workflow);
 			if (validation) {
 				ctx.ui.notify(`Cannot review: ${validation}.`, "error");
@@ -793,7 +758,7 @@ export default function implementationWorkflow(
 			const sessionFile = await createPhaseSession(workflow.worktreePath, {
 				phase: "review",
 				identifier: workflow.identifier,
-			});
+			}, ctx);
 			await ctx.switchSession(sessionFile, {
 				withSession: async (replacementCtx) => {
 					replacementCtx.ui.notify("The implementation review is ready in the workflow dashboard.", "info");
@@ -807,6 +772,8 @@ export default function implementationWorkflow(
 		workflow: CompletedWorkflowMetadata,
 		files: WorkflowFiles,
 	): Promise<{ report: WorkflowReviewReport; reused: boolean }> {
+		// Recover a saved report or clarification whose prior Git commit failed.
+		await commitWorkflowArtifacts(exec, workflow, `Save workflow artifacts: ${workflow.identifier}`);
 		const delivery = await runWorkflowProgress(
 			ctx,
 			"Checking implementation delivery",
@@ -840,9 +807,7 @@ export default function implementationWorkflow(
 			pullRequestUrls: delivery.pullRequests.map(({ url }) => url),
 			baseCommit: workflow.baseCommit,
 			headCommit: delivery.headCommit,
-			sourceFingerprint: createHash("sha256")
-				.update(JSON.stringify([workflow.ask, plan, clarifications]))
-				.digest("hex"),
+			sourceFingerprint: reviewSourceFingerprint(workflow.ask, plan, clarifications),
 			testingCriteria: parseTestingCriteria(plan),
 			plannedChanges: parsePlannedChanges(plan).map(({ id, title }) => ({ id, title })),
 		};
@@ -917,8 +882,20 @@ export default function implementationWorkflow(
 							signal: ctx.signal,
 						}),
 				);
+				const [headAfterReview, statusAfterReview, sourcesAfterReview] = await Promise.all([
+					gitValue(exec, workflow.worktreePath, ["rev-parse", "HEAD"]),
+					worktreeStatus(exec, workflow.worktreePath),
+					readReviewSourceFingerprint(files, workflow.ask),
+				]);
+				if (headAfterReview !== delivery.deliveryHeadCommit || statusAfterReview !== "" || sourcesAfterReview !== inputs.sourceFingerprint) {
+					// Review agents read the live worktree. Do not cache evidence collected while it changed.
+					await rm(join(files.reviewRuns, `${workflow.baseCommit}..${delivery.headCommit}`, inputs.sourceFingerprint), { recursive: true, force: true });
+					throw new Error("The worktree or workflow sources changed during review. Wait for other agents to finish and run /workflow-review again.");
+				}
 				await appendWorkflowReview(files, report);
+				const artifactCommit = await commitWorkflowArtifacts(exec, workflow, `Save workflow review: ${workflow.identifier}`);
 				await writeWorkflowDashboard(files, delivery.headCommit);
+				if (artifactCommit) ctx.ui.notify("Review artifacts committed locally. Push the workflow branch to include them in the pull request.", "info");
 				progress.complete("Saved review report");
 				return { report, reused: false };
 			},
@@ -951,7 +928,7 @@ export default function implementationWorkflow(
 		handler: async (args, ctx) => {
 			await ctx.waitForIdle();
 			const workflow = await resolveTargetWorkflow(ctx, args, "revise");
-			if (!workflow) return;
+			if (!workflow || !requireApprovedPlan(ctx, workflow)) return;
 			const validation = await validateWorktree(exec, workflow);
 			if (validation) {
 				ctx.ui.notify(`Revision cannot start: ${validation}.`, "error");
@@ -960,6 +937,12 @@ export default function implementationWorkflow(
 			const request = await ctx.ui.editor("Describe the implementation changes to make");
 			if (request === undefined || !request.trim()) {
 				ctx.ui.notify("Revision did not start because no change request was submitted.", "info");
+				return;
+			}
+			try {
+				await commitWorkflowArtifacts(exec, workflow, `Save workflow artifacts: ${workflow.identifier}`);
+			} catch (error) {
+				ctx.ui.notify(`Cannot start revision before saving its workflow artifacts: ${errorMessage(error)}`, "error");
 				return;
 			}
 			const files = workflowFiles(workflow.identifier);
@@ -972,7 +955,7 @@ export default function implementationWorkflow(
 			const sessionFile = await createPhaseSession(workflow.worktreePath, {
 				phase: "revision",
 				identifier: workflow.identifier,
-			});
+			}, ctx);
 			await ctx.switchSession(sessionFile, {
 				withSession: async (replacementCtx) => {
 					await replacementCtx.sendUserMessage(
@@ -990,6 +973,21 @@ export default function implementationWorkflow(
 			await ctx.waitForIdle();
 			const workflow = await resolveTargetWorkflow(ctx, args, "cleanup");
 			if (!workflow) return;
+			const files = workflowFiles(workflow.identifier);
+			if (await pathExists(files.workingPlan) && await readText(files.workingPlan) !== await readText(files.plan)) {
+				const discardDraft = await ctx.ui.confirm(
+					"Working plan has unsaved changes",
+					`Cleanup preserves the saved plan, but discards working-plan.md. Save it with ${WORKFLOW_UPDATE_PLAN_TOOL} first to keep those edits. Discard the working draft?`,
+				);
+				if (!discardDraft) return;
+			}
+			try {
+				// Preserve unfinished planning too, before any destructive cleanup confirmation.
+				await commitWorkflowArtifacts(exec, workflow, `Preserve workflow artifacts: ${workflow.identifier}`);
+			} catch (error) {
+				ctx.ui.notify(`Cannot clean up before saving workflow artifacts: ${errorMessage(error)}`, "error");
+				return;
+			}
 			const status = await worktreeStatus(exec, workflow.worktreePath);
 			if (status === undefined) {
 				ctx.ui.notify("Could not inspect the workflow worktree.", "error");
@@ -1004,16 +1002,16 @@ export default function implementationWorkflow(
 				if (!confirmed) return;
 				force = true;
 			}
-			const files = workflowFiles(workflow.identifier);
 			const [review, headCommit] = await Promise.all([
 				readWorkflowReview(files).catch(() => undefined),
-				gitValue(exec, workflow.worktreePath, ["rev-parse", "HEAD"]),
+				workflowContentHead(exec, workflow),
 			]);
-			if (!review || !headCommit || review.headCommit !== headCommit) {
+			const sourcesCurrent = review?.sourceFingerprint === await readReviewSourceFingerprint(files, workflow.ask);
+			if (!review || !headCommit || review.headCommit !== headCommit || !sourcesCurrent) {
 				const confirmed = await ctx.ui.confirm(
 					"No up-to-date review",
 					review
-						? "The branch changed after the latest review. Clean up without re-reviewing?"
+						? "The branch or workflow sources changed after the latest review. Clean up without re-reviewing?"
 						: "This workflow has no saved review. Clean up anyway?",
 				);
 				if (!confirmed) return;
@@ -1023,7 +1021,7 @@ export default function implementationWorkflow(
 					phase: "cleanup",
 					identifier: workflow.identifier,
 					force,
-				});
+				}, ctx);
 				await ctx.switchSession(sessionFile);
 				return;
 			}
@@ -1081,11 +1079,13 @@ export default function implementationWorkflow(
 			ctx.ui.notify(`Could not remove the worktree: ${removeFailure}`, "error");
 			return false;
 		}
+		if (identifier === workflow.identifier) activeFiles = undefined;
 		showWorkflowCompletion(pi, ctx, {
 			title: "Workflow cleanup complete",
 			details: [
 				`Removed worktree: ${workflow.worktreePath}`,
-				"Kept the branches, pull requests, and saved workflow state.",
+				`Workflow artifacts remain committed on the retained branch under .workflows/${workflow.identifier}/.`,
+				"Kept local and remote branches and pull requests. Locally committed artifacts need a push to appear in the pull request.",
 			],
 		});
 		return true;
@@ -1099,12 +1099,13 @@ export default function implementationWorkflow(
 		try {
 			const [status, headCommit] = await Promise.all([
 				worktreeStatus(exec, metadata.worktreePath),
-				gitValue(exec, metadata.worktreePath, ["rev-parse", "HEAD"]),
+				workflowContentHead(exec, metadata),
 			]);
 			let ready = status === "" && headCommit !== undefined;
 			if (ready && phase === "revision") {
 				const review = await readWorkflowReview(activeFiles).catch(() => undefined);
-				ready = !review || review.headCommit !== headCommit;
+				ready = !review || review.headCommit !== headCommit ||
+					review.sourceFingerprint !== await readReviewSourceFingerprint(activeFiles, metadata.ask);
 			}
 			if (ready && phase === "implementation") {
 				ready = headCommit !== metadata.baseCommit;
@@ -1117,20 +1118,26 @@ export default function implementationWorkflow(
 		}
 	}
 
-	async function uniqueIdentifier(plan: string, ctx: ExtensionCommandContext): Promise<string> {
-		const slug = await generatePlanSlug(plan, ctx);
+	async function uniqueIdentifier(ask: string, ctx: ExtensionCommandContext, repositoryRoot: string): Promise<string> {
+		const slug = await generatePlanSlug(ask, ctx);
+		const known = new Set((await listCompletedWorkflows()).map((workflow) => workflow.identifier));
 		for (let attempt = 0; attempt < 100; attempt++) {
 			const candidate = attempt === 0 ? slug : `${slug}-${attempt + 1}`;
-			if (!(await pathExists(workflowFiles(candidate).root))) return candidate;
+			if (known.has(candidate) || await pathExists(join(workflowsRoot(), `${candidate}.json`)) ||
+				await pathExists(join(repositoryRoot, ".worktrees", candidate)) ||
+				await pathExists(join(repositoryRoot, ".workflows", candidate))) continue;
+			const branch = await exec("git", ["-C", repositoryRoot, "show-ref", "--verify", "--quiet", `refs/heads/${WORKFLOW_BRANCH_PREFIX}${candidate}`]);
+			if (branch.code === 1) return candidate;
+			if (branch.code !== 0) throw new Error(`Could not check workflow branch availability: ${branch.stderr || branch.stdout}`);
 		}
 		throw new Error(`Could not allocate a unique workflow identifier for ${slug}.`);
 	}
 
-	async function generatePlanSlug(plan: string, ctx: ExtensionCommandContext): Promise<string> {
-		if (!ctx.model) throw new Error("No model is selected to generate a workflow identifier from the plan.");
+	async function generatePlanSlug(ask: string, ctx: ExtensionCommandContext): Promise<string> {
+		if (!ctx.model) throw new Error("No model is selected to generate a workflow identifier from the ask.");
 		const message: Message = {
 			role: "user",
-			content: [{ type: "text", text: planSlugUserMessage(plan) }],
+			content: [{ type: "text", text: planSlugUserMessage(ask) }],
 			timestamp: Date.now(),
 		};
 		// Omitting effort can send "none", which always-reasoning models reject.
@@ -1175,9 +1182,11 @@ export default function implementationWorkflow(
 	});
 
 	pi.on("before_agent_start", async (event) => {
-		if (!activeFiles || !phase) return;
-		let instructions = "";
-		if (phase === "planning") {
+		if (!activeFiles || !identifier || phase === "cleanup" || (phase === "complete" && !briefed)) return;
+		// Refresh approval and artifact paths after another session updates the workflow.
+		metadata = await readCompletedWorkflowMetadata(identifier);
+		let instructions = !phase || (phase === "complete" && briefed) ? briefingSystemPrompt(briefingValues(metadata, activeFiles)) : "";
+		if (phase === "planning" && metadata.approvedPlanVersion === undefined) {
 			instructions = planningSystemPrompt({
 				planPath: activeFiles.plan,
 				workingPlanPath: activeFiles.workingPlan,
@@ -1248,30 +1257,29 @@ export default function implementationWorkflow(
 		const branch = ctx.sessionManager.getBranch();
 		const saved = latestPhase(branch);
 		phase = saved?.phase;
-		draftId = saved?.draftId;
-		identifier = saved?.identifier;
+		briefed = latestBinding(branch) !== undefined;
+		identifier = saved?.identifier ?? latestBinding(branch);
 		cleanupForce = saved?.force ?? false;
 		metadata = undefined;
-		draftMetadata = undefined;
 		activeFiles = undefined;
 		planDescription = "";
 		phaseReminderVisible = phaseReminderWasShown(branch);
 		currentPullRequest = undefined;
 
-		if (phase === "planning" && draftId) {
+		if (identifier) {
 			try {
-				const files = draftFiles(draftId);
-				await ensureWorkflowFiles(files);
-				await prepareActivePlan(files);
-				pi.setSessionName(planDescription ? workflowSessionName("Planning", undefined, planDescription) : "");
+				// A bound session in its worktree can restore a missing global locator.
+				const repository = await repositoryIdentity(exec, ctx.cwd);
+				if (repository) await readActiveWorkflow(repository.root);
+				metadata = await readCompletedWorkflowMetadata(identifier);
+				activeFiles = workflowFiles(identifier, metadata.worktreePath);
+				if (phase) await prepareActivePlan(activeFiles);
+				if (phase === "planning") {
+					if (metadata.approvedPlanVersion !== undefined) appendPhase({ phase: "complete", identifier });
+					pi.setSessionName(workflowSessionName("Planning", identifier, metadata.description));
+				}
 			} catch (error) {
-				ctx.ui.notify(errorMessage(error), "error");
-			}
-		}
-		if ((phase === "implementation" || phase === "revision" || phase === "review" || phase === "cleanup" || phase === "complete") && identifier) {
-			try {
-				await prepareActivePlan(workflowFiles(identifier));
-			} catch (error) {
+				activeFiles = undefined;
 				ctx.ui.notify(errorMessage(error), "error");
 			}
 		}

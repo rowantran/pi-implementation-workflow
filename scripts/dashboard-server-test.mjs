@@ -2,21 +2,58 @@ import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { createServer as createHttpServer, request } from "node:http";
 import { createServer as createNetServer } from "node:net";
-import { mkdtemp, mkdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, rename, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createJiti } from "jiti/static";
 import { stringify } from "smol-toml";
 
-const jiti = createJiti(import.meta.url, { moduleCache: false });
-const dashboardServer = await jiti.import(new URL("../src/dashboard-server.ts", import.meta.url).pathname);
-const dashboard = await jiti.import(new URL("../src/dashboard.ts", import.meta.url).pathname);
-
 const temporaryRoot = await mkdtemp(join(tmpdir(), "pi-workflow-dashboard-server-"));
 const agentDirectory = join(temporaryRoot, "agent");
 const workflowsRoot = join(agentDirectory, "workflows");
+const previousAgentDirectory = process.env.PI_CODING_AGENT_DIR;
+process.env.PI_CODING_AGENT_DIR = agentDirectory;
 await mkdir(workflowsRoot, { recursive: true });
+
+const jiti = createJiti(import.meta.url, { moduleCache: false });
+const dashboardServer = await jiti.import(new URL("../src/dashboard-server.ts", import.meta.url).pathname);
+const dashboard = await jiti.import(new URL("../src/dashboard.ts", import.meta.url).pathname);
+const storage = await jiti.import(new URL("../src/storage.ts", import.meta.url).pathname);
+
+async function createWorkflow(worktreePath, identifier, html) {
+	await mkdir(worktreePath, { recursive: true });
+	const metadata = {
+		version: storage.WORKFLOW_METADATA_VERSION,
+		identifier,
+		description: "",
+		ask: `Plan ${identifier}`,
+		repositoryRoot: dirname(worktreePath),
+		gitCommonDir: join(dirname(worktreePath), ".git"),
+		baseBranch: "main",
+		baseCommit: "abc123",
+		workflowBranch: `workflow/${identifier}`,
+		worktreePath,
+		createdAt: "2026-01-01T00:00:00.000Z",
+	};
+	const files = storage.workflowFiles(identifier, worktreePath);
+	await storage.createWorkflow(files, "# Implementation plan\n", metadata);
+	await storage.registerWorkflow(metadata);
+	await writeFile(files.dashboard, html, "utf8");
+	return files;
+}
+
+async function withSymlink(path, target, action) {
+	const saved = `${path}.saved`;
+	await rename(path, saved);
+	try {
+		await symlink(target ?? saved, path);
+		await action();
+	} finally {
+		await rm(path, { force: true });
+		await rename(saved, path);
+	}
+}
 
 function rawRequest(port, path, method = "GET") {
 	return new Promise((resolve, reject) => {
@@ -143,14 +180,11 @@ try {
 		);
 	}
 
-	const draftFiles = { dashboard: join(workflowsRoot, ".drafts", "Draft-123", "dashboard.html") };
-	const workflowFiles = { dashboard: join(workflowsRoot, "workflow-one", "dashboard.html") };
-	const draftReference = dashboardServer.dashboardReference(draftFiles, "draft", "Draft-123");
+	const firstWorktree = join(temporaryRoot, "repo-one", "worktree");
+	const secondWorktree = join(temporaryRoot, "repo-two", "worktree");
+	const workflowFiles = await createWorkflow(firstWorktree, "workflow-one", "<h1>workflow one</h1>");
+	await createWorkflow(secondWorktree, "workflow-two", "<h1>workflow two</h1>");
 	const workflowReference = dashboardServer.dashboardReference(workflowFiles, "workflow", "workflow-one");
-	assert.equal(
-		dashboardServer.dashboardUrl(draftReference, localConfig),
-		`http://127.0.0.1:${port}/implementation-workflow/drafts/Draft-123`,
-	);
 	assert.equal(
 		dashboardServer.dashboardUrl(workflowReference, localConfig),
 		`http://127.0.0.1:${port}/implementation-workflow/workflows/workflow-one`,
@@ -160,11 +194,7 @@ try {
 		"https://rowan-v2-devbox/workflow-dashboards/implementation-workflow/workflows/workflow-one",
 	);
 	assert.throws(() => dashboardServer.dashboardReference(workflowFiles, "workflow", "../escape"));
-
-	await mkdir(join(workflowsRoot, ".drafts", "Draft-123"), { recursive: true });
-	await mkdir(join(workflowsRoot, "workflow-one"), { recursive: true });
-	await writeFile(draftFiles.dashboard, "<h1>draft one</h1>", "utf8");
-	await writeFile(workflowFiles.dashboard, "<h1>workflow one</h1>", "utf8");
+	assert.throws(() => dashboardServer.dashboardReference(workflowFiles, "draft", "Draft-123"));
 
 	const concurrentStarts = await Promise.all([
 		dashboardServer.ensureSharedDashboardServer(localConfig, workflowsRoot),
@@ -179,14 +209,22 @@ try {
 		"a separate Pi process recognizes and reuses the listener",
 	);
 
-	const draftResponse = await rawRequest(port, "/implementation-workflow/drafts/Draft-123");
-	assert.equal(draftResponse.status, 200);
-	assert.equal(draftResponse.body, "<h1>draft one</h1>");
-	assert.equal(draftResponse.headers["content-type"], "text/html; charset=utf-8");
-	assert.equal(draftResponse.headers["cache-control"], "no-store");
-	assert.equal(draftResponse.headers["x-content-type-options"], "nosniff");
-	assert.equal(draftResponse.headers["x-frame-options"], "DENY");
-	assert.equal(draftResponse.headers["referrer-policy"], "no-referrer");
+	const health = await rawRequest(port, dashboardServer.DASHBOARD_HEALTH_PATH);
+	assert.deepEqual(JSON.parse(health.body), dashboardServer.dashboardServerIdentity(workflowsRoot));
+	assert.equal(JSON.parse(health.body).protocolVersion, 3);
+	const workflowResponse = await rawRequest(port, "/implementation-workflow/workflows/workflow-one");
+	assert.equal(workflowResponse.status, 200);
+	assert.equal(workflowResponse.body, "<h1>workflow one</h1>");
+	assert.equal(workflowResponse.headers["content-type"], "text/html; charset=utf-8");
+	assert.equal(workflowResponse.headers["cache-control"], "no-store");
+	assert.equal(workflowResponse.headers["x-content-type-options"], "nosniff");
+	assert.equal(workflowResponse.headers["x-frame-options"], "DENY");
+	assert.equal(workflowResponse.headers["referrer-policy"], "no-referrer");
+	assert.equal(
+		(await rawRequest(port, "/implementation-workflow/workflows/workflow-two")).body,
+		"<h1>workflow two</h1>",
+		"one listener routes to worktrees in different repositories",
+	);
 
 	const markedAsset = await rawRequest(port, "/implementation-workflow/assets/marked.umd.js");
 	assert.equal(markedAsset.status, 200);
@@ -204,23 +242,19 @@ try {
 	assert.equal(Number(headResponse.headers["content-length"]), Buffer.byteLength("<h1>workflow one</h1>"));
 	assert.equal((await rawRequest(port, "/implementation-workflow/workflows/workflow-one", "POST")).status, 405);
 	assert.equal((await rawRequest(port, "/implementation-workflow/workflows/missing")).status, 404);
-	assert.equal((await rawRequest(port, "/implementation-workflow/workflows/%2e%2e")).status, 404);
+	for (const invalid of ["%2e%2e", "%2e%2e%2fescape", "workflow-one%2fplan.md", "workflow-one%5cplan.md", "%00", "%ZZ", "UPPERCASE", "a".repeat(81)]) {
+		assert.equal((await rawRequest(port, `/implementation-workflow/workflows/${invalid}`)).status, 404, invalid);
+	}
 	assert.equal((await rawRequest(port, "/implementation-workflow/workflows/workflow-one/plan.md")).status, 404);
 	assert.equal((await rawRequest(port, "/workflow-dashboards/implementation-workflow/workflows/workflow-one")).status, 200);
-	const outsideDashboard = join(temporaryRoot, "outside-dashboard.html");
-	await writeFile(outsideDashboard, "outside workflow storage", "utf8");
-	await mkdir(join(workflowsRoot, "symlink-escape"), { recursive: true });
-	await symlink(outsideDashboard, join(workflowsRoot, "symlink-escape", "dashboard.html"));
-	assert.equal((await rawRequest(port, "/implementation-workflow/workflows/symlink-escape")).status, 404);
-
-	await mkdir(join(workflowsRoot, "created-after-start"), { recursive: true });
-	const liveDashboard = join(workflowsRoot, "created-after-start", "dashboard.html");
-	await writeFile(liveDashboard, "first version", "utf8");
+	const liveFiles = await createWorkflow(join(temporaryRoot, "live-worktree"), "created-after-start", "first version");
+	const liveDashboard = liveFiles.dashboard;
 	assert.equal(
 		(await rawRequest(port, "/implementation-workflow/workflows/created-after-start")).body,
 		"first version",
 	);
-	await writeFile(liveDashboard, "second version", "utf8");
+	await writeFile(`${liveDashboard}.tmp`, "second version", "utf8");
+	await rename(`${liveDashboard}.tmp`, liveDashboard);
 	assert.equal(
 		(await rawRequest(port, "/implementation-workflow/workflows/created-after-start")).body,
 		"second version",
@@ -239,13 +273,101 @@ try {
 	assert.equal(revisionedResponse.body, revisionedDashboard, "revision scanning does not truncate the response body");
 	assert.equal(revisionedHead.headers["x-implementation-workflow-revision"], embeddedRevision);
 
-	const redirectPath = join(workflowsRoot, ".drafts", "promoted", "dashboard.html");
-	const destinationUrl = `http://127.0.0.1:${port}/implementation-workflow/workflows/workflow-one`;
-	await dashboard.writeWorkflowDashboardRedirect(redirectPath, destinationUrl);
-	const redirect = await readFile(redirectPath, "utf8");
-	assert.match(redirect, new RegExp(destinationUrl.replaceAll("/", "\\/")));
-	assert.doesNotMatch(redirect, /file:\/\//);
-	assert.equal((await rawRequest(port, "/implementation-workflow/drafts/promoted")).status, 200);
+	// Legacy global artifacts are not a fallback when the locator is absent.
+	for (const [directory, route] of [
+		[join(workflowsRoot, "legacy-global"), "/implementation-workflow/workflows/legacy-global"],
+		[join(workflowsRoot, ".drafts", "Draft-123"), "/implementation-workflow/drafts/Draft-123"],
+	]) {
+		await mkdir(directory, { recursive: true });
+		await writeFile(join(directory, "dashboard.html"), "legacy dashboard", "utf8");
+		assert.equal((await rawRequest(port, route)).status, 404);
+	}
+
+	const outsideDashboard = join(temporaryRoot, "outside-dashboard.html");
+	await writeFile(outsideDashboard, "must never be served", "utf8");
+	const workflowRoute = "/implementation-workflow/workflows/workflow-one";
+	for (const target of [outsideDashboard, join(secondWorktree, ".workflows", "workflow-two", "dashboard.html"), undefined]) {
+		await withSymlink(workflowFiles.dashboard, target, async () => {
+			assert.equal((await rawRequest(port, workflowRoute)).status, 404, "dashboard symlinks are not served");
+			assert.equal((await rawRequest(port, workflowRoute, "HEAD")).status, 404);
+		});
+	}
+	for (const directory of [workflowFiles.root, join(firstWorktree, ".workflows")]) {
+		await withSymlink(directory, undefined, async () => {
+			assert.equal((await rawRequest(port, workflowRoute)).status, 404, "workflow-directory symlinks are not served");
+		});
+	}
+	await rename(workflowFiles.dashboard, `${workflowFiles.dashboard}.saved`);
+	try {
+		await mkdir(workflowFiles.dashboard);
+		assert.equal((await rawRequest(port, workflowRoute)).status, 404, "a dashboard must be a regular file");
+	} finally {
+		await rm(workflowFiles.dashboard, { recursive: true });
+		await rename(`${workflowFiles.dashboard}.saved`, workflowFiles.dashboard);
+	}
+
+	const markerPath = storage.activeWorkflowMarkerPath(firstWorktree);
+	const locatorPath = storage.workflowRegistryFiles("workflow-one").locator;
+	const originalMarker = await readFile(markerPath, "utf8");
+	const originalLocator = await readFile(locatorPath, "utf8");
+	for (const path of [markerPath, locatorPath]) {
+		await withSymlink(path, undefined, async () => {
+			assert.equal((await rawRequest(port, workflowRoute)).status, 404, "symlinked routing records are not trusted");
+		});
+		const original = await readFile(path, "utf8");
+		try {
+			for (const content of ["not json", "null", JSON.stringify({ ...JSON.parse(original), identifier: "another-workflow" }), JSON.stringify({ ...JSON.parse(original), worktreePath: "../escape" })]) {
+				await writeFile(path, content, "utf8");
+				assert.equal((await rawRequest(port, workflowRoute)).status, 404, "routing records must validate and match");
+			}
+		} finally {
+			await writeFile(path, original, "utf8");
+		}
+	}
+	await withSymlink(workflowsRoot, undefined, async () => {
+		assert.equal((await rawRequest(port, workflowRoute)).status, 404, "a symlinked index root is not trusted");
+	});
+	await withSymlink(firstWorktree, undefined, async () => {
+		assert.equal((await rawRequest(port, workflowRoute)).status, 404, "a replaced worktree symlink is not trusted");
+	});
+	await rename(markerPath, `${markerPath}.saved`);
+	try {
+		assert.equal((await rawRequest(port, workflowRoute)).status, 404, "local artifacts without an active marker are not served");
+	} finally {
+		await rename(`${markerPath}.saved`, markerPath);
+	}
+	for (const field of ["repositoryRoot", "gitCommonDir"]) {
+		try {
+			await writeFile(markerPath, JSON.stringify({ ...JSON.parse(originalMarker), [field]: temporaryRoot }), "utf8");
+			assert.equal((await rawRequest(port, workflowRoute)).status, 404, "matching identifiers alone do not authenticate a locator");
+		} finally {
+			await writeFile(markerPath, originalMarker, "utf8");
+		}
+	}
+
+	// A committed historical bundle and stale locator do not make it the active workflow.
+	const historicalFiles = storage.workflowFiles("historical", firstWorktree);
+	await mkdir(historicalFiles.root);
+	await writeFile(historicalFiles.dashboard, "historical dashboard", "utf8");
+	await writeFile(storage.workflowRegistryFiles("historical").locator, JSON.stringify({ ...JSON.parse(originalLocator), identifier: "historical" }), "utf8");
+	assert.equal((await rawRequest(port, "/implementation-workflow/workflows/historical")).status, 404);
+	assert.equal((await rawRequest(port, workflowRoute)).status, 200);
+
+	const cleanedWorktree = join(temporaryRoot, "cleaned-worktree");
+	await createWorkflow(cleanedWorktree, "cleaned", "will be removed");
+	assert.equal((await rawRequest(port, "/implementation-workflow/workflows/cleaned")).status, 200);
+	await rm(cleanedWorktree, { recursive: true });
+	assert.equal((await rawRequest(port, "/implementation-workflow/workflows/cleaned")).status, 404, "a stale locator cannot resurrect a removed worktree");
+
+	// The running listener observes a deleted and rebuilt index without keeping artifact paths in memory.
+	await rm(workflowsRoot, { recursive: true });
+	assert.equal((await rawRequest(port, workflowRoute)).status, 404);
+	assert.equal(await readFile(workflowFiles.dashboard, "utf8"), "<h1>workflow one</h1>");
+	assert.equal((await storage.readActiveWorkflow(firstWorktree)).identifier, "workflow-one");
+	assert.equal((await rawRequest(port, workflowRoute)).status, 200);
+	assert.equal((await rawRequest(port, "/implementation-workflow/workflows/workflow-two")).status, 404);
+	assert.equal((await storage.readActiveWorkflow(secondWorktree)).identifier, "workflow-two");
+	assert.equal((await rawRequest(port, "/implementation-workflow/workflows/workflow-two")).body, "<h1>workflow two</h1>");
 
 	const conflictingConfig = { ...localConfig, listenPort: await unusedPort(), publicBaseUrl: "http://127.0.0.1:1" };
 	const inProcessConflict = await dashboardServer.ensureSharedDashboardServer(conflictingConfig, workflowsRoot);
@@ -272,8 +394,43 @@ try {
 	assert.equal(conflict.reason, "port-conflict");
 	await new Promise((resolve) => unrelated.close(resolve));
 
-	console.log("Dashboard-server test passed: configuration, stable URLs, stateless routing, sharing, restart, and conflicts work.");
+	for (const identity of [
+		{ ...dashboardServer.dashboardServerIdentity(workflowsRoot), protocolVersion: 2 },
+		dashboardServer.dashboardServerIdentity(join(temporaryRoot, "another-index")),
+	]) {
+		const incompatible = createHttpServer((_request, response) => {
+			response.setHeader("Content-Type", "application/json");
+			response.end(JSON.stringify(identity));
+		});
+		await new Promise((resolve, reject) => {
+			incompatible.once("error", reject);
+			incompatible.listen(0, "127.0.0.1", resolve);
+		});
+		try {
+			const incompatibleConfig = { ...localConfig, listenPort: incompatible.address().port };
+			assert.equal(
+				(await dashboardServer.ensureSharedDashboardServer(incompatibleConfig, workflowsRoot)).reason,
+				"port-conflict",
+				"a legacy global-artifact server or different locator index cannot be reused",
+			);
+		} finally {
+			await new Promise((resolve) => incompatible.close(resolve));
+		}
+	}
+
+	// The explicit server root must remain authoritative even if ambient configuration changes.
+	assert.deepEqual(await dashboardServer.ensureSharedDashboardServer(localConfig, workflowsRoot), { status: "started" });
+	process.env.PI_CODING_AGENT_DIR = join(temporaryRoot, "unrelated-agent");
+	try {
+		assert.equal((await rawRequest(port, workflowRoute)).status, 200, "routing uses the server's configured index, not ambient process configuration");
+	} finally {
+		process.env.PI_CODING_AGENT_DIR = agentDirectory;
+	}
+
+	console.log("Dashboard-server test passed: worktree-local routing, live updates, locator restoration, safety, sharing, and protocol conflicts work.");
 } finally {
 	await dashboardServer.closeOwnedDashboardServer();
 	await rm(temporaryRoot, { recursive: true, force: true });
+	if (previousAgentDirectory === undefined) delete process.env.PI_CODING_AGENT_DIR;
+	else process.env.PI_CODING_AGENT_DIR = previousAgentDirectory;
 }

@@ -1,7 +1,8 @@
 import { createHash } from "node:crypto";
-import { open, readFile, realpath } from "node:fs/promises";
+import { constants } from "node:fs";
+import { lstat, open, readFile, realpath } from "node:fs/promises";
 import { createServer, request, type Server, type ServerResponse } from "node:http";
-import { isAbsolute, relative, resolve } from "node:path";
+import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
 	implementationWorkflowConfigPath,
@@ -9,13 +10,14 @@ import {
 	type ImplementationWorkflowConfig,
 } from "./config.ts";
 import {
-	DRAFT_IDENTIFIER_PATTERN,
 	IDENTIFIER_PATTERN,
+	resolveWorkflowLocator,
+	workflowFiles,
 	type WorkflowFiles,
 } from "./storage.ts";
 
 export const DEFAULT_DASHBOARD_PORT = 43121;
-export const DASHBOARD_SERVER_PROTOCOL_VERSION = 2;
+export const DASHBOARD_SERVER_PROTOCOL_VERSION = 3;
 export const DASHBOARD_HEALTH_PATH = "/implementation-workflow/health";
 export const DASHBOARD_REVISION_HEADER = "X-Implementation-Workflow-Revision";
 const PROCESS_SERVER_KEY = Symbol.for("pi-implementation-workflow.dashboard-server.v1");
@@ -28,7 +30,7 @@ const DASHBOARD_ASSETS = new Map([
 	["mermaid.min.js", fileURLToPath(new URL("./mermaid.min.js", import.meta.resolve("mermaid")))],
 ]);
 
-export type DashboardScope = "draft" | "workflow";
+export type DashboardScope = "workflow";
 
 export interface DashboardReference {
 	scope: DashboardScope;
@@ -129,8 +131,7 @@ export function dashboardReference(files: WorkflowFiles, scope: DashboardScope, 
 
 export function dashboardUrl(reference: DashboardReference, config: DashboardServerConfig): string {
 	assertDashboardIdentifier(reference.scope, reference.id);
-	const collection = reference.scope === "draft" ? "drafts" : "workflows";
-	return `${config.publicBaseUrl}/implementation-workflow/${collection}/${encodeURIComponent(reference.id)}`;
+	return `${config.publicBaseUrl}/implementation-workflow/workflows/${encodeURIComponent(reference.id)}`;
 }
 
 export function dashboardServerIdentity(workflowsRoot: string): DashboardServerIdentity {
@@ -243,55 +244,31 @@ async function handleDashboardRequest(
 		return;
 	}
 
-	const candidate = reference.scope === "draft"
-		? resolve(workflowsRoot, ".drafts", reference.id, "dashboard.html")
-		: resolve(workflowsRoot, reference.id, "dashboard.html");
-	if (!isPathWithin(resolve(workflowsRoot), candidate)) {
-		sendText(response, 404, "Not Found\n", method === "HEAD");
-		return;
-	}
-
-	let rootRealPath: string;
-	let dashboardRealPath: string;
-	try {
-		[rootRealPath, dashboardRealPath] = await Promise.all([realpath(workflowsRoot), realpath(candidate)]);
-	} catch {
-		sendText(response, 404, "Not Found\n", method === "HEAD");
-		return;
-	}
-	if (!isPathWithin(rootRealPath, dashboardRealPath)) {
-		sendText(response, 404, "Not Found\n", method === "HEAD");
-		return;
-	}
-
 	let dashboardFile: Awaited<ReturnType<typeof open>> | undefined;
 	let fileInfo: Awaited<ReturnType<Awaited<ReturnType<typeof open>>["stat"]>>;
 	try {
-		dashboardFile = await open(dashboardRealPath, "r");
+		// The global root is only a locator index. Resolve it afresh on every request;
+		// storage verifies the locator against the worktree's machine-local active marker.
+		const locator = resolveWorkflowLocator(reference.id, workflowsRoot);
+		const files = workflowFiles(reference.id, locator.worktreePath);
+		dashboardFile = await openWorkflowDashboard(files, reference.id);
 		fileInfo = await dashboardFile.stat();
 	} catch {
 		await dashboardFile?.close().catch(() => undefined);
 		sendText(response, 404, "Not Found\n", method === "HEAD");
 		return;
 	}
-	if (!fileInfo.isFile()) {
-		await dashboardFile.close();
-		sendText(response, 404, "Not Found\n", method === "HEAD");
-		return;
-	}
-
-	const dashboardRevision = await readDashboardRevision(dashboardFile, fileInfo.size);
-	if (dashboardRevision) response.setHeader(DASHBOARD_REVISION_HEADER, dashboardRevision);
-	response.statusCode = 200;
-	response.setHeader("Content-Type", "text/html; charset=utf-8");
-	response.setHeader("Cache-Control", "no-store");
-	response.setHeader("Content-Length", fileInfo.size);
-	if (method === "HEAD") {
-		await dashboardFile.close();
-		response.end();
-		return;
-	}
 	try {
+		const dashboardRevision = await readDashboardRevision(dashboardFile, fileInfo.size);
+		if (dashboardRevision) response.setHeader(DASHBOARD_REVISION_HEADER, dashboardRevision);
+		response.statusCode = 200;
+		response.setHeader("Content-Type", "text/html; charset=utf-8");
+		response.setHeader("Cache-Control", "no-store");
+		response.setHeader("Content-Length", fileInfo.size);
+		if (method === "HEAD") {
+			response.end();
+			return;
+		}
 		const html = await dashboardFile.readFile();
 		response.setHeader("Content-Length", html.byteLength);
 		response.end(html);
@@ -300,6 +277,37 @@ async function handleDashboardRequest(
 		else response.destroy();
 	} finally {
 		await dashboardFile.close();
+	}
+}
+
+/** Open only the regular dashboard file under the locator's worktree-local workflow directory. */
+async function openWorkflowDashboard(files: WorkflowFiles, id: string): Promise<Awaited<ReturnType<typeof open>>> {
+	const worktree = await realpath(resolve(files.root, "../.."));
+	const expectedRoot = resolve(worktree, ".workflows", id);
+	const expectedDashboard = resolve(expectedRoot, "dashboard.html");
+	if (
+		resolve(files.dashboard) !== resolve(files.root, "dashboard.html") ||
+		await realpath(files.root) !== expectedRoot ||
+		await realpath(files.dashboard) !== expectedDashboard
+	) {
+		throw new Error("Dashboard is outside its worktree-local workflow directory.");
+	}
+
+	// Do not follow a replaced dashboard symlink or block on a FIFO/device.
+	const file = await open(expectedDashboard, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+	try {
+		const [opened, current, root] = await Promise.all([
+			file.stat(),
+			lstat(expectedDashboard),
+			realpath(files.root),
+		]);
+		if (!opened.isFile() || !current.isFile() || opened.dev !== current.dev || opened.ino !== current.ino || root !== expectedRoot) {
+			throw new Error("Dashboard changed while opening or is not a regular file.");
+		}
+		return file;
+	} catch (error) {
+		await file.close();
+		throw error;
 	}
 }
 
@@ -339,15 +347,15 @@ async function sendDashboardAsset(response: ServerResponse, path: string, headOn
 function parseDashboardRoute(rawPath: string): Pick<DashboardReference, "scope" | "id"> | undefined {
 	const routeStart = rawPath.lastIndexOf("/implementation-workflow/");
 	if (routeStart < 0) return undefined;
-	const match = /^\/implementation-workflow\/(drafts|workflows)\/([^/]+)$/.exec(rawPath.slice(routeStart));
+	const match = /^\/implementation-workflow\/workflows\/([^/]+)$/.exec(rawPath.slice(routeStart));
 	if (!match) return undefined;
 	let id: string;
 	try {
-		id = decodeURIComponent(match[2]);
+		id = decodeURIComponent(match[1]);
 	} catch {
 		return undefined;
 	}
-	const scope: DashboardScope = match[1] === "drafts" ? "draft" : "workflow";
+	const scope: DashboardScope = "workflow";
 	try {
 		assertDashboardIdentifier(scope, id);
 		return { scope, id };
@@ -357,7 +365,7 @@ function parseDashboardRoute(rawPath: string): Pick<DashboardReference, "scope" 
 }
 
 function assertDashboardIdentifier(scope: DashboardScope, id: string): void {
-	const valid = scope === "draft" ? DRAFT_IDENTIFIER_PATTERN.test(id) : IDENTIFIER_PATTERN.test(id);
+	const valid = scope === "workflow" && IDENTIFIER_PATTERN.test(id);
 	if (!valid) throw new Error(`Invalid ${scope} dashboard identifier: ${id}`);
 }
 
@@ -544,11 +552,6 @@ function sendJson(response: ServerResponse, statusCode: number, value: unknown, 
 	response.setHeader("Content-Type", "application/json; charset=utf-8");
 	response.setHeader("Content-Length", body.byteLength);
 	response.end(head ? undefined : body);
-}
-
-function isPathWithin(parent: string, candidate: string): boolean {
-	const pathFromParent = relative(parent, candidate);
-	return pathFromParent === "" || (!pathFromParent.startsWith("..") && !isAbsolute(pathFromParent));
 }
 
 function errorMessage(error: unknown): string {

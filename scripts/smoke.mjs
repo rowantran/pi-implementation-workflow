@@ -37,13 +37,14 @@ const expected = {
   commands: [
     "workflow-plan",
     "workflow-implement",
+    "workflow-brief",
     "workflow-review",
     "workflow-revise",
     "workflow-cleanup",
     "workflow-dashboard",
   ],
   events: ["before_agent_start", "tool_call", "agent_settled", "session_start", "session_shutdown"],
-  renderers: ["implementation-workflow-completion"],
+  renderers: ["implementation-workflow-completion", "implementation-workflow-phase-reminder"],
   shortcuts: ["ctrl+alt+d"],
   tools: ["workflow_update_plan", "workflow_questions"],
 };

@@ -1,4 +1,4 @@
-import { gitValue, isAncestor, worktreeStatus, type ExecFn } from "./git.ts";
+import { gitValue, isAncestor, workflowContentHead, worktreeStatus, type ExecFn } from "./git.ts";
 import {
 	buildPullRequestStack,
 	parseOpenPullRequests,
@@ -8,13 +8,22 @@ import {
 import type { CompletedWorkflowMetadata } from "./storage.ts";
 
 export type DeliveryCheckResult =
-	| { ok: true; headCommit: string; pullRequests: OpenPullRequest[] }
+	| {
+			ok: true;
+			/** Effective content head used for review inputs and report freshness. */
+			headCommit: string;
+			/** Actual local HEAD, which can also include unpushed artifact commits. */
+			deliveryHeadCommit: string;
+			artifactsUnpushed: boolean;
+			pullRequests: OpenPullRequest[];
+	  }
 	| { ok: false; stage: "worktree" | "pull-requests"; message: string };
 
 /**
  * Checks the live state of the workflow delivery: a clean worktree whose
  * checked-out branch is the tip of a complete open pull request chain from
- * the recorded base branch. A normal single pull request is a one-item chain.
+ * the recorded base branch. Local artifact-only commits may follow the pushed
+ * tip, but every content commit must be delivered. A single PR is a one-item chain.
  */
 export async function checkDelivery(
 	exec: ExecFn,
@@ -23,9 +32,13 @@ export async function checkDelivery(
 	const status = await worktreeStatus(exec, workflow.worktreePath);
 	if (status === undefined) return { ok: false, stage: "worktree", message: "could not inspect the worktree" };
 	if (status !== "") return { ok: false, stage: "worktree", message: "the worktree has uncommitted changes" };
-	const headCommit = await gitValue(exec, workflow.worktreePath, ["rev-parse", "HEAD"]);
-	if (!headCommit) {
+	const deliveryHeadCommit = await gitValue(exec, workflow.worktreePath, ["rev-parse", "HEAD"]);
+	if (!deliveryHeadCommit) {
 		return { ok: false, stage: "worktree", message: "could not identify the branch head commit" };
+	}
+	const headCommit = await workflowContentHead(exec, workflow);
+	if (!headCommit) {
+		return { ok: false, stage: "worktree", message: "could not identify the content head on the recorded base" };
 	}
 
 	const stack = await findPullRequestStack(exec, workflow);
@@ -40,11 +53,30 @@ export async function checkDelivery(
 		};
 	}
 	const tip = pullRequests.at(-1)!;
-	if (tip.headRefOid !== headCommit) {
+	if (
+		!(await isAncestor(exec, workflow.worktreePath, tip.headRefOid, deliveryHeadCommit)) ||
+		!(await isAncestor(exec, workflow.worktreePath, headCommit, tip.headRefOid))
+	) {
 		return {
 			ok: false,
 			stage: "pull-requests",
-			message: "the local HEAD commit has not been pushed to the stack tip branch",
+			message: "the local content HEAD commit has not been pushed to the stack tip branch, or the tip has diverged from local HEAD",
+		};
+	}
+	// Ancestry alone is insufficient for unusual merges whose first-parent
+	// history predates the recorded base. Verify the delivered content tree as
+	// well; only .workflows may differ from the published stack tip.
+	const contentDiff = await exec("git", [
+		"-C", workflow.worktreePath, "diff", "--quiet", tip.headRefOid, deliveryHeadCommit,
+		"--", ":(top)**", ":(top,exclude).workflows",
+	]);
+	if (contentDiff.code !== 0) {
+		return {
+			ok: false,
+			stage: "pull-requests",
+			message: contentDiff.code === 1
+				? "the local repository content differs from the pushed stack tip"
+				: "could not compare local repository content with the pushed stack tip",
 		};
 	}
 	let previousCommit = workflow.baseCommit;
@@ -58,7 +90,13 @@ export async function checkDelivery(
 		}
 		previousCommit = pullRequest.headRefOid;
 	}
-	return { ok: true, headCommit, pullRequests };
+	return {
+		ok: true,
+		headCommit,
+		deliveryHeadCommit,
+		artifactsUnpushed: tip.headRefOid !== deliveryHeadCommit,
+		pullRequests,
+	};
 }
 
 /** Finds the open pull request for the checked-out branch, which is the workflow stack tip. */
