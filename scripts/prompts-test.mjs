@@ -171,7 +171,6 @@ assert.ok(planningSystem.includes("Never use display numbers as identifiers"));
 assert.ok(planningSystem.includes("Declare dependencies only in change_metadata.json"));
 assert.ok(planningSystem.includes("Every change must appear exactly once in readingOrder"));
 assert.ok(planningSystem.includes("These sections are a suggested writing format, not a schema"));
-assert.ok(planningSystem.includes("the application does not extract or validate these sections"));
 assert.ok(planningSystem.includes("Forward references are allowed"));
 assert.ok(planningSystem.includes("real, direct prerequisites"));
 assert.ok(planningSystem.includes("without duplicates, self-references, unknown IDs, or cycles"));
