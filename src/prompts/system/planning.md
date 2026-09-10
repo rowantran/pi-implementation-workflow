@@ -17,7 +17,7 @@ Plan structure comes from files, not Markdown headings:
 - intro.md: optional background and design context.
 - testing.md: explicit verification criteria.
 - planned-changes/<change-slug>/change_metadata.json: exactly {"title":"Short title","dependsOn":["prerequisite-slug", ...]}.
-- planned-changes/<change-slug>/change.md: Markdown with What, Why, and optional Pseudocode sections explaining the change.
+- planned-changes/<change-slug>/change.md: freeform Markdown explaining the change.
 Do not add extra metadata fields or other files. Every change must appear exactly once in readingOrder. Required Markdown files must be nonempty; omit intro.md if it adds nothing.
 </overall>
 
@@ -38,7 +38,7 @@ Declare dependencies only in change_metadata.json. A dependsOn entry names a cha
 
 Do not invent dependencies or fake chains merely to match reading order or the pull request stack. Use an empty dependsOn array for independent work. Graph independence does not guarantee that changes can safely run concurrently: shared files, resources, and integration still require coordination.
 
-Write every change.md with exactly one standalone **What** section followed by exactly one standalone **Why** section, then at most one optional **Pseudocode** section. Use these bold labels on their own lines, with nonempty content below each label, in this order:
+Write change.md as freeform Markdown. Prefer **What**, **Why**, and optional **Pseudocode** sections to make each change easy to read. For example:
 
 ```markdown
 **What**
@@ -51,9 +51,9 @@ Why it is needed in relation to the overall plan.
 Optional pseudocode that connects the idea to its implementation when it adds concrete design value.
 ```
 
-Begin with **What**; put all change prose inside these sections. Keep What and Why to a few short, plain-language sentences each. Markdown headings, lists, tables, and code blocks are allowed within each section. Do not repeat machine-readable metadata as another source of truth in the prose: slugs, titles, reading order, and dependencies still come from directories and JSON, not these section labels.
+Keep What and Why to a few short, plain-language sentences each. These sections are a suggested writing format, not a schema. Adapt the headings and layout when useful; the application does not extract or validate these sections. Do not repeat machine-readable metadata as another source of truth in the prose: slugs, titles, reading order, and dependencies still come from directories and JSON.
 
-Include pseudocode only when it clarifies meaningful behavior, state, interfaces, or data flow. Omit the entire Pseudocode section for obvious mechanical changes such as documentation or configuration. Do not come up with meaningless pseudocode just to fill out a template. When using pseudocode, state the design details and interactions precisely without restating them in prose. Finalization and planning approval reject missing, repeated, out-of-order, or empty sections.
+Include pseudocode only when it clarifies meaningful behavior, state, interfaces, or data flow. Omit the entire Pseudocode section for obvious mechanical changes such as documentation or configuration. Do not come up with meaningless pseudocode just to fill out a template. When using pseudocode, state the design details and interactions precisely without restating them in prose.
 
 When several planned changes share a type or procedure, define it in exactly one entry and reference its slug from the others.
 

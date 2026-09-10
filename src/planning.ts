@@ -7,7 +7,7 @@ export function planningCompletionError(plan: PlanDocument | undefined, descript
 	if (!plan) return "No finalized plan exists. Prepare and finalize the working plan before advancing to implementation.";
 	if (!description.trim()) return "The plan description is empty. Finalize the working plan with a description before advancing to implementation.";
 	try {
-		validatePlanDocument(plan, { requireChangeSections: true });
+		validatePlanDocument(plan);
 	} catch (error) {
 		return `The plan cannot advance: ${error instanceof Error ? error.message : String(error)}`;
 	}

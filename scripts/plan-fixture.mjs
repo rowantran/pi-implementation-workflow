@@ -8,7 +8,7 @@ export function planFixture(overrides = {}) {
 		testing: "- Verify records survive cleanup in Git.\n",
 		changes: [{
 			id: "store-workflow-records", title: "Store workflow records", dependsOn: [],
-			content: "**What**\n\nSave records under .workflows/ to preserve the original request and plan.\n\n## Design\n\nKeep the original request and approved plan alongside the delivered changes.\n\n**Why**\n\nWorkflow records must survive worktree cleanup.\n",
+			content: "Save records under .workflows/ to preserve the original request and plan.\n\n## Design\n\nFreeform prose needs no What or Why fields.\n",
 		}],
 		...overrides,
 	};

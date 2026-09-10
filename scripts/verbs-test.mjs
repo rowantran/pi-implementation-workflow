@@ -25,7 +25,7 @@ const validPlan = planFixture({
 		id: "complete-verbs",
 		title: "Complete the verbs",
 		dependsOn: [],
-		content: "**What**\n\nSupport explicit workflow verbs so the workflow stays flexible.\n\nKeep briefing read-only and preserve workflow identity across session switches.\n\n**Why**\n\nSeparate workflow actions without losing the active workflow context.\n\n**Pseudocode**\n\n```text\nprocedure RunVerb()\n```",
+		content: "Support explicit workflow verbs so the workflow stays flexible.\n\nKeep briefing read-only and preserve workflow identity across session switches.\n\n```text\nprocedure RunVerb()\n```",
 	}],
 });
 
@@ -709,7 +709,7 @@ try {
 		await writePlanFixture(workflow.files.workingPlan, {
 			...validPlan,
 			goal: "Unapproved next plan.",
-			changes: validPlan.changes.map((change) => ({ ...change, content: "**What**\n\nUnapproved replacement prose.\n\n**Why**\n\nDescribe a newer proposal without replacing the approved review source." })),
+			changes: validPlan.changes.map((change) => ({ ...change, content: "Unapproved replacement prose." })),
 		});
 		await storage.finalizePlanDraft(workflow.files, "Unapproved next plan", 1);
 		workflow.metadata.approvedPlanVersion = 1;

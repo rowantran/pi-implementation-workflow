@@ -170,7 +170,8 @@ assert.ok(planningSystem.includes("reading order is distinct from execution orde
 assert.ok(planningSystem.includes("Never use display numbers as identifiers"));
 assert.ok(planningSystem.includes("Declare dependencies only in change_metadata.json"));
 assert.ok(planningSystem.includes("Every change must appear exactly once in readingOrder"));
-assert.doesNotMatch(planningSystem, /no heading names, field order, or heading levels are required|Write change.md as freeform Markdown/);
+assert.ok(planningSystem.includes("These sections are a suggested writing format, not a schema"));
+assert.ok(planningSystem.includes("the application does not extract or validate these sections"));
 assert.ok(planningSystem.includes("Forward references are allowed"));
 assert.ok(planningSystem.includes("real, direct prerequisites"));
 assert.ok(planningSystem.includes("without duplicates, self-references, unknown IDs, or cycles"));
@@ -183,13 +184,11 @@ assert.ok(planningSystem.includes("Do not duplicate specific details from planne
 assert.ok(planningSystem.includes("Put individual algorithms, per-change implementation steps, and interface details in the relevant planned-changes/<change-slug>/change.md"));
 assert.ok(planningSystem.includes("put test specifics in testing.md."));
 assert.ok(planningSystem.includes("omit intro.md if it adds nothing"));
-assert.ok(planningSystem.includes("exactly one standalone **What** section followed by exactly one standalone **Why** section"));
-assert.ok(planningSystem.includes("at most one optional **Pseudocode** section"));
-assert.ok(planningSystem.includes("nonempty content below each label"));
-assert.ok(planningSystem.includes("Begin with **What**; put all change prose inside these sections"));
+assert.ok(planningSystem.includes("Write change.md as freeform Markdown"));
+assert.ok(planningSystem.includes("Prefer **What**, **Why**, and optional **Pseudocode** sections"));
 assert.match(planningSystem, /\*\*What\*\*\nWhat changes\.\n\n\*\*Why\*\*\nWhy it is needed in relation to the overall plan\.\n\n\*\*Pseudocode\*\*\n/);
 assert.ok(planningSystem.includes("Omit the entire Pseudocode section"));
-assert.ok(planningSystem.includes("Finalization and planning approval reject missing, repeated, out-of-order, or empty sections"));
+assert.doesNotMatch(planningSystem, /exactly one standalone \*\*What\*\*|Finalization and planning approval reject/);
 assert.ok(planningSystem.includes("Include pseudocode only when it clarifies meaningful behavior"));
 assert.ok(planningSystem.includes("Do not come up with meaningless pseudocode just to fill out a template"));
 assert.doesNotMatch(planningSystem, /PC-\d+|standalone \*\*Depends on\*\*/);
@@ -215,9 +214,6 @@ const reviewAgentSystem = prompts.reviewAgentSystemPrompt(reviewAgentOutputTool)
 assert.ok(reviewAgentSystem.includes("read-only worker"));
 assert.ok(reviewAgentSystem.includes(reviewAgentOutputTool));
 assert.ok(!reviewAgentSystem.includes("&lt;result&gt;"));
-assert.ok(reviewAgentSystem.includes("Newly finalized plans use What, Why, and optional Pseudocode sections"));
-assert.ok(reviewAgentSystem.includes("Older approved plans may have freeform prose"));
-assert.ok(reviewAgentSystem.includes("do not treat missing section labels as an implementation defect"));
 
 const plannedChangeReview = prompts.plannedChangeReviewPrompt({
   id: "keep-contracts",
@@ -298,7 +294,7 @@ assert.equal(
 assert.match(prompts.updatePlanToolPromptSnippet(), /Prepare an editable plan directory.*immutable version/);
 const guidelines = prompts.updatePlanToolPromptGuidelines();
 assert.equal(guidelines.length, 1);
-for (const text of ['workflow_update_plan', 'action="prepare"', 'action="finalize"', 'expectedBaseVersion', 'readingOrder', 'standalone **What** then **Why** sections', 'optional **Pseudocode** section', 'nonempty content below each bold label', 'invalid drafts never replace the saved plan', 'not a Git commit']) assert.ok(guidelines[0].includes(text));
+for (const text of ['workflow_update_plan', 'action="prepare"', 'action="finalize"', 'expectedBaseVersion', 'readingOrder', 'invalid drafts never replace the saved plan', 'not a Git commit']) assert.ok(guidelines[0].includes(text));
 
 console.log(
   `Prompt test passed: ${templatePaths.length} documented templates preserve rendered text and all durable intent paths.`,

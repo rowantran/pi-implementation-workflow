@@ -7,7 +7,7 @@ export function makePlanDocument(overrides = {}) {
     id: 'implement-change',
     title: 'Implement the change',
     dependsOn: [],
-    content: '**What**\n\nImplement the requested behavior and keep the existing behavior covered.\n\n**Why**\n\nDeliver the requested change without regressions.',
+    content: 'Implement the requested behavior and keep the existing behavior covered.',
   }];
   return {
     schemaVersion: 1,

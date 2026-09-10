@@ -55,7 +55,6 @@ async function initialize(metadata) {
 	await registerWorkflow(metadata);
 	return files;
 }
-// Historical saved reviews retain their original freeform planned-change content.
 function sampleReview(overrides = {}) {
 	const yes = { status: "yes", explanation: "Covered by the plan." };
 	return {

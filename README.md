@@ -60,22 +60,7 @@ The extension saves the submitted ask verbatim as immutable workflow metadata, c
 
 Press `Ctrl+Alt+D` or run `/workflow-dashboard` to regenerate the dashboard and show its link again.
 
-The plan uses directories for structure, JSON for relationships, and Markdown for explanations. `goal.md` states the desired outcome, optional `intro.md` gives context, and `testing.md` lists explicit verification criteria. Each planned change has a stable descriptive slug, JSON metadata, and a `change.md` explanation. Planned changes and testing criteria become separate units of implementation review.
-
-Each `change.md` must begin with **What**, followed by **Why**, then optional **Pseudocode**, using standalone bold labels with nonempty content below each:
-
-```markdown
-**What**
-What changes.
-
-**Why**
-Why it is needed in relation to the overall plan.
-
-**Pseudocode**
-Optional design details that connect the idea to its implementation.
-```
-
-Keep What and Why to a few short, plain-language sentences each. Omit the entire Pseudocode section for obvious mechanical changes such as documentation or configuration. Include it when it clarifies meaningful behavior, state, interfaces, or data flow. Markdown headings, lists, tables, and code blocks are allowed inside each section. These labels organize the explanation only; change identity, reading order, and dependencies still come from directories and JSON.
+The plan uses directories for structure, JSON for relationships, and freeform Markdown for explanations. `goal.md` states the desired outcome, optional `intro.md` gives context, and `testing.md` lists explicit verification criteria. Each planned change has a stable descriptive slug, JSON metadata, and a `change.md` explanation. The planning prompt suggests **What**, **Why**, and optional **Pseudocode** sections for readability. Include pseudocode only when it clarifies meaningful behavior, state, interfaces, or data flow. This is writing guidance, not a schema: the application does not extract or validate these sections, and no Markdown heading names, levels, or field order are required. Planned changes and testing criteria become separate units of implementation review.
 
 ### Change identity, reading order, and dependencies
 
@@ -116,9 +101,7 @@ During planning, the agent uses `workflow_update_plan` in two steps:
 1. Call with `{"action":"prepare"}`. The tool copies the latest finalized version into `working-plan/`, or creates a skeleton for the first plan. It returns `draftPath` and `baseVersion`; `0` means no published version. Preparing again preserves existing unsaved edits, including invalid drafts.
 2. Edit the draft's JSON and Markdown files with native `edit` and `write`, then call with `{"action":"finalize","expectedBaseVersion":0,"description":"Describe the entire plan"}`. Use the base version returned by prepare. The description must be at most 18 words and 160 characters.
 
-Finalization checks required files, nonempty prose, the What / Why / optional Pseudocode format in each `change.md`, strict JSON fields and types, safe slug IDs, complete reading order, and valid dependencies. Missing, repeated, out-of-order, or empty change sections are errors, as are unknown changes, duplicate edges, self-dependencies, cycles, unexpected files, and unsafe links. It reports file and field details together where possible. Invalid drafts remain editable and never replace the published plan.
-
-Previously published schema-version-1 plans remain readable, including freeform plans created before this format was restored. Their snapshots and approved scope are never rewritten. To finalize another version or approve a previously unapproved plan, first restore these sections in the working draft and finalize it.
+Finalization checks required files, nonempty prose, strict JSON fields and types, safe slug IDs, complete reading order, and valid dependencies. Unknown changes, duplicate edges, self-dependencies, cycles, unexpected files, and unsafe links are errors. It reports file and field details together where possible. Invalid drafts remain editable and never replace the published plan.
 
 The tool validates an isolated snapshot and publishes `plan-versions/vN/` by atomically updating the relative `latest-plan` symlink. Concurrent finalization uses a cross-process lock and rejects a stale base version. If another session published a plan, preserve your edits separately, remove the stale working draft, prepare from the latest version, and reconcile your edits. Never overwrite finalized versions or manually change draft bookkeeping.
 

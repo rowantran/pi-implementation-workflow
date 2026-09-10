@@ -140,7 +140,7 @@ export async function finalizePlanDraft(
 		if (latest) await readPublishedVersion(files, latest);
 		const snapshot = await captureDirectory(files.workingPlan, false);
 		const errors = [...snapshot.errors];
-		const document = documentFromSnapshot(snapshot, errors, true);
+		const document = documentFromSnapshot(snapshot, errors);
 		if (typeof description !== "string" || !description.trim()) errors.push("description: provide a nonempty description when finalizing");
 		if (errors.length) throw new PlanValidationError([...new Set(errors)]);
 		const number = latest + 1;
@@ -201,7 +201,7 @@ async function readPublishedVersion(files: WorkflowFiles, number: number): Promi
 	return { number, path, createdAt: metadata.createdAt, document: document!, content: renderPlanMarkdown(document!), description: metadata.description };
 }
 
-function documentFromSnapshot(snapshot: Snapshot, errors: string[], requireChangeSections = false): PlanDocument | undefined {
+function documentFromSnapshot(snapshot: Snapshot, errors: string[]): PlanDocument | undefined {
 	const manifest = parseJson(snapshot, "plan.json", errors);
 	if (manifest) errors.push(...unknownFieldErrors(manifest, ["schemaVersion", "readingOrder"], "plan.json"));
 	const changes: unknown[] = [];
@@ -216,7 +216,7 @@ function documentFromSnapshot(snapshot: Snapshot, errors: string[], requireChang
 		goal: snapshot.files.get("goal.md"), testing: snapshot.files.get("testing.md"),
 		...(snapshot.files.has("intro.md") ? { intro: snapshot.files.get("intro.md") } : {}), changes,
 	};
-	const validation = planValidationErrors(value, { requireChangeSections });
+	const validation = planValidationErrors(value);
 	errors.push(...validation);
 	return validation.length ? undefined : validatePlanDocument(value);
 }
