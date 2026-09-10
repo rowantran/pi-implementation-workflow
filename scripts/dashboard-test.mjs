@@ -1,7 +1,11 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { runInNewContext } from "node:vm";
 import { createJiti } from "jiti/static";
 import { marked } from "marked";
 
+// Exercise the same precompiled browser library that the HTTP server serves.
+globalThis.hljs = runInNewContext(readFileSync(new URL(import.meta.resolve("@highlightjs/cdn-assets/highlight.min.js")), "utf8") + ";hljs;");
 const jiti = createJiti(import.meta.url, { moduleCache: false });
 const { renderWorkflowDashboard } = await jiti.import(
   new URL("../src/dashboard.ts", import.meta.url).pathname,
@@ -127,6 +131,10 @@ assert.ok(!html.includes("{{dashboard"));
 assert.ok(!html.includes("</title><script>"));
 assert.ok(!html.includes("</template><script>"));
 assert.ok(html.includes('src="../assets/marked.umd.js"'));
+assert.ok(html.includes('src="../assets/highlight.min.js"'));
+assert.ok(html.indexOf('src="../assets/highlight.min.js"') < html.indexOf('<script id="dashboard-app">'));
+assert.ok(html.includes('.markdown .hljs-keyword'));
+assert.equal(html.match(/--syntax-keyword:/g)?.length, 2, 'light and dark themes define syntax colors');
 assert.ok(html.includes('new URL("../assets/mermaid.min.js",location.href)'));
 assert.ok(html.includes("function loadMermaidLibrary()"));
 assert.ok(html.includes('function renderMarkdown(markdown,context)'));
@@ -262,6 +270,68 @@ assert.ok(tableMarkdown.includes("<thead>"));
 assert.ok(tableMarkdown.includes('<th align="center">Status</th>'));
 const mermaidMarkdown = renderMarkdown("```mermaid\nflowchart LR\n  A --> B\n```");
 assert.ok(mermaidMarkdown.includes('<div class="mermaid">flowchart LR\n  A --&gt; B</div>'));
+// Explicit languages and standard aliases work in every Markdown renderer.
+for (const [language, source, token] of [
+  ['typescript', 'interface Plan { count: number }', 'keyword'],
+  ['ts', 'interface Plan { count: number }', 'keyword'],
+  ['JS title="example"', 'const count = 1;', 'keyword'],
+  ['bash', 'echo "$HOME"', 'string'],
+  ['python', 'def run():\n    return True', 'keyword'],
+  ['json', '{"count": 1}', 'attr'],
+  ['html', '<div title="code">safe</div>', 'tag'],
+]) {
+  const code = renderMarkdown('```' + language + '\n' + source + '\n```');
+  assert.ok(code.includes(`class="hljs-${token}"`), language);
+  assert.ok(code.includes('class="hljs language-' + language.toLowerCase().split(' ')[0] + '"'));
+}
+assert.ok(renderMarkdown('~~~ts\nconst n: number = 1;\n~~~').includes('hljs-keyword'));
+assert.ok(renderMarkdown('```ts\nconst unfinished = "value').includes('hljs-keyword'), 'unfinished fences remain readable');
+for (const language of ['', 'unknown-language', 'text', 'plaintext']) {
+  const code = renderMarkdown('```' + language + '\nconst x = "<script>&";\n```');
+  assert.ok(!code.includes('class="hljs-'), `${language || 'unlabeled'} code is not autodetected`);
+  assert.ok(code.includes('&lt;script&gt;&amp;'));
+}
+assert.equal(renderMarkdown('`const x = 1`').trim(), '<p><code>const x = 1</code></p>', 'inline code is unchanged');
+const unsafeCode = renderMarkdown('```html\n</code><script>alert("unsafe")</script><img src=x onerror=alert(1)>\n```');
+assert.ok(unsafeCode.includes('hljs-tag'));
+assert.ok(!unsafeCode.includes('<script>'));
+assert.ok(!unsafeCode.includes('<img'));
+assert.ok(!renderMarkdown('```ts"><img/src=x/onerror=alert(1)>\nunsafe\n```').includes('<img'));
+for (const highlighter of [undefined, { getLanguage() { throw new Error('broken'); } }, { getLanguage() { return true; }, highlight() { throw new Error('broken'); } }]) {
+  const fallback = new Function('marked', 'globalThis', `${helperSource};return renderMarkdown;`)(marked, { hljs: highlighter });
+  assert.ok(fallback('```ts\nconst x = "<script>";\n```').includes('const x = &quot;&lt;script&gt;&quot;;'));
+  assert.ok(fallback('```mermaid\nflowchart LR\nA --> B\n```').includes('class="mermaid"'), 'diagrams do not depend on the highlighter');
+}
+const { highlightedCodeLines, analyzeMarkdown } = new Function(`${helperSource};return { highlightedCodeLines, analyzeMarkdown };`)();
+function codeText(html) {
+  return html.replace(/<[^>]*>/g, '').replace(/&(amp|lt|gt|quot|#x27|#39);/g, (_entity, name) => ({ amp: '&', lt: '<', gt: '>', quot: '"', '#x27': "'", '#39': "'" })[name]);
+}
+const multilineSource = '/* <script> & comment\n\n  still a comment */\nconst value = `first\n${String(1)} <b>\nlast`;\n';
+const highlightedLines = highlightedCodeLines(multilineSource, 'js');
+assert.equal(highlightedLines.map(codeText).join('\n'), multilineSource, 'multiline highlighting preserves the exact code');
+for (const line of highlightedLines) {
+  let depth = 0;
+  for (const tag of line.match(/<\/?span\b[^>]*>/g) || []) {
+    depth += tag.startsWith('</') ? -1 : 1;
+    assert.ok(depth >= 0, 'a syntax span cannot escape its diff row');
+  }
+  assert.equal(depth, 0, 'every highlighted row has balanced spans');
+}
+assert.ok(highlightedLines[2].includes('class="hljs-comment"'), 'comments retain their multiline context');
+const multilineBefore = '```js\n/* before\n  old comment\n*/\nconst value = 1;\n```';
+const multilineAfter = multilineBefore.replace('old comment', 'new comment');
+const multilineDiff = renderRichDiff(lineDiff(multilineBefore, multilineAfter), multilineBefore, multilineAfter);
+assert.match(multilineDiff, /class="diff-code-line remove"[^>]*><span class="hljs-comment">  old comment<\/span><\/span>/);
+assert.match(multilineDiff, /class="diff-code-line add"[^>]*><span class="hljs-comment">  new comment<\/span><\/span>/);
+for (const [beforeCode, afterCode] of [['', multilineAfter], [multilineBefore, '']]) {
+  const diff = renderRichDiff(lineDiff(beforeCode, afterCode), beforeCode, afterCode);
+  assert.ok(diff.includes('hljs-keyword'), 'wholly added or removed blocks are highlighted');
+  assert.ok(diff.includes('data-diff-block-index="0"'), 'code changes retain diff navigation');
+}
+const blocks = analyzeMarkdown('~~~ts extra-info\nconst n = 1;\n~~~\n\n```text\nconst plain = 1;\n```\n\n```js\n/* unfinished\ncomment');
+assert.ok(blocks[1].html.includes('hljs-keyword'));
+assert.equal(blocks[5].html, 'const plain = 1;', 'separate blocks use their own language');
+assert.ok(blocks.at(-1).html.includes('hljs-comment'), 'unclosed blocks keep multiline highlighting');
 assert.ok(!renderMarkdown('<script>alert("unsafe")</script>').includes("<script>"));
 assert.ok(!renderMarkdown("[unsafe](javascript:alert(1))").includes("javascript:"));
 const diagramBefore = '```mermaid\nflowchart LR\n A --> B\n```';
@@ -269,6 +339,18 @@ const diagramAfter = '```mermaid\nflowchart LR\n A --> C\n```';
 const diagramDiff = renderRichDiff(lineDiff(diagramBefore, diagramAfter), diagramBefore, diagramAfter);
 assert.equal(diagramDiff.match(/class="mermaid"/g)?.length, 2, 'changed diagrams keep rich before/after renderings');
 assert.ok(diagramDiff.includes('A --&gt; C'));
+for (const nested of [
+  '> ```ts\n> const count: number = 1;\n> ```',
+  '- Example:\n\n  ```ts\n  const count: number = 1;\n  ```',
+]) {
+  const changed = nested.replace('= 1', '= 2');
+  const diff = renderRichDiff(lineDiff(nested, changed), nested, changed);
+  assert.equal(diff.match(/class="hljs-keyword"/g)?.length, 2, 'nested fences use rich highlighted before/after blocks');
+  assert.ok(diff.includes('data-diff-block-index="0"'));
+}
+const indentedBefore = '    const x = "<script>";';
+const indentedAfter = indentedBefore.replace('const', 'let');
+assert.equal(renderRichDiff(lineDiff(indentedBefore, indentedAfter), indentedBefore, indentedAfter).match(/<pre><code/g)?.length, 2, 'legacy indented code stays code, without guessing a language');
 const tableBefore = '| Name | State |\n| --- | --- |\n| Reader | Draft |';
 const tableAfter = tableBefore.replace('Draft', 'Finalized');
 assert.equal(renderRichDiff(lineDiff(tableBefore, tableAfter), tableBefore, tableAfter).match(/<table>/g)?.length, 2, 'changed tables stay tables');
@@ -295,7 +377,8 @@ assert.ok(plannedChangeReview.includes('class="review-planned-design"'));
 assert.ok(plannedChangeReview.includes('id="review-change-render-review"'));
 assert.ok(plannedChangeReview.includes('<span class="planned-review-id">1.</span>'));
 assert.ok(plannedChangeReview.includes('Show the <strong>report</strong>'));
-assert.ok(plannedChangeReview.includes('render(report)'));
+assert.ok(codeText(plannedChangeReview).includes('render(report)'));
+assert.ok(plannedChangeReview.includes('<span class="hljs-keyword">interface</span>'), 'review walkthroughs highlight code');
 assert.ok(!plannedChangeReview.includes('<h4>What</h4>'));
 assert.ok(!plannedChangeReview.includes('<h4>Pseudocode</h4>'));
 assert.ok(!plannedChangeReview.includes('undefined'));
@@ -510,8 +593,8 @@ assert.ok(richDiff.includes('<h2 class="diff-line context">Steps</h2>'));
 assert.ok(richDiff.includes('<strong>formatted text</strong>'));
 assert.match(richDiff, /<li class="diff-line remove"[^>]* value="2">Show raw source<\/li>/);
 assert.match(richDiff, /<li class="diff-line add"[^>]* value="2">Show a rich diff<\/li>/);
-assert.ok(richDiff.includes('<span class="diff-code-line remove">const view = &quot;raw&quot;;</span>'));
-assert.ok(richDiff.includes('<span class="diff-code-line add">const view = &quot;rich&quot;;</span>'));
+assert.ok(richDiff.includes('<span class="diff-code-line remove"><span class="hljs-keyword">const</span> view = <span class="hljs-string">&quot;raw&quot;</span>;</span>'));
+assert.ok(richDiff.includes('<span class="diff-code-line add"><span class="hljs-keyword">const</span> view = <span class="hljs-string">&quot;rich&quot;</span>;</span>'));
 assert.equal(richDiff.match(/data-diff-block-index=/g)?.length, 1, "nearby list and code changes form one block");
 const contextRow = { kind: "context", old: 1, new: 1, text: "same" };
 const changedRow = { kind: "add", old: null, new: 1, text: "changed" };

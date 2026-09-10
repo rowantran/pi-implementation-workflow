@@ -211,7 +211,7 @@ try {
 
 	const health = await rawRequest(port, dashboardServer.DASHBOARD_HEALTH_PATH);
 	assert.deepEqual(JSON.parse(health.body), dashboardServer.dashboardServerIdentity(workflowsRoot));
-	assert.equal(JSON.parse(health.body).protocolVersion, 3);
+	assert.equal(JSON.parse(health.body).protocolVersion, 4);
 	const workflowResponse = await rawRequest(port, "/implementation-workflow/workflows/workflow-one");
 	assert.equal(workflowResponse.status, 200);
 	assert.equal(workflowResponse.body, "<h1>workflow one</h1>");
@@ -230,6 +230,18 @@ try {
 	assert.equal(markedAsset.status, 200);
 	assert.equal(markedAsset.headers["content-type"], "text/javascript; charset=utf-8");
 	assert.ok(markedAsset.body.includes("marked"));
+	const highlightAsset = await rawRequest(port, "/implementation-workflow/assets/highlight.min.js");
+	assert.equal(highlightAsset.status, 200);
+	assert.equal(highlightAsset.headers["content-type"], "text/javascript; charset=utf-8");
+	assert.equal(highlightAsset.headers["x-content-type-options"], "nosniff");
+	assert.equal(highlightAsset.body, await readFile(new URL(import.meta.resolve("@highlightjs/cdn-assets/highlight.min.js")), "utf8"));
+	const highlightHead = await rawRequest(port, "/workflow-dashboards/implementation-workflow/assets/highlight.min.js", "HEAD");
+	assert.equal(highlightHead.status, 200);
+	assert.equal(highlightHead.body, "");
+	assert.equal(Number(highlightHead.headers["content-length"]), Buffer.byteLength(highlightAsset.body));
+	for (const invalid of ["../package.json", "%2e%2e%2fpackage.json", "highlight.min.js/extra", "languages/typescript.min.js"]) {
+		assert.equal((await rawRequest(port, `/implementation-workflow/assets/${invalid}`)).status, 404);
+	}
 	const mermaidAsset = await rawRequest(port, "/workflow-dashboards/implementation-workflow/assets/mermaid.min.js", "HEAD");
 	assert.equal(mermaidAsset.status, 200);
 	assert.equal(mermaidAsset.body, "");
@@ -395,7 +407,7 @@ try {
 	await new Promise((resolve) => unrelated.close(resolve));
 
 	for (const identity of [
-		{ ...dashboardServer.dashboardServerIdentity(workflowsRoot), protocolVersion: 2 },
+		{ ...dashboardServer.dashboardServerIdentity(workflowsRoot), protocolVersion: 3 },
 		dashboardServer.dashboardServerIdentity(join(temporaryRoot, "another-index")),
 	]) {
 		const incompatible = createHttpServer((_request, response) => {
@@ -411,7 +423,7 @@ try {
 			assert.equal(
 				(await dashboardServer.ensureSharedDashboardServer(incompatibleConfig, workflowsRoot)).reason,
 				"port-conflict",
-				"a legacy global-artifact server or different locator index cannot be reused",
+				"a server without highlighting assets or a different locator index cannot be reused",
 			);
 		} finally {
 			await new Promise((resolve) => incompatible.close(resolve));

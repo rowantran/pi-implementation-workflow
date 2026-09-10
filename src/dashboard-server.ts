@@ -17,7 +17,8 @@ import {
 } from "./storage.ts";
 
 export const DEFAULT_DASHBOARD_PORT = 43121;
-export const DASHBOARD_SERVER_PROTOCOL_VERSION = 3;
+// Version 4 adds the syntax-highlighting asset required by current dashboards.
+export const DASHBOARD_SERVER_PROTOCOL_VERSION = 4;
 export const DASHBOARD_HEALTH_PATH = "/implementation-workflow/health";
 export const DASHBOARD_REVISION_HEADER = "X-Implementation-Workflow-Revision";
 const PROCESS_SERVER_KEY = Symbol.for("pi-implementation-workflow.dashboard-server.v1");
@@ -27,6 +28,7 @@ const MAX_DASHBOARD_REVISION_SCAN_BYTES = 8 * 1024;
 const DASHBOARD_REVISION_PATTERN = /<meta name="implementation-workflow-revision" content="([a-f0-9]{64})">/;
 const DASHBOARD_ASSETS = new Map([
 	["marked.umd.js", fileURLToPath(new URL("./marked.umd.js", import.meta.resolve("marked")))],
+	["highlight.min.js", fileURLToPath(import.meta.resolve("@highlightjs/cdn-assets/highlight.min.js"))],
 	["mermaid.min.js", fileURLToPath(new URL("./mermaid.min.js", import.meta.resolve("mermaid")))],
 ]);
 
