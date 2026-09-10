@@ -170,7 +170,7 @@ assert.ok(planningSystem.includes("reading order is distinct from execution orde
 assert.ok(planningSystem.includes("Never use display numbers as identifiers"));
 assert.ok(planningSystem.includes("Declare dependencies only in change_metadata.json"));
 assert.ok(planningSystem.includes("Every change must appear exactly once in readingOrder"));
-assert.ok(planningSystem.includes("no heading names, field order, or heading levels are required"));
+assert.ok(planningSystem.includes("These sections are a suggested writing format, not a schema"));
 assert.ok(planningSystem.includes("Forward references are allowed"));
 assert.ok(planningSystem.includes("real, direct prerequisites"));
 assert.ok(planningSystem.includes("without duplicates, self-references, unknown IDs, or cycles"));
@@ -184,6 +184,10 @@ assert.ok(planningSystem.includes("Put individual algorithms, per-change impleme
 assert.ok(planningSystem.includes("put test specifics in testing.md."));
 assert.ok(planningSystem.includes("omit intro.md if it adds nothing"));
 assert.ok(planningSystem.includes("Write change.md as freeform Markdown"));
+assert.ok(planningSystem.includes("Prefer **What**, **Why**, and optional **Pseudocode** sections"));
+assert.match(planningSystem, /\*\*What\*\*\nWhat changes\.\n\n\*\*Why\*\*\nWhy it is needed in relation to the overall plan\.\n\n\*\*Pseudocode\*\*\n/);
+assert.ok(planningSystem.includes("Omit the entire Pseudocode section"));
+assert.doesNotMatch(planningSystem, /exactly one standalone \*\*What\*\*|Finalization and planning approval reject/);
 assert.ok(planningSystem.includes("Include pseudocode only when it clarifies meaningful behavior"));
 assert.ok(planningSystem.includes("Do not come up with meaningless pseudocode just to fill out a template"));
 assert.doesNotMatch(planningSystem, /PC-\d+|standalone \*\*Depends on\*\*/);

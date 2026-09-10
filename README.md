@@ -60,7 +60,7 @@ The extension saves the submitted ask verbatim as immutable workflow metadata, c
 
 Press `Ctrl+Alt+D` or run `/workflow-dashboard` to regenerate the dashboard and show its link again.
 
-The plan uses directories for structure, JSON for relationships, and freeform Markdown for explanations. `goal.md` states the desired outcome, optional `intro.md` gives context, and `testing.md` lists explicit verification criteria. Each planned change has a stable descriptive slug, JSON metadata, and a `change.md` explanation. Explain what changes and why; include pseudocode only when it clarifies meaningful behavior, state, interfaces, or data flow. No Markdown heading names, levels, or field order are required. Planned changes and testing criteria become separate units of implementation review.
+The plan uses directories for structure, JSON for relationships, and freeform Markdown for explanations. `goal.md` states the desired outcome, optional `intro.md` gives context, and `testing.md` lists explicit verification criteria. Each planned change has a stable descriptive slug, JSON metadata, and a `change.md` explanation. The planning prompt suggests **What**, **Why**, and optional **Pseudocode** sections for readability. Include pseudocode only when it clarifies meaningful behavior, state, interfaces, or data flow. This is writing guidance, not a schema: the application does not extract or validate these sections, and no Markdown heading names, levels, or field order are required. Planned changes and testing criteria become separate units of implementation review.
 
 ### Change identity, reading order, and dependencies
 

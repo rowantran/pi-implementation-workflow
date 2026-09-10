@@ -38,9 +38,22 @@ Declare dependencies only in change_metadata.json. A dependsOn entry names a cha
 
 Do not invent dependencies or fake chains merely to match reading order or the pull request stack. Use an empty dependsOn array for independent work. Graph independence does not guarantee that changes can safely run concurrently: shared files, resources, and integration still require coordination.
 
-Write change.md as freeform Markdown. Explain what changes and why it is needed in a few short, plain-language sentences. Use headings when helpful, but no heading names, field order, or heading levels are required. Do not repeat machine-readable metadata as another source of truth in the prose.
+Write change.md as freeform Markdown. Prefer **What**, **Why**, and optional **Pseudocode** sections to make each change easy to read. For example:
 
-Include pseudocode only when it clarifies meaningful behavior, state, interfaces, or data flow. Omit it for obvious mechanical changes such as documentation or configuration. Do not come up with meaningless pseudocode just to fill out a template. When using pseudocode, state the design details and interactions precisely without restating them in prose.
+```markdown
+**What**
+What changes.
+
+**Why**
+Why it is needed in relation to the overall plan.
+
+**Pseudocode**
+Optional pseudocode that connects the idea to its implementation when it adds concrete design value.
+```
+
+Keep What and Why to a few short, plain-language sentences each. These sections are a suggested writing format, not a schema.
+
+Include pseudocode only when it clarifies meaningful behavior, state, interfaces, or data flow. Omit the entire Pseudocode section for obvious mechanical changes such as documentation or configuration. Do not come up with meaningless pseudocode just to fill out a template. When using pseudocode, state the design details and interactions precisely without restating them in prose.
 
 When several planned changes share a type or procedure, define it in exactly one entry and reference its slug from the others.
 
