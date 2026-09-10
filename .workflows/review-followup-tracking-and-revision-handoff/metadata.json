@@ -1,0 +1,11 @@
+{
+  "version": 6,
+  "identifier": "review-followup-tracking-and-revision-handoff",
+  "description": "Review followups with simple implementation flags, automatic handoff, and independent review using shared plan files",
+  "ask": "plan below:\n\nName: Revise: fred-immutable-image-deployment-with-distributed-locking · Shared ECS image deployment with Pulumi templates, owner-reentrant locks, GitHub automation, and safe FRED migration\n File: /home/ubuntu/.pi/agent/sessions/--home-ubuntu-workplace-isara-.worktrees-fred-immutable-image-deployment-with-distributed-locking--/2026-09-10T21-33-58-606Z_01a08d3d-e3cd-7089-aa89-86ab8b9b6ba4.jsonl\n ID: 01a08d3d-e3cd-7089-aa89-86ab8b9b6ba4\n\nlook at the way that I interacted with the review agent prior to this session. based on this, I think a more elegant flow would be:\n- allow the review agent to add new planned changes, which are marked as \"followups\" or something similar to distinguish them from the original planned changes\n- when proceeding to the revise phase, the agent should just be explicitly instructed to implement the followup changes which haven't already been implemented, rather than me as the user needing to summarize the findings from the 1st review phase and relay them to the revise agent.\n    - alternatively, we just drop the concept of \"revise\" as its own phase and make it another /workflow-implement phase. this makes me wonder what the existing behavior is if we were to run /workflow-implement a second time\n- after implementing the followup changes, the next /review should be instructed to include the followup changes in addition to the original planned changes",
+  "baseBranch": "main",
+  "baseCommit": "db4ee0c811260c005780f89e89e28b8560a4844f",
+  "workflowBranch": "workflow/review-followup-tracking-and-revision-handoff",
+  "createdAt": "2026-09-10T21:44:38.051Z",
+  "approvedPlanVersion": 4
+}

@@ -1,0 +1,4 @@
+{
+  "title": "Use one implementation phase for original work and followups",
+  "dependsOn": ["capture-review-decisions", "track-followup-implementation"]
+}

@@ -1,0 +1,1 @@
+Save review followups and progress for every planned change through the existing on-disk plan editing and versioning flow. Use `/workflow-implement` to continue unfinished original work and accepted followups without repeating completed work, remove `/workflow-revise`, and review the complete agreed scope.
