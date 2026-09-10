@@ -120,7 +120,7 @@ try {
 	await createWorkflow(files, workflow);
 	await writePlanDocument(files.workingPlan, makePlanDocument({
 		intro: "Validate saved plan artifacts before committing them.",
-		changes: [{ id: "store-report", title: "Store the report", dependsOn: [], content: "Keep the report with the workflow." }],
+		changes: [{ id: "store-report", title: "Store the report", dependsOn: [], content: "**What**\n\nKeep the report with the workflow.\n\n**Why**\n\nPreserve review findings in the committed workflow artifacts." }],
 	}));
 	await finalizePlanDraft(files, "First saved plan", 0);
 	for (const path of ["review.json", "review.md", "reviews/0001.json", "reviews/0001.md"]) await save(cwd, `${bundle}/${path}`, `Saved ${path}\n`);

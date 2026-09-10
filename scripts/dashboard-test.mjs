@@ -8,6 +8,8 @@ const { renderWorkflowDashboard } = await jiti.import(
 );
 
 const { renderPlanMarkdown } = await jiti.import(new URL('../src/planned-changes.ts', import.meta.url).pathname);
+// Read-only fixtures model historical published plans: rendering must preserve
+// freeform Markdown without injecting the sections now required at finalization.
 function planWithNodes(nodes, overrides = {}) {
   return {
     schemaVersion: 1,
@@ -49,6 +51,7 @@ const data = {
       sufficient: { status: "yes", explanation: "Complete." },
       concerns: [],
     },
+    // Historical review content remains readable without named design sections.
     plannedChanges: [{
       id: "render-review",
       title: "Render the review",
@@ -658,6 +661,25 @@ assert.ok(changeSection.includes('A heading inside freeform prose'));
 assert.ok(changeSection.includes('id="plan-change-read-schema"'));
 assert.ok(changeSection.includes('Implement <strong>read-schema</strong> safely.'), 'planned-change details remain in their own guided section');
 assert.ok(!changeSection.includes('<strong>What</strong>'));
+// New sectioned plans retain their labels in guided/full plan and review views;
+// optional pseudocode is neither inserted nor stripped by the renderer.
+const authoredDesign = '**What**\nSave a review.\n\n**Why**\nKeep its results available.';
+for (const pseudocode of ['', '\n\n**Pseudocode**\n```text\nsave(review)\n```']) {
+  for (const fullDocument of [false, true]) {
+    const content = authoredDesign + pseudocode;
+    const rendered = [
+      sectionHelpers.renderPlanDestination({ kind: 'change', change: { ...graphStructure.changes[0], content } }, fullDocument),
+      renderReviewDestination({ kind: 'change', number: 1, change: { ...data.review.plannedChanges[0], content } }, fullDocument),
+    ];
+    for (const output of rendered) {
+      assert.equal(output.match(/<strong>What<\/strong>/g)?.length, 1);
+      assert.equal(output.match(/<strong>Why<\/strong>/g)?.length, 1);
+      assert.ok(output.indexOf('<strong>What</strong>') < output.indexOf('<strong>Why</strong>'));
+      assert.equal(output.includes('<strong>Pseudocode</strong>'), Boolean(pseudocode));
+      if (pseudocode) assert.ok(output.includes('save(review)'));
+    }
+  }
+}
 const guidedLinks = sectionHelpers.renderDependencyRelations(graph, 'integrate');
 assert.ok(guidedLinks.includes('href="#plan/change/read-schema"'));
 assert.ok(guidedLinks.includes('1. Read shared schema</a>'));

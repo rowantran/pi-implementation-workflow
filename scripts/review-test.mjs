@@ -22,6 +22,8 @@ const plannedChanges = [
     title: "Store the report",
     dependsOn: [],
     content: [
+      "**What**",
+      "",
       "Persist structured findings so the review survives cleanup.",
       "",
       "### Durability constraints",
@@ -32,6 +34,8 @@ const plannedChanges = [
       "```ts",
       "type ReviewReport = { findings: Finding[] };",
       "```",
+      "",
+      "**Why**",
       "",
       "> **Decision:** Keep the freeform rationale with the design.",
       "",
@@ -44,7 +48,7 @@ const plannedChanges = [
     id: "render-report",
     title: "Render the report",
     dependsOn: ["store-report"],
-    content: "Show findings in the dashboard so the review is easy to scan.\n\nRender all original Markdown without requiring named design fields.",
+    content: "**What**\n\nShow findings in the dashboard so the review is easy to scan.\n\nRender all original Markdown, including the design sections.\n\n**Why**\n\nReaders need the complete approved design beside the review findings.",
   },
 ];
 const plan = {
@@ -500,7 +504,7 @@ const multiDependencyPlan = {
   changes: [
     { ...plannedChanges[0] },
     { ...plannedChanges[1], dependsOn: ["store-report", "shared-types"] },
-    { id: "shared-types", title: "Shared types", dependsOn: [], content: "Define the shared contracts." },
+    { id: "shared-types", title: "Shared types", dependsOn: [], content: "**What**\n\nDefine the shared contracts.\n\n**Why**\n\nKeep report storage and rendering compatible." },
   ],
 };
 assert.equal(fingerprint(multiDependencyPlan), fingerprint({

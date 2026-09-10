@@ -1,3 +1,5 @@
+import { lexer } from "marked";
+
 export const PLAN_SCHEMA_VERSION = 1;
 /** Stable, path-safe names, independent of display order. Numeric prefixes are not IDs. */
 export const PLANNED_CHANGE_ID_PATTERN = /^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/;
@@ -6,7 +8,7 @@ export interface PlannedChange {
 	id: string;
 	title: string;
 	dependsOn: string[];
-	/** Freeform Markdown. No prescribed What/Why/Pseudocode fields. */
+	/** Markdown explanation; new plans require What/Why/optional Pseudocode sections. */
 	content: string;
 }
 
@@ -50,8 +52,52 @@ export function isPlannedChangeId(value: unknown): value is string {
 	return typeof value === "string" && value.length <= 80 && PLANNED_CHANGE_ID_PATTERN.test(value);
 }
 
+interface PlanValidationOptions {
+	/** Authoring gate only. Historical snapshots and approved reviews remain readable. */
+	requireChangeSections?: boolean;
+}
+
+/** Check prose structure without using Markdown for change identity or metadata. */
+function changeSectionErrors(content: string, path: string): string[] {
+	const sections: Array<{ name: string; lines: string[] }> = [];
+	const preamble: string[] = [];
+	const append = (text: string) => (sections.at(-1)?.lines ?? preamble).push(text);
+	// Only top-level paragraphs can declare labels. Code fences (including tilde
+	// fences), indented code, block quotes, lists, and HTML examples are content.
+	for (const token of lexer(content.replaceAll("\r\n", "\n"))) {
+		if (token.type !== "paragraph") { append(token.raw); continue; }
+		// A label must also be bold Markdown, not text inside a multiline code span.
+		const boldOffsets = new Set<number>();
+		let offset = 0;
+		for (const inline of token.tokens ?? []) {
+			if (inline.type === "strong") boldOffsets.add(offset);
+			offset += inline.raw.length;
+		}
+		offset = 0;
+		for (const line of token.text.split("\n")) {
+			const match = /^[ \t]*\*\*(What|Why|Pseudocode)\*\*:?[ \t]*$/i.exec(line);
+			if (match && boldOffsets.has(offset + line.indexOf("**"))) sections.push({ name: match[1]!.toLowerCase(), lines: [] });
+			else append(line);
+			offset += line.length + 1;
+		}
+	}
+	const errors: string[] = [];
+	const names = sections.map(({ name }) => name).join(",");
+	if (names !== "what,why" && names !== "what,why,pseudocode") {
+		errors.push(`${path}: must contain standalone **What** and **Why** sections exactly once, in that order, followed by at most one optional **Pseudocode** section`);
+	}
+	if (preamble.join("\n").trim()) errors.push(`${path}: begin with **What**; move all change prose inside the sections`);
+	for (const section of sections) {
+		if (!section.lines.join("\n").trim()) {
+			const label = section.name[0]!.toUpperCase() + section.name.slice(1);
+			errors.push(`${path}: ${label} section is empty${section.name === "pseudocode" ? "; omit it when it is not useful" : "; add a short explanation"}`);
+		}
+	}
+	return errors;
+}
+
 /** Collect independent errors rather than requiring one edit/finalize cycle per error. */
-export function planValidationErrors(value: unknown): string[] {
+export function planValidationErrors(value: unknown, { requireChangeSections = false }: PlanValidationOptions = {}): string[] {
 	if (!isPlanObject(value)) return ["plan: expected an object"];
 	const errors = unknownFieldErrors(value, ["schemaVersion", "readingOrder", "goal", "intro", "testing", "changes"], "plan");
 	if (value.schemaVersion !== PLAN_SCHEMA_VERSION) errors.push("plan.json: schemaVersion must be 1");
@@ -76,6 +122,7 @@ export function planValidationErrors(value: unknown): string[] {
 		if (!isPlannedChangeId(change.id)) errors.push(`${path}: invalid change ID; use lowercase kebab-case slugs starting with a letter (at most 80 characters)`);
 		if (typeof change.title !== "string" || !change.title.trim() || /[\r\n\0]/.test(change.title)) errors.push(`${path}/change_metadata.json: title must be a nonempty single-line string`);
 		if (typeof change.content !== "string" || !change.content.trim()) errors.push(`${path}/change.md: must contain nonempty prose`);
+		else if (requireChangeSections) errors.push(...changeSectionErrors(change.content, `${path}/change.md`));
 		if (!Array.isArray(change.dependsOn)) errors.push(`${path}/change_metadata.json: dependsOn must be an array of change IDs`);
 		const dependencies: string[] = [];
 		const seen = new Set<string>();
@@ -123,8 +170,8 @@ export function planValidationErrors(value: unknown): string[] {
 	return errors;
 }
 
-export function validatePlanDocument(value: unknown): PlanDocument {
-	const errors = planValidationErrors(value);
+export function validatePlanDocument(value: unknown, options: PlanValidationOptions = {}): PlanDocument {
+	const errors = planValidationErrors(value, options);
 	if (errors.length) throw new PlanValidationError(errors);
 	const document = value as PlanDocument;
 	const byId = new Map(document.changes.map((change) => [change.id, change]));

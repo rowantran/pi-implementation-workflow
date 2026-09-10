@@ -12,8 +12,8 @@ const plan = {
   intro: "Keep structure in JSON and prose in Markdown.",
   testing: "Verify the saved report and dashboard.",
   changes: [
-    { id: "store-report", title: "Store the report", dependsOn: [], content: "Store a structured review.\n\n## Any heading is fine\n\n```ts\nsave(report);\n```" },
-    { id: "document-report", title: "Document the report", dependsOn: ["store-report"], content: "Explain how the reviewer reads the saved report. No mandatory fields." },
+    { id: "store-report", title: "Store the report", dependsOn: [], content: "**What**\nStore a structured review.\n\n**Why**\nThe report must survive the review session.\n\n**Pseudocode**\n```ts\nsave(report);\n```" },
+    { id: "document-report", title: "Document the report", dependsOn: ["store-report"], content: "**What**\nExplain how the reviewer reads the saved report.\n\n**Why**\nReaders need to find the review results." },
   ],
 };
 assert.match(planningCompletionError(undefined, "Description"), /No finalized plan exists/);
@@ -37,6 +37,67 @@ assert.throws(() => parsePlannedChanges(markdown), /expected an object/, "Markdo
 const reversed = { ...plan, readingOrder: [...plan.readingOrder].reverse() };
 assert.deepEqual(parsePlannedChanges(reversed).map(({ id }) => id), reversed.readingOrder);
 assert.deepEqual(getPlanDependencyGraph(reversed).nodes.map(({ dependsOn }) => dependsOn), [[], ["store-report"]]);
+
+// Section rules apply to authoring, not the stored schema or historical readers.
+const historicalPlan = { ...plan, changes: plan.changes.map((change) => ({ ...change, content: "An existing freeform explanation." })) };
+assert.deepEqual(parsePlannedChanges(historicalPlan).map(({ content }) => content), ["An existing freeform explanation.", "An existing freeform explanation."]);
+assert.ok(renderPlanMarkdown(historicalPlan).includes("An existing freeform explanation."));
+assert.equal(getPlanDependencyGraph(historicalPlan).status, "valid");
+assert.match(planningCompletionError(historicalPlan, "Existing unapproved plan"), /standalone \*\*What\*\* and \*\*Why\*\*/);
+
+const basicContent = "**What**\nSave the report.\n\n**Why**\nKeep it available.";
+function withContent(content) {
+  return { ...plan, changes: [{ ...plan.changes[0], content }, plan.changes[1]] };
+}
+function invalidContent(content, pattern) {
+  const value = withContent(content);
+  assert.throws(() => validatePlanDocument(value, { requireChangeSections: true }), pattern);
+  assert.match(planningCompletionError(value, "Review reports"), pattern);
+  // This must not invalidate an already-approved snapshot or change graph.
+  assert.equal(getPlanDependencyGraph(value).status, "valid");
+}
+const sectionOrder = /standalone \*\*What\*\* and \*\*Why\*\* sections exactly once, in that order/;
+for (const content of [
+  "Freeform prose has no required sections.",
+  "**What**\nOnly a change description.",
+  "**Why**\nOnly a reason.",
+  "**Why**\nReason first.\n\n**What**\nChange second.",
+  "**What**\nChange.\n\n**Pseudocode**\nDesign.\n\n**Why**\nReason.",
+  basicContent + "\n\n**What**\nRepeated description.",
+  basicContent + "\n\n**Why**\nRepeated reason.",
+  basicContent + "\n\n**Pseudocode**\nDesign.\n\n**Pseudocode**\nRepeated design.",
+  "**What** inline description.\n\n**Why** inline reason.",
+  "## What\nChange.\n\n## Why\nReason.",
+  "```markdown\n" + basicContent + "\n```",
+  "~~~markdown\n" + basicContent + "\n~~~",
+  basicContent.split("\n").map((line) => "    " + line).join("\n"),
+  basicContent.split("\n").map((line) => "> " + line).join("\n"),
+  "<pre>\n" + basicContent + "\n</pre>",
+  "**What**\nChange.\n\n`example\n**Why**\nNot a real label.\n`",
+]) invalidContent(content, sectionOrder);
+invalidContent(basicContent.replace("Save the report.", " \t"), /store-report\/change.md: What section is empty/);
+invalidContent(basicContent.replace("Keep it available.", "\n"), /store-report\/change.md: Why section is empty/);
+invalidContent(basicContent + "\n\n**Pseudocode**\n\t", /Pseudocode section is empty; omit it/);
+invalidContent("Unsectioned explanation.\n\n" + basicContent, /begin with \*\*What\*\*/);
+
+const validContents = [basicContent, basicContent.replaceAll("\n", "\r\n"),
+  basicContent.replace("**What**", "**wHaT**:").replace("**Why**", "**WHY**:"),
+  basicContent + "\n\n**Pseudocode**\n```text\nsave(report)\n```",
+  basicContent + "\n\n### Details\n\n| Field | Value |\n| --- | --- |\n| stable | slug |\n\n```mermaid\ngraph TD; A-->B;\n```",
+];
+for (const fence of ["```", "~~~", "````", "~~~~"]) {
+  // Labels inside examples cannot create duplicate sections. Shorter fences and
+  // apparent closing fences with text do not end the surrounding code block.
+  validContents.push(basicContent + `\n\n**Pseudocode**\n${fence}markdown\n**What**\nExample.\n${fence}still-code\n${fence.slice(0, -1)}\n**Why**\nExample.\n${fence}`);
+}
+validContents.push(basicContent + "\n\nAn inline example: `\n**What**\n**Why**\n**Pseudocode**\n`.");
+validContents.push(basicContent + "\n\n    **What**\n    Example in indented code.\n\n> **Why**\n> Quoted example.\n\n- **Pseudocode**\n  List example.\n\n<pre>\n**What**\nHTML example.\n</pre>");
+for (const content of validContents) {
+  const value = withContent(content);
+  assert.equal(planningCompletionError(value, "Review reports"), undefined, content);
+  const result = validatePlanDocument(value, { requireChangeSections: true });
+  assert.equal(result.changes.find(({ id }) => id === "store-report").content, content, "validation preserves Markdown verbatim");
+}
 
 function invalid(value, pattern) {
   assert.throws(() => validatePlanDocument(value), pattern);
@@ -82,4 +143,4 @@ const changes = Array.from({ length: 12000 }, (_, index) => ({
 }));
 const chain = { ...withoutIntro, readingOrder: changes.map(({ id }) => id), changes };
 assert.equal(getPlanDependencyGraph(chain).nodes.length, 12000);
-console.log("Planning tests passed: structured plans, freeform prose, stable slugs, reading order, aggregated validation, and dependency DAGs.");
+console.log("Planning tests passed: What/Why/optional Pseudocode, historical prose, stable slugs, reading order, aggregated validation, and dependency DAGs.");

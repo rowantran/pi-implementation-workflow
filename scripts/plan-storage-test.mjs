@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { fork } from "node:child_process";
+import { createHash } from "node:crypto";
 import { mkdtemp, mkdir, readFile, readdir, readlink, rm, stat, symlink, writeFile, lstat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -10,10 +11,10 @@ const { workflowFiles, createWorkflow, finalizePlanDraft, preparePlanDraft, read
   await jiti.import(new URL("../src/storage.ts", import.meta.url).pathname);
 const plan = {
   schemaVersion: 1, readingOrder: ["wire-storage", "define-schema"], goal: "Store plans as directories.",
-  intro: "Allow freeform prose without parsing Markdown headings.", testing: "Run storage and validation tests.",
+  intro: "Keep plan metadata separate from Markdown explanations.", testing: "Run storage and validation tests.",
   changes: [
-    { id: "define-schema", title: "Define the schema", dependsOn: [], content: "Accept a manifest and change metadata.\n\n## Testing\n\nThis is change prose, not global testing.\n" },
-    { id: "wire-storage", title: "Wire storage", dependsOn: ["define-schema"], content: "Snapshot and validate a draft before publishing it.\n\n```ts\nfinalize(draft);\n```\n" },
+    { id: "define-schema", title: "Define the schema", dependsOn: [], content: "**What**\nAccept a manifest and change metadata.\n\n## Testing\n\nThis is change prose, not global testing.\n\n**Why**\nKeep identity and dependencies separate from prose.\n" },
+    { id: "wire-storage", title: "Wire storage", dependsOn: ["define-schema"], content: "**What**\nSnapshot and validate a draft before publishing it.\n\n**Why**\nKeep invalid drafts out of published history.\n\n**Pseudocode**\n```ts\nfinalize(draft);\n```\n" },
   ],
 };
 const files = workflowFiles("directory-plan", temporary);
@@ -109,6 +110,26 @@ try {
   await assert.rejects(atomicWrite(files.latestPlan, "not a pointer"), /symbolic links/);
 
   const changeRoot = join(files.workingPlan, "planned-changes", "wire-storage");
+  // Finalization enforces the same authoring format as planning approval. Every
+  // rejection must preserve the editable draft, history, and latest pointer.
+  for (const content of [
+    "A freeform explanation without sections.",
+    "**What**\nDescription without a reason.",
+    "**Why**\nReason.\n\n**What**\nChange.",
+    "**What**\nChange.\n\n**Why**\nReason.\n\n**Why**\nDuplicate.",
+    "**What**\n\n**Why**\nReason.",
+    "**What**\nChange.\n\n**Why**\n\n**Pseudocode**\nDesign.",
+    "**What**\nChange.\n\n**Why**\nReason.\n\n**Pseudocode**\n",
+    "```markdown\n**What**\nChange.\n\n**Why**\nReason.\n```",
+  ]) await invalid(() => writeFile(join(changeRoot, "change.md"), content), /wire-storage\/change.md:.*(?:standalone|section is empty)/);
+  await invalid(async () => {
+    await writeFile(join(changeRoot, "change.md"), "Missing sections.");
+    await writeFile(join(files.workingPlan, "goal.md"), " ");
+    await writeJson(join(changeRoot, "change_metadata.json"), { title: "Wire", dependsOn: ["missing"] });
+  }, (error) => {
+    for (const pattern of [/goal.md/, /unknown change missing/, /wire-storage\/change.md: must contain standalone/]) assert.match(error.message, pattern);
+    return true;
+  });
   await invalid(async () => {
     await writeFile(join(files.workingPlan, "plan.json"), "{broken");
     await writeFile(join(files.workingPlan, "goal.md"), " ");
@@ -233,5 +254,43 @@ try {
   await rm(files.versions, { recursive: true });
   await symlink(temporary, files.versions, "dir");
   await assert.rejects(listPlanVersions(files), /symbolic links/);
-  console.log("Directory plan storage tests passed: snapshots, aggregated validation, stale bases, cross-process locking, immutable history, pointer safety, and reorder.");
+  // Reproduce a schema-version-1 freeform snapshot from before section enforcement.
+  // Do not use finalizePlanDraft: the historical writer allowed this content.
+  const historical = workflowFiles("historical-freeform", temporary);
+  await createWorkflow(historical, { ...metadata, identifier: "historical-freeform" });
+  const legacyContent = "Keep this approved explanation exactly as originally saved.\n";
+  const entries = new Map([
+    ["plan.json", JSON.stringify({ schemaVersion: 1, readingOrder: ["legacy-change"] }) + "\n"],
+    ["goal.md", "Keep existing plans readable.\n"],
+    ["testing.md", "Read the original plan without rewriting it.\n"],
+    ["planned-changes/legacy-change/change_metadata.json", JSON.stringify({ title: "Legacy change", dependsOn: [] }) + "\n"],
+    ["planned-changes/legacy-change/change.md", legacyContent],
+  ]);
+  const legacyPath = planDirectory(historical, 1);
+  await mkdir(join(legacyPath, "planned-changes", "legacy-change"), { recursive: true });
+  const digest = createHash("sha256").update(JSON.stringify(["planned-changes", "planned-changes/legacy-change"]));
+  for (const [name, content] of [...entries].sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0)) {
+    await writeFile(join(legacyPath, name), content);
+    digest.update(JSON.stringify([name, content]));
+  }
+  const facts = { schemaVersion: 1, number: 1, createdAt: "2026-09-09T00:00:00.000Z", description: "Original freeform plan" };
+  await writeJson(join(legacyPath, "version-metadata.json"), {
+    ...facts,
+    digest: createHash("sha256").update(digest.digest("hex")).update(JSON.stringify([facts.schemaVersion, facts.number, facts.createdAt, facts.description])).digest("hex"),
+  });
+  await symlink("plan-versions/v1", historical.latestPlan, "dir");
+  const legacyTree = await tree(legacyPath);
+  assert.equal((await readPlanVersion(historical)).document.changes[0].content, legacyContent);
+  assert.equal((await listPlanVersions(historical)).length, 1);
+  await rm(historical.workingPlan, { recursive: true });
+  assert.equal((await preparePlanDraft(historical)).baseVersion, 1);
+  await assert.rejects(finalizePlanDraft(historical, "Still missing sections", 1), /legacy-change\/change.md: must contain standalone/);
+  const repairedContent = "**What**\nKeep this explanation.\n\n**Why**\nPreserve the original design.\n";
+  await writeFile(join(historical.workingPlan, "planned-changes", "legacy-change", "change.md"), repairedContent);
+  assert.equal((await finalizePlanDraft(historical, "Restore the explanation format", 1)).number, 2);
+  await writeJson(historical.metadata, { ...metadata, identifier: "historical-freeform", approvedPlanVersion: 1 });
+  assert.equal((await readPlanVersion(historical, 1)).document.changes[0].content, legacyContent, "approved historical scope remains readable");
+  assert.deepEqual(await tree(legacyPath), legacyTree, "upgrading the draft never rewrites historical snapshots");
+  assert.equal((await listPlanVersions(historical)).length, 2);
+  console.log("Directory plan storage tests passed: section enforcement, historical compatibility, aggregated validation, stale bases, cross-process locking, immutable history, pointer safety, and reorder.");
 } finally { await rm(temporary, { recursive: true, force: true }); }
