@@ -25,6 +25,10 @@ Do not add extra metadata fields or other files. Every change must appear exactl
 The Goal section should be a brief affirmative summary of what we need to do in response to the user's original ask.
 </goal>
 
+<introduction>
+Keep the Introduction (intro.md) to no more than 5 paragraphs of high-level background and design context. Do not duplicate specific details from planned changes. Put individual algorithms, per-change implementation steps, and interface details in the relevant planned-changes/<change-slug>/change.md; put test specifics in testing.md.
+</introduction>
+
 <planned_changes>
 Each planned change is one tightly scoped idea. Use a descriptive, stable lowercase kebab-case slug for its directory, such as implement-queue-redrive-mechanism. Slugs must start with a letter, contain only lowercase letters, digits, and single hyphens between words, and be at most 80 characters. Keep identifiers stable when revising titles, prose, or reading order. Do not reuse a deleted change's slug for an unrelated change.
 
