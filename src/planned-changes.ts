@@ -1,4 +1,4 @@
-import { lexer } from "marked";
+import { lexer, walkTokens } from "marked";
 
 export const PLAN_SCHEMA_VERSION = 1;
 /** Stable, path-safe names, independent of display order. Numeric prefixes are not IDs. */
@@ -57,6 +57,21 @@ interface PlanValidationOptions {
 	requireChangeSections?: boolean;
 }
 
+/** Delimiters and HTML comments alone do not supply a section's content. */
+function hasSectionContent(markdown: string): boolean {
+	let found = false;
+	walkTokens(lexer(markdown), (token) => {
+		if (token.type === "code" || token.type === "codespan" || token.type === "escape" || (token.type === "text" && !token.tokens)) {
+			if (token.text.trim()) found = true;
+		} else if (token.type === "image" && token.href.trim()) {
+			found = true;
+		} else if (token.type === "html" && token.text.replace(/<!--[\s\S]*?(?:-->|$)/g, "").trim()) {
+			found = true;
+		}
+	});
+	return found;
+}
+
 /** Check prose structure without using Markdown for change identity or metadata. */
 function changeSectionErrors(content: string, path: string): string[] {
 	const sections: Array<{ name: string; lines: string[] }> = [];
@@ -88,7 +103,7 @@ function changeSectionErrors(content: string, path: string): string[] {
 	}
 	if (preamble.join("\n").trim()) errors.push(`${path}: begin with **What**; move all change prose inside the sections`);
 	for (const section of sections) {
-		if (!section.lines.join("\n").trim()) {
+		if (!hasSectionContent(section.lines.join("\n"))) {
 			const label = section.name[0]!.toUpperCase() + section.name.slice(1);
 			errors.push(`${path}: ${label} section is empty${section.name === "pseudocode" ? "; omit it when it is not useful" : "; add a short explanation"}`);
 		}

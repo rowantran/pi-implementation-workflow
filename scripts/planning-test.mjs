@@ -78,9 +78,23 @@ for (const content of [
 invalidContent(basicContent.replace("Save the report.", " \t"), /store-report\/change.md: What section is empty/);
 invalidContent(basicContent.replace("Keep it available.", "\n"), /store-report\/change.md: Why section is empty/);
 invalidContent(basicContent + "\n\n**Pseudocode**\n\t", /Pseudocode section is empty; omit it/);
+for (const emptyBody of [
+  "```text\n```", "~~~text\n \t\n~~~", "<!-- Write this later. -->",
+  "<!-- First comment. -->\n\n<!-- Second comment. -->", "> <!-- Quoted comment. -->",
+  "- <!-- List comment. -->", "---", "##", "| | |\n| --- | --- |\n| | |",
+]) {
+  invalidContent(`**What**\n\n${emptyBody}\n\n**Why**\n\nKeep the report available.`, /What section is empty/);
+  invalidContent(`**What**\n\nSave the report.\n\n**Why**\n\n${emptyBody}`, /Why section is empty/);
+  invalidContent(`${basicContent}\n\n**Pseudocode**\n\n${emptyBody}`, /Pseudocode section is empty; omit it/);
+}
 invalidContent("Unsectioned explanation.\n\n" + basicContent, /begin with \*\*What\*\*/);
 
 const validContents = [basicContent, basicContent.replaceAll("\n", "\r\n"),
+  basicContent + "\n\n**Pseudocode**\n\n<!-- Design note. -->\n\n```text\nsave(report)\n```",
+  basicContent + "\n\n**Pseudocode**\n\n![Design diagram](design.png)",
+  basicContent + "\n\n**Pseudocode**\n\n> - Call `save(report)`.",
+  basicContent + "\n\n**Pseudocode**\n\n```html\n<!-- A literal comment in a code example. -->\n```",
+  basicContent + "\n\n**Pseudocode**\n\nExplain the `ReviewReport` type <!-- Inline note. --> before saving.",
   basicContent.replace("**What**", "**wHaT**:").replace("**Why**", "**WHY**:"),
   basicContent + "\n\n**Pseudocode**\n```text\nsave(report)\n```",
   basicContent + "\n\n### Details\n\n| Field | Value |\n| --- | --- |\n| stable | slug |\n\n```mermaid\ngraph TD; A-->B;\n```",

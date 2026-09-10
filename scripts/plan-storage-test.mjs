@@ -120,6 +120,9 @@ try {
     "**What**\n\n**Why**\nReason.",
     "**What**\nChange.\n\n**Why**\n\n**Pseudocode**\nDesign.",
     "**What**\nChange.\n\n**Why**\nReason.\n\n**Pseudocode**\n",
+    "**What**\nChange.\n\n**Why**\nReason.\n\n**Pseudocode**\n```text\n```",
+    "**What**\n\n<!-- Write the change later. -->\n\n**Why**\nReason.",
+    "**What**\nChange.\n\n**Why**\n\n<!-- Write the reason later. -->",
     "```markdown\n**What**\nChange.\n\n**Why**\nReason.\n```",
   ]) await invalid(() => writeFile(join(changeRoot, "change.md"), content), /wire-storage\/change.md:.*(?:standalone|section is empty)/);
   await invalid(async () => {
