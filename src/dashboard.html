@@ -17,6 +17,7 @@
   --ds-border-subtle:var(--ds-cream-200);--ds-border-strong:var(--ds-cream-300);--ds-surface-default:var(--ds-white);--ds-surface-subtle:var(--ds-cream-50);--ds-surface-inset:var(--ds-cream-100);--ds-surface-raised:var(--ds-white);
   --ds-accent-action:var(--ds-blue-500);--ds-accent-action-hover:var(--ds-blue-600);--ds-accent-subtle:var(--ds-blue-100);--ds-accent-text:var(--ds-blue-700);--ds-focus-ring:var(--ds-blue-300);--ds-control-border:var(--ds-cream-300);--ds-control-muted:var(--ds-cream-600);--ds-control-hover-bg:var(--ds-cream-100);
   --ds-success-text:var(--ds-green-700);--ds-success-subtle:var(--ds-green-50);--ds-danger-text:var(--ds-red-700);--ds-danger-subtle:var(--ds-red-50);
+  --syntax-keyword:#cf222e;--syntax-title:#8250df;--syntax-literal:#0550ae;--syntax-string:#0a3069;--syntax-variable:#953800;--syntax-comment:#57606a;--syntax-tag:#116329;
   --ds-space-1:4px;--ds-space-2:8px;--ds-space-3:12px;--ds-space-4:16px;--ds-space-5:20px;--ds-space-6:24px;--ds-space-8:32px;--ds-space-10:40px;--ds-space-12:48px;
   --ds-radius-sm:4px;--ds-radius-md:10px;--ds-radius-lg:15px;--ds-radius-full:9999px;--ds-shadow-sm:0 1px 2px rgba(22,20,18,.06);--ds-shadow-md:0 4px 12px rgba(22,20,18,.08);
 }
@@ -25,7 +26,20 @@
   --ds-border-subtle:var(--ds-gray-800);--ds-border-strong:var(--ds-gray-600);--ds-surface-default:var(--ds-black);--ds-surface-subtle:var(--ds-cream-900);--ds-surface-inset:var(--ds-gray-800);--ds-surface-raised:var(--ds-cream-900);
   --ds-accent-action:var(--ds-blue-400);--ds-accent-action-hover:var(--ds-white);--ds-accent-subtle:var(--ds-blue-100);--ds-accent-text:var(--ds-blue-800);--ds-control-border:var(--ds-gray-600);--ds-control-muted:var(--ds-cream-300);--ds-control-hover-bg:var(--ds-gray-800);
   --ds-success-text:#81d090;--ds-success-subtle:var(--ds-green-900);--ds-danger-text:#fb8d87;--ds-danger-subtle:var(--ds-red-900);
+  --syntax-keyword:#ff7b72;--syntax-title:#d2a8ff;--syntax-literal:#79c0ff;--syntax-string:#a5d6ff;--syntax-variable:#ffa657;--syntax-comment:#a8b1bb;--syntax-tag:#7ee787;
 }
+/* highlight.js token colors follow the dashboard theme without repainting code.
+   Keep backgrounds on the existing code blocks and diff rows, not syntax spans. */
+.markdown .hljs{color:var(--ds-text-primary)}
+.markdown .hljs-keyword,.markdown .hljs-doctag,.markdown .hljs-type,.markdown .hljs-template-tag,.markdown .hljs-template-variable,.markdown .hljs-variable.language_{color:var(--syntax-keyword)}
+.markdown .hljs-title{color:var(--syntax-title)}
+.markdown .hljs-attr,.markdown .hljs-attribute,.markdown .hljs-literal,.markdown .hljs-meta,.markdown .hljs-number,.markdown .hljs-operator,.markdown .hljs-variable,.markdown .hljs-selector-attr,.markdown .hljs-selector-class,.markdown .hljs-selector-id{color:var(--syntax-literal)}
+.markdown .hljs-string,.markdown .hljs-regexp,.markdown .hljs-meta .hljs-string{color:var(--syntax-string)}
+.markdown .hljs-built_in,.markdown .hljs-symbol,.markdown .hljs-bullet{color:var(--syntax-variable)}
+.markdown .hljs-comment,.markdown .hljs-code,.markdown .hljs-formula{color:var(--syntax-comment)}
+.markdown .hljs-name,.markdown .hljs-quote,.markdown .hljs-selector-tag,.markdown .hljs-selector-pseudo{color:var(--syntax-tag)}
+.markdown .hljs-subst{color:var(--ds-text-primary)}.markdown .hljs-section{color:var(--syntax-literal);font-weight:600}.markdown .hljs-emphasis{font-style:italic}.markdown .hljs-strong{font-weight:600}
+.markdown .hljs-addition{color:var(--ds-success-text)}.markdown .hljs-deletion{color:var(--ds-danger-text)}
 *{box-sizing:border-box}html{background:var(--ds-surface-subtle);color:var(--ds-text-primary);font-family:var(--ds-font-sans)}body{margin:0;min-width:320px}button,select{font:inherit}
 .ds-app-header{position:sticky;top:0;z-index:20;display:flex;align-items:center;gap:var(--ds-space-4);height:60px;padding:0 var(--ds-space-6);background:color-mix(in srgb,var(--ds-surface-default) 94%,transparent);border-bottom:1px solid var(--ds-border-subtle);backdrop-filter:blur(14px)}
 .brand{display:flex;align-items:center;gap:var(--ds-space-3);min-width:0}.brand svg{width:28px;height:28px;flex:none;color:var(--ds-accent-action)}.brand-title{font-size:15px;font-weight:500;line-height:20px}
@@ -101,6 +115,7 @@
   </section>
 </main>
 <script src="../assets/marked.umd.js"></script>
+<script src="../assets/highlight.min.js"></script>
 <script id="dashboard-app">
 const dashboardDataElement = document.getElementById("dashboard-data");
 const dashboardSnapshot = dashboardDataElement.content.textContent;
@@ -128,10 +143,30 @@ function planMarkdownUrl(value,context) {
   } catch { return value; }
   return id && context.document.changes.some(function(change){return change.id===id;}) ? "#"+(context.reader || "plan")+"/change/"+encodeURIComponent(id) : value;
 }
+function codeLanguage(info) { return String(info || "").trim().split(/\s+/,1)[0].toLowerCase(); }
+function highlightCode(source,language) {
+  // Never guess a language or pass source through as HTML. A missing asset,
+  // unsupported language, or highlighter failure leaves readable, escaped code.
+  const library=globalThis.hljs;
+  try { if(language && library && library.getLanguage(language))return library.highlight(source,{language:language,ignoreIllegals:true}).value; }
+  catch { /* Keep the document usable even if highlighting fails. */ }
+  return escapeHtml(source);
+}
+function highlightedCodeLines(source,language) {
+  // highlight.js emits only escaped text and span tags. Reopen those spans at
+  // line boundaries so multiline tokens survive the diff's independent row wrappers.
+  const result=[],open=[];let line="";
+  for(const part of highlightCode(source,language).split(/(<span\b[^>]*>|<\/span>|\n)/g)) {
+    if(part==="\n") { result.push(line+"</span>".repeat(open.length));line=open.join("");continue; }
+    if(part.startsWith("<span"))open.push(part);else if(part==="</span>")open.pop();
+    line+=part;
+  }
+  result.push(line);return result;
+}
 function markdownRenderer(context) {
   const renderer=new marked.Renderer();
   renderer.html=function(token){return escapeHtml(token.text);};
-  renderer.code=function(token){const language=String(token.lang || "").trim().split(/\s+/,1)[0].toLowerCase();if(language==="mermaid")return '<div class="mermaid">'+escapeHtml(token.text)+"</div>";const languageClass=language ? ' class="language-'+escapeHtml(language)+'"' : "";return "<pre><code"+languageClass+">"+escapeHtml(token.text)+"</code></pre>";};
+  renderer.code=function(token){const language=codeLanguage(token.lang);if(language==="mermaid")return '<div class="mermaid">'+escapeHtml(token.text)+"</div>";const languageClass=language ? " language-"+escapeHtml(language) : "";return '<pre><code class="hljs'+languageClass+'">'+highlightCode(token.text,language)+"</code></pre>";};
   renderer.link=function(token){const text=this.parser.parseInline(token.tokens),href=safeMarkdownUrl(planMarkdownUrl(token.href,context));if(href===null)return text;const title=token.title ? ' title="'+escapeHtml(token.title)+'"' : "";return '<a href="'+escapeHtml(href)+'"'+title+' rel="noopener noreferrer">'+text+"</a>";};
   renderer.image=function(token){const href=safeMarkdownUrl(token.href);if(href===null)return escapeHtml(token.text);const title=token.title ? ' title="'+escapeHtml(token.title)+'"' : "";return '<img src="'+escapeHtml(href)+'" alt="'+escapeHtml(token.text)+'"'+title+">";};
   return renderer;
@@ -417,11 +452,19 @@ function lineDiff(before, after) {
   return result;
 }
 function analyzeMarkdown(markdown,context) {
-  let fenceCharacter=null,fenceLength=0,list='',orderedIndex=0;
-  return lines(markdown).map(function(raw) {
+  let fenceCharacter=null,fenceLength=0,list='',orderedIndex=0,language='',codeRecords=[];
+  function finishCode() {
+    if(!codeRecords.length)return;
+    const highlighted=highlightedCodeLines(codeRecords.map(function(record){return record.text;}).join("\n"),language);
+    codeRecords.forEach(function(record,index){record.html=highlighted[index];});codeRecords=[];
+  }
+  const records=lines(markdown).map(function(raw) {
     const fence=/^\s*(\x60{3,}|~{3,})/.exec(raw);
-    if(fence && (!fenceCharacter || (fence[1][0]===fenceCharacter && fence[1].length>=fenceLength && !raw.slice(fence[0].length).trim()))) { fenceCharacter=fenceCharacter ? null : fence[1][0];fenceLength=fenceCharacter ? fence[1].length : 0;list='';return {type:'fence'}; }
-    if(fenceCharacter)return {type:'code',text:raw};
+    if(fence && (!fenceCharacter || (fence[1][0]===fenceCharacter && fence[1].length>=fenceLength && !raw.slice(fence[0].length).trim()))) {
+      if(fenceCharacter)finishCode();else language=codeLanguage(raw.slice(fence[0].length));
+      fenceCharacter=fenceCharacter ? null : fence[1][0];fenceLength=fenceCharacter ? fence[1].length : 0;list='';return {type:'fence'};
+    }
+    if(fenceCharacter){const record={type:'code',text:raw};codeRecords.push(record);return record;}
     const heading = /^(#{1,4})\s+(.+)$/.exec(raw);
     if (heading) { list = ""; return {type:"heading", level:heading[1].length, html:inlineMarkdown(heading[2],context)}; }
     const unordered = /^\s*[-*]\s+(.+)$/.exec(raw), ordered = /^\s*\d+[.)]\s+(.+)$/.exec(raw);
@@ -437,6 +480,7 @@ function analyzeMarkdown(markdown,context) {
     const quote = /^>\s?(.*)$/.exec(raw);
     return quote ? {type:"quote", html:inlineMarkdown(quote[1],context)} : {type:"paragraph", html:inlineMarkdown(raw,context)};
   });
+  finishCode();return records;
 }
 function diffBlockStartIndexes(rows, contextLines = 3) {
   const starts = new Map(), maximumContextGap = Math.max(0,contextLines) * 2;
@@ -450,9 +494,13 @@ function diffBlockStartIndexes(rows, contextLines = 3) {
 }
 function renderRichDiff(rows, before, after, contexts) {
   const oldContext=contexts && contexts.before,newContext=contexts && contexts.after;
-  // Tables and diagrams need whole Markdown blocks. Keep both rich renderings
-  // rather than flattening their syntax into paragraphs or broken source fragments.
-  const blockRich=function(source){return marked.lexer(String(source || '')).some(function(token){return token.type==='table' || token.type==='code' && /^mermaid(?:\s|$)/i.test(token.lang || '');});};
+  // Tables, diagrams, and nested/indented code need whole Markdown blocks.
+  // Use Marked's token tree so quoted or list-contained code keeps its syntax.
+  const blockRich=function(source){
+    const tokens=marked.lexer(String(source || '')),topLevel=new Set(tokens);let rich=false;
+    marked.walkTokens(tokens,function(token){if(token.type==='table' || token.type==='code' && (codeLanguage(token.lang)==='mermaid' || token.codeBlockStyle==='indented' || !topLevel.has(token)))rich=true;});
+    return rich;
+  };
   if(blockRich(before) || blockRich(after)) {
     if(before===after)return renderMarkdown(after,newContext);
     return '<section class="diff-rich-change" data-diff-block-index="0" tabindex="-1"><h3>Before</h3>'+(before ? renderMarkdown(before,oldContext) : '<p>Not present in this version.</p>')+'<h3>After</h3>'+(after ? renderMarkdown(after,newContext) : '<p>Not present in this version.</p>')+'</section>';
@@ -469,8 +517,8 @@ function renderRichDiff(rows, before, after, contexts) {
     if (record.type === "fence") { closeList(); closeCode(); if (row.kind !== "context") html += '<div class="' + changeClass(row.kind,"diff-blank-line") + '"' + attributes + ' title="Code block formatting changed"></div>'; continue; }
     if (record.type === "code") {
       closeList();
-      if (!code) { html += '<pre class="diff-code-block"><code>'; code = true; }
-      html += '<span class="' + changeClass(row.kind,"diff-code-line") + '"' + attributes + '>' + (escapeHtml(record.text) || "&#8203;") + "</span>";
+      if (!code) { html += '<pre class="diff-code-block"><code class="hljs">'; code = true; }
+      html += '<span class="' + changeClass(row.kind,"diff-code-line") + '"' + attributes + '>' + (record.html || "&#8203;") + "</span>";
       continue;
     }
     closeCode();

@@ -21,6 +21,7 @@ const REVISION_SYSTEM_TEMPLATE = loadTemplate("system/revision.md");
 const REVISION_USER_TEMPLATE = loadTemplate("injected-user-messages/revision.md");
 const UPDATE_PLAN_TOOL_GUIDELINE = loadTemplate("system/update-plan-tool-guideline.md");
 const UPDATE_PLAN_TOOL_SNIPPET = loadTemplate("system/update-plan-tool-snippet.md");
+const MARKDOWN_CODE_BLOCK_GUIDANCE = loadTemplate("system/markdown-code-block-guidance.md");
 
 export interface BriefingValues {
 	identifier: string;
@@ -34,7 +35,7 @@ export interface BriefingValues {
 }
 
 export function briefingSystemPrompt(values: BriefingValues): string {
-	return render(BRIEFING_SYSTEM_TEMPLATE, { ...values });
+	return renderProseSystemPrompt(BRIEFING_SYSTEM_TEMPLATE, { ...values });
 }
 
 export function briefingUserMessage(values: BriefingValues): string {
@@ -51,7 +52,7 @@ export function implementationSystemPrompt(values: {
 	workflowBranch: string;
 	baseBranch: string | undefined;
 }): string {
-	return render(IMPLEMENTATION_SYSTEM_TEMPLATE, stringifyUndefined(values));
+	return renderProseSystemPrompt(IMPLEMENTATION_SYSTEM_TEMPLATE, stringifyUndefined(values));
 }
 
 export function implementationUserMessage(values: {
@@ -76,7 +77,7 @@ export function planningSystemPrompt(values: {
 	workingPlanPath: string;
 	updatePlanTool: string;
 }): string {
-	return render(PLANNING_SYSTEM_TEMPLATE, values);
+	return renderProseSystemPrompt(PLANNING_SYSTEM_TEMPLATE, values);
 }
 
 export function startPlanningUserMessage(ask: string): string {
@@ -92,7 +93,7 @@ export function reviewSystemPrompt(values: {
 	reviewPath: string;
 	reviewMarkdownPath: string;
 }): string {
-	return render(REVIEW_SYSTEM_TEMPLATE, stringifyUndefined(values));
+	return renderProseSystemPrompt(REVIEW_SYSTEM_TEMPLATE, stringifyUndefined(values));
 }
 
 export function revisionSystemPrompt(values: {
@@ -108,7 +109,7 @@ export function revisionSystemPrompt(values: {
 	baseBranch: string;
 }): string {
 	const { reviewPath, ...required } = values;
-	return render(REVISION_SYSTEM_TEMPLATE, {
+	return renderProseSystemPrompt(REVISION_SYSTEM_TEMPLATE, {
 		...stringifyUndefined(required),
 		...(reviewPath === undefined ? {} : { reviewPath }),
 	});
@@ -123,7 +124,7 @@ export function revisionUserMessage(values: { request: string; reviewPath?: stri
 }
 
 export function reviewAgentSystemPrompt(outputTool: string): string {
-	return render(REVIEW_AGENT_SYSTEM_TEMPLATE, { outputTool });
+	return renderProseSystemPrompt(REVIEW_AGENT_SYSTEM_TEMPLATE, { outputTool });
 }
 
 export function plannedChangeReviewPrompt(values: {
@@ -241,6 +242,10 @@ export function stripHtmlComments(template: string, name = "<inline template>"):
 	}
 
 	return result;
+}
+
+function renderProseSystemPrompt(template: string, values: Record<string, unknown>): string {
+	return `${render(template, values)}\n\n${MARKDOWN_CODE_BLOCK_GUIDANCE}`;
 }
 
 function render(template: string, values: Record<string, unknown>): string {

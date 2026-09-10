@@ -52,7 +52,7 @@ The extension saves the submitted ask verbatim as immutable workflow metadata, c
 
 - a concise plain-English plan description as the main document title, beside its prominent current version number;
 - a **Plan** view with a guided reader ordered as Goal, optional Introduction, Dependency graph, planned changes, and Testing; a full-document fallback; the immutable original ask; and structured user clarifications;
-- GitHub-style Markdown rendering, including tables and Mermaid diagrams in `mermaid` fenced code blocks;
+- GitHub-style Markdown rendering, including tables, syntax-highlighted code blocks, and Mermaid diagrams in `mermaid` fenced code blocks;
 - an automatically generated plan outline, top-anchored previous/next navigation, `[`/`]` section shortcuts, `S`/`C` controls for the navigation and workflow-context sidebars, and direct links to individual planned changes;
 - a **Compare versions** view with two version selectors, `[`/`]` diff-block navigation, and a rich, formatted plan diff with green additions and red deletions; nearby changes use Git's default three-line context rule, so changes separated by up to six unchanged lines form one block;
 - light and dark themes;
@@ -214,6 +214,8 @@ Committed `.workflows/` directories from previous workflows never imply an activ
 Because the argument position is reserved for identifiers, only `/workflow-plan` accepts inline prefill text.
 
 ## Dashboard delivery
+
+Plan and Review code blocks use Marked for Markdown parsing and highlight.js for syntax highlighting, including Guided view, Full document, and version comparisons. Agents are instructed to label fenced code blocks with the language immediately after the opening backticks, such as `typescript`, `bash`, or `json`. The bundled highlighter supports common languages and aliases such as `ts`, `js`, and `py`. Unlabeled blocks, unsupported languages, and `text` blocks remain plain text; `mermaid` blocks remain diagrams. Code colors follow the light or dark theme without replacing the green and red diff backgrounds. All rendering libraries are served locally; the browser does not need a CDN connection.
 
 The extension serves dashboards over HTTP in local and remote environments. Dashboard addresses are deterministic:
 

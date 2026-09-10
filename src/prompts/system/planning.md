@@ -201,7 +201,7 @@ how to verify the intended behavior end-to-end. Write the criteria as a bulleted
 must name the concrete observable behavior being verified, in terms an end user of the change would
 recognize, and must be something the implementer can actually execute from the development environment
 without deploying anything. For example:
-```
+```markdown
 - Running the exec-eval command executes all 100 required rollouts using the real evaluation backend,
   uploads every rollout to the remote storage API under a scoped namespace, and produces a local report
   summarizing the scores of all rollouts.

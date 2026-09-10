@@ -16,6 +16,48 @@ function markdownFiles(directory) {
   });
 }
 
+function assertLabeledCodeFences(markdown, name) {
+  let openingFence;
+  for (const [index, line] of markdown.split(/\r?\n/).entries()) {
+    const match = /^\s*(`{3,}|~{3,})(.*)$/.exec(line);
+    if (!match) continue;
+    const [, fence, info] = match;
+    if (openingFence) {
+      if (fence[0] === openingFence[0] && fence.length >= openingFence.length && !info.trim()) {
+        openingFence = undefined;
+      }
+      continue;
+    }
+    assert.ok(fence.startsWith("`"), `${name}:${index + 1} must use a backtick fence.`);
+    assert.match(info.trim(), /^[a-z][a-z0-9_+-]*$/i, `${name}:${index + 1} needs a language info string.`);
+    openingFence = fence;
+  }
+  assert.equal(openingFence, undefined, `${name} has an unclosed code fence.`);
+}
+
+assert.doesNotThrow(() => assertLabeledCodeFences("```typescript\nconst answer = 42;\n```", "labeled.md"));
+assert.throws(() => assertLabeledCodeFences("```\nplain text\n```", "unlabeled.md"), /needs a language info string/);
+assert.throws(() => assertLabeledCodeFences("```text\nplain text", "unclosed.md"), /unclosed code fence/);
+
+const markdownCodeBlockGuidance = prompts.stripHtmlComments(
+  readFileSync(join(promptsDirectory, "system/markdown-code-block-guidance.md"), "utf8"),
+).trim();
+assert.ok(markdownCodeBlockGuidance.includes("Use standard Markdown fenced code blocks with backtick fences"));
+assert.ok(markdownCodeBlockGuidance.includes("Every opening fence must include a language info string matching its content"));
+for (const language of ["typescript", "bash", "json"]) {
+  assert.ok(markdownCodeBlockGuidance.includes("```" + language));
+}
+assert.ok(markdownCodeBlockGuidance.includes("Use `` ```text `` for plain text or pseudocode when no suitable language applies."));
+assert.ok(markdownCodeBlockGuidance.includes("Use `` ```mermaid `` for diagrams."));
+assert.ok(markdownCodeBlockGuidance.includes("Do not use unlabeled opening fences or indented code blocks."));
+assert.ok(markdownCodeBlockGuidance.includes("chat responses, plan Markdown, pull request descriptions, and Markdown prose in review tool fields"));
+assert.ok(markdownCodeBlockGuidance.includes("Do not wrap structured tool arguments or source/configuration file contents in Markdown fences."));
+
+function assertCodeBlockGuidance(system, role) {
+  assert.equal(system.split(markdownCodeBlockGuidance).length - 1, 1, `${role} must include the shared guidance exactly once.`);
+  assert.ok(!system.includes("<!--"), `${role} must not include template comments.`);
+}
+
 const templatePaths = markdownFiles(promptsDirectory);
 assert.ok(templatePaths.length > 0, "Expected at least one Markdown prompt template.");
 for (const path of templatePaths) {
@@ -24,6 +66,7 @@ for (const path of templatePaths) {
   const name = relative(promptsDirectory, path);
   assert.ok(usageComment, `${name} must start with a one-line <!-- Usage: ... --> comment.`);
   assert.ok(usageComment[1].trim(), `${name} must have a non-empty usage explanation.`);
+  assertLabeledCodeFences(prompts.stripHtmlComments(source, name), name);
 }
 
 assert.equal(
@@ -67,6 +110,7 @@ const implementationValues = {
   baseBranch: "main",
 };
 const implementationSystem = prompts.implementationSystemPrompt(implementationValues);
+assertCodeBlockGuidance(implementationSystem, "implementation");
 for (const path of Object.values(durablePaths)) assert.ok(implementationSystem.includes(path));
 assert.ok(implementationSystem.includes(implementationValues.worktreePath));
 assert.ok(implementationSystem.includes(implementationValues.workflowBranch));
@@ -90,6 +134,7 @@ assert.ok(implementationSystem.includes("Use slugs, not display numbers"));
 
 for (const reviewPath of [undefined, "/tmp/review.json"]) {
   const revision = prompts.revisionSystemPrompt({ ...implementationValues, reviewPath });
+  assertCodeBlockGuidance(revision, `revision (reviewPath=${reviewPath})`);
   assert.ok(revision.includes("Use declared dependsOn arrays in change_metadata.json"));
   assert.ok(revision.includes("affected prerequisites and downstream dependents"));
   assert.ok(revision.includes("including their integration and tests"));
@@ -123,6 +168,7 @@ for (const approved of [true, false]) {
   };
   const system = prompts.briefingSystemPrompt(values);
   const user = prompts.briefingUserMessage(values);
+  assertCodeBlockGuidance(system, `briefing (approved=${approved})`);
   for (const path of Object.values(durablePaths)) assert.ok(system.includes(path));
   assert.ok(user.includes(system));
   assert.ok(system.includes("does not assign an implementation, review, or revision role"));
@@ -157,6 +203,7 @@ const planningValues = {
   updatePlanTool: "workflow_update_plan",
 };
 const planningSystem = prompts.planningSystemPrompt(planningValues);
+assertCodeBlockGuidance(planningSystem, "planning");
 assert.ok(planningSystem.includes(planningValues.workingPlanPath));
 assert.ok(planningSystem.includes(planningValues.planPath));
 assert.ok(planningSystem.includes(planningValues.updatePlanTool));
@@ -200,6 +247,7 @@ const reviewValues = {
   reviewMarkdownPath: "/tmp/a & b/review.md",
 };
 const reviewSystem = prompts.reviewSystemPrompt(reviewValues);
+assertCodeBlockGuidance(reviewSystem, "review");
 for (const path of Object.values(durablePaths)) assert.ok(reviewSystem.includes(path));
 assert.ok(reviewSystem.includes(reviewValues.pullRequestStack));
 assert.ok(reviewSystem.includes(reviewValues.reviewPath));
@@ -210,6 +258,7 @@ assert.ok(!reviewSystem.includes("&amp;"));
 
 const reviewAgentOutputTool = "submit_review_<result>&now";
 const reviewAgentSystem = prompts.reviewAgentSystemPrompt(reviewAgentOutputTool);
+assertCodeBlockGuidance(reviewAgentSystem, "common review agent");
 assert.ok(reviewAgentSystem.includes("read-only worker"));
 assert.ok(reviewAgentSystem.includes(reviewAgentOutputTool));
 assert.ok(!reviewAgentSystem.includes("&lt;result&gt;"));
@@ -296,5 +345,5 @@ assert.equal(guidelines.length, 1);
 for (const text of ['workflow_update_plan', 'action="prepare"', 'action="finalize"', 'expectedBaseVersion', 'readingOrder', 'invalid drafts never replace the saved plan', 'not a Git commit']) assert.ok(guidelines[0].includes(text));
 
 console.log(
-  `Prompt test passed: ${templatePaths.length} documented templates preserve rendered text and all durable intent paths.`,
+  `Prompt test passed: ${templatePaths.length} documented templates preserve rendered text, durable intent paths, and language-labeled code block guidance.`,
 );
