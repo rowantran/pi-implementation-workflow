@@ -62,8 +62,6 @@ Press `Ctrl+Alt+D` or run `/workflow-dashboard` to regenerate the dashboard and 
 
 The plan uses directories for structure, JSON for relationships, and freeform Markdown for explanations. `goal.md` states the desired outcome, optional `intro.md` gives context, and `testing.md` lists explicit verification criteria. Each planned change has a stable descriptive slug, JSON metadata, and a `change.md` explanation. Explain what changes and why; include pseudocode only when it clarifies meaningful behavior, state, interfaces, or data flow. No Markdown heading names, levels, or field order are required. Planned changes and testing criteria become separate units of implementation review.
 
-Keep the optional Introduction (`intro.md`) to no more than 5 paragraphs of high-level background and design context. Do not repeat planned-change details there: individual algorithms, per-change implementation steps, and interface details belong in the relevant `change.md`; test specifics belong in `testing.md`. This is authoring guidance, not a storage validation rule.
-
 ### Change identity, reading order, and dependencies
 
 Each change lives under `planned-changes/<slug>/`. Slugs use lowercase kebab-case, start with a letter, and contain at most 80 characters. Keep a slug stable when changing its title, prose, or reading position. Do not reuse a deleted slug for an unrelated change.
