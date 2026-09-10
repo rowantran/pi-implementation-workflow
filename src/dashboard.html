@@ -80,7 +80,7 @@
           <nav class="plan-outline" id="plan-outline" aria-label="Plan outline">
             <div class="plan-outline-sticky">
               <h2 class="plan-outline-title">Plan outline</h2>
-              <div class="plan-outline-list"><button class="plan-outline-button plan-outline-button--section" type="button" data-reader="plan" data-reader-destination="goal">Goal</button><button class="plan-outline-button plan-outline-button--section" type="button" data-reader="plan" data-reader-destination="graph">Dependency graph</button><div class="plan-outline-label">Planned changes</div><div id="plan-change-links"></div><div class="plan-outline-divider" aria-hidden="true"></div><button class="plan-outline-button plan-outline-button--section" type="button" data-reader="plan" data-reader-destination="testing">Testing</button></div>
+              <div class="plan-outline-list"><button class="plan-outline-button plan-outline-button--section" type="button" data-reader="plan" data-reader-destination="goal">Goal</button><button class="plan-outline-button plan-outline-button--section" id="plan-intro-link" type="button" data-reader="plan" data-reader-destination="intro" hidden>Introduction</button><button class="plan-outline-button plan-outline-button--section" type="button" data-reader="plan" data-reader-destination="graph">Dependency graph</button><div class="plan-outline-label">Planned changes</div><div id="plan-change-links"></div><div class="plan-outline-divider" aria-hidden="true"></div><button class="plan-outline-button plan-outline-button--section" type="button" data-reader="plan" data-reader-destination="testing">Testing</button></div>
             </div>
           </nav>
           <div class="plan-document-wrap"><div class="markdown"><div class="plan-document-header" id="plan-document-header"><h1 id="plan-title"></h1><div class="plan-version" id="version-badge"></div></div><div class="guided-pagination" id="plan-pagination" hidden><button class="ds-button" id="plan-previous-section" type="button" aria-label="Previous section ([)" aria-keyshortcuts="[">← Previous <kbd class="shortcut-key">[</kbd></button><div class="guided-position" id="plan-position" role="status" aria-live="polite" aria-atomic="true"></div><button class="ds-button" id="plan-next-section" type="button" aria-label="Next section (])" aria-keyshortcuts="]">Next <kbd class="shortcut-key">]</kbd> →</button></div><div id="plan-content"></div></div></div>
@@ -179,7 +179,7 @@ function generateDependencyDiagram(graph) {
   if(graph.status!=="valid")return "";
   const identifiers=new Map(graph.nodes.map(function(node,index){return [node.id,"dag_"+index];})), lines=["flowchart TD"];
   for(const [index,node] of graph.nodes.entries()) {
-    const label=["Change "+(index+1)].concat(wrapGraphTitle(node.title),[node.id]).map(mermaidGraphText).join("<br/>");
+    const label=["Change "+(index+1)].concat(wrapGraphTitle(node.title)).map(mermaidGraphText).join("<br/>");
     lines.push('  '+identifiers.get(node.id)+'["'+label+'"]');
     lines.push("  class "+identifiers.get(node.id)+" dag-node-"+index+";");
   }
@@ -274,7 +274,7 @@ function planDestinationForState(destination,savedMode,savedDestination) {
 }
 function createPlanDestinations(structure) {
   if(!structure.canUseGuidedView)return [];
-  return [{id:"goal",label:"Goal",kind:"goal"},{id:"graph",label:"Dependency graph",kind:"graph"}].concat(structure.changes.map(function(change){return {id:"change/"+change.id,label:"Change "+change.number,position:"Change "+change.number+" of "+structure.changes.length,kind:"change",change:change};}),[{id:"testing",label:"Testing",kind:"testing"}]);
+  return [{id:"goal",label:"Goal",kind:"goal"}].concat(structure.intro ? [{id:"intro",label:"Introduction",kind:"intro"}] : [],[{id:"graph",label:"Dependency graph",kind:"graph"}],structure.changes.map(function(change){return {id:"change/"+change.id,label:"Change "+change.number,position:"Change "+change.number+" of "+structure.changes.length,kind:"change",change:change};}),[{id:"testing",label:"Testing",kind:"testing"}]);
 }
 function dependencyChanges(before,after) {
   if(!before || !after || before.status!=="valid" || after.status!=="valid")return null;
@@ -343,7 +343,8 @@ function renderFullPlan() {
 function renderPlanDestination(selected,fullDocument) {
   const context={document:latestPlan && latestPlan.document,reader:"plan"}, kicker=fullDocument ? "" : '<div class="guided-kicker">Plan section</div>';
   if (selected.kind==="graph") return renderPlanGraph();
-  if (selected.kind==="goal") return kicker+'<h2>Goal</h2>'+renderMarkdown(planStructure.goal,context)+(planStructure.intro ? '<h3>Introduction</h3>'+renderMarkdown(planStructure.intro,context) : '');
+  if (selected.kind==="goal") return kicker+'<h2>Goal</h2>'+renderMarkdown(planStructure.goal,context);
+  if (selected.kind==="intro") return kicker+'<h2>Introduction</h2>'+renderMarkdown(planStructure.intro,context);
   if (selected.kind==="testing") return kicker+'<h2>Testing</h2>'+renderMarkdown(planStructure.testing,context);
   const graph=currentDependencyGraph(), change=selected.change, changeKicker=fullDocument ? '' : '<div class="guided-kicker">Change '+change.number+' of '+planStructure.changes.length+'</div>';
   return changeKicker+'<h2 id="plan-change-'+escapeHtml(change.id)+'">'+change.number+'. '+inlineMarkdown(change.title)+'</h2><div class="plan-mode-note">'+escapeHtml(change.id)+'</div><div class="dependency-relations">'+renderDependencyRelations(graph,change.id)+'</div>'+renderMarkdown(change.content,context);
@@ -557,6 +558,7 @@ function initialize() {
   document.getElementById("version-badge").textContent=latestPlan ? "Version "+latestPlan.number : "No saved plan"; document.getElementById("plan-title").textContent=latestPlan && latestPlan.description || description || "Implementation plan";
   document.getElementById("plan-guided-mode-button").disabled=!guidedAvailable; document.getElementById("plan-mode-note").hidden=guidedAvailable;
   const planDestinations=createPlanDestinations(planStructure);
+  document.getElementById("plan-intro-link").hidden=!planDestinations.some(function(section){return section.kind==="intro";});
   if (guidedAvailable) { const changeLinks=document.getElementById("plan-change-links"); for (const change of planStructure.changes) { const button=document.createElement("button"); button.className="plan-outline-button"; button.type="button"; button.dataset.reader="plan"; button.dataset.readerDestination="change/"+change.id; button.textContent=change.number+". "+change.title; changeLinks.appendChild(button); } }
   configureReader("plan",planDestinations,renderPlanDestination,renderFullPlan); prepareReview(); navigationSidebarCollapsed=Boolean(state.navigationSidebarCollapsed); contextSidebarCollapsed=Boolean(state.contextSidebarCollapsed);
   document.querySelectorAll("[data-reader-destination]").forEach(function(button){button.addEventListener("click",function(){const name=button.dataset.reader;if(readers[name].mode!=="guided")return;renderReader(name,button.dataset.readerDestination,true);});});

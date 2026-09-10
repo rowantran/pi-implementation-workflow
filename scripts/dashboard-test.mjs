@@ -138,7 +138,10 @@ assert.ok(html.includes("function planDocumentStructure(document)"));
 assert.ok(!html.includes('parsePlanStructure'), 'generated Markdown is not parsed for plan structure');
 assert.ok(!html.includes('id="plan-graph-mode-button"'), "Graph is a guided section, not a reading mode");
 assert.ok(html.includes('data-reader="plan" data-reader-destination="graph">Dependency graph</button>'));
-assert.ok(html.indexOf('data-reader-destination="goal"') < html.indexOf('data-reader-destination="graph"'));
+assert.ok(html.includes('id="plan-intro-link" type="button" data-reader="plan" data-reader-destination="intro" hidden>Introduction</button>'));
+assert.ok(html.includes('document.getElementById("plan-intro-link").hidden=!planDestinations.some(function(section){return section.kind==="intro";});'));
+assert.ok(html.indexOf('data-reader-destination="goal"') < html.indexOf('data-reader-destination="intro"'));
+assert.ok(html.indexOf('data-reader-destination="intro"') < html.indexOf('data-reader-destination="graph"'));
 assert.ok(html.indexOf('data-reader-destination="graph"') < html.indexOf('id="plan-change-links"'));
 assert.ok(!html.includes('plan-reader--graph{display:block}'), "the graph must preserve the guided outline");
 assert.ok(html.includes('.guided-pagination[hidden]{display:none}'));
@@ -563,6 +566,14 @@ assert.equal(structure.testing, 'Verify guided and full-document modes.');
 assert.deepEqual(planDocumentStructure(null), { canUseGuidedView: false, changes: [] });
 assert.equal(hashReaderDestination("#review/full", "review"), "full");
 assert.equal(hashReaderDestination("#plan/testing", "plan"), "testing");
+assert.equal(hashReaderDestination("#plan/intro", "plan"), "intro");
+assert.equal(initialViewForHash("#plan/intro", "review", true), "plan");
+const introDestinations = createPlanDestinations(structure);
+assert.deepEqual(introDestinations.map(({ id }) => id), ['goal', 'intro', 'graph', 'change/read-document', 'change/render-change', 'testing']);
+assert.equal(introDestinations[1].label, 'Introduction');
+for (const intro of [undefined, '']) {
+  assert.ok(!createPlanDestinations({ ...structure, intro }).some(({ id }) => id === 'intro'), 'omit the optional introduction when absent');
+}
 assert.equal(initialViewForHash("#review/testing", "plan", true), "review");
 assert.equal(initialViewForHash("#review", "plan", false), "plan");
 assert.equal(initialViewForHash("#compare", "plan", true), "diff");
@@ -628,7 +639,8 @@ assert.ok(wrapGraphTitle("x".repeat(140)).every((line) => line.length <= 28));
 assert.equal(wrapGraphTitle("x".repeat(140)).join(""), "x".repeat(140), "long labels are wrapped, never truncated");
 assert.ok(wrapGraphTitle("😀".repeat(80)).every((line) => Array.from(line).length <= 28));
 assert.equal(generateDependencyDiagram(unavailableGraph), '');
-assert.ok(diagram.includes('Change 1<br/>Read shared schema<br/>read-schema'), 'numbers are display labels, never graph identifiers');
+assert.ok(diagram.includes('dag_0["Change 1<br/>Read shared schema"]'), 'graph labels retain reading numbers and titles');
+for (const node of graphNodes) assert.ok(!diagram.includes(`<br/>${node.id}"]`), `graph labels omit the slug line for ${node.id}`);
 assert.deepEqual([...dependencyRelations(graph, 'integrate').ancestors].sort(), ['define-schema', 'read-schema', 'render-graph']);
 assert.deepEqual([...dependencyRelations(graph, 'define-schema').downstream].sort(), ['escape-labels', 'integrate', 'read-schema', 'render-graph']);
 assert.equal(dependencyRelations(graph, 'document').ancestors.size, 0);
@@ -805,7 +817,39 @@ assert.ok(fakeLocation.href.endsWith('#plan/change/read-schema'));
 
 // Arbitrary section-looking Markdown never affects structure, dependency edges, or identity.
 const prosePlan = { ...version(structuredPlan), dependencyGraph: snapshotFromHtml(renderWorkflowDashboard({ ...data, versions: [version(structuredPlan)] })).versions[0].dependencyGraph };
-const proseRenderer = new Function('latestPlan', 'planStructure', 'marked', `${helperSource};return {renderPlanDestination};`)(prosePlan, structure, marked);
+const proseRenderer = new Function('latestPlan', 'planStructure', 'marked', 'document', 'location', 'history', 'globalThis', `const readers={};let navigationSidebarCollapsed=false,selectedGraphNode=null,graphRenderSequence=0;${helperSource};return {renderPlanDestination,renderFullPlan,configureReader,setReaderMode,moveReader,readers};`)(prosePlan, structure, marked, graphDocument, fakeLocation, fakeHistory, { mermaid: mermaidStub });
+for (const fullDocument of [false, true]) {
+  const goalSection = proseRenderer.renderPlanDestination({ kind: 'goal' }, fullDocument);
+  assert.ok(goalSection.includes('<h2>Goal</h2>'));
+  assert.ok(!goalSection.includes('Introduction'));
+  assert.ok(!goalSection.includes('Additional'));
+  const introSection = proseRenderer.renderPlanDestination({ kind: 'intro' }, fullDocument);
+  assert.ok(introSection.includes('<h2>Introduction</h2>'));
+  assert.ok(introSection.includes('Additional <strong>context</strong>.'));
+  assert.ok(!introSection.includes('Ship a guided reader.'));
+}
+proseRenderer.configureReader('plan', introDestinations, proseRenderer.renderPlanDestination, proseRenderer.renderFullPlan);
+proseRenderer.setReaderMode('plan', 'guided', 'goal', false);
+assert.equal(graphElements['plan-next-section'].dataset.destination, 'intro');
+proseRenderer.moveReader('plan', 1, false);
+assert.equal(proseRenderer.readers.plan.currentDestination, 'intro');
+assert.equal(graphElements['plan-position'].textContent, 'Introduction');
+assert.equal(graphElements['plan-previous-section'].dataset.destination, 'goal');
+assert.equal(graphElements['plan-next-section'].dataset.destination, 'graph');
+assert.ok(fakeLocation.href.endsWith('#plan/intro'));
+proseRenderer.moveReader('plan', 1, false);
+assert.equal(proseRenderer.readers.plan.currentDestination, 'graph');
+assert.equal(graphElements['plan-previous-section'].dataset.destination, 'intro');
+proseRenderer.moveReader('plan', -1, false);
+assert.equal(proseRenderer.readers.plan.currentDestination, 'intro');
+proseRenderer.setReaderMode('plan', 'full');
+const fullPlan = graphElements['plan-content'].innerHTML;
+assert.match(fullPlan, /<section class="plan-full-section"><h2>Goal<\/h2>[\s\S]*?<\/section><section class="plan-full-section"><h2>Introduction<\/h2>/);
+assert.equal(fullPlan.match(/<h2>Introduction<\/h2>/g)?.length, 1);
+assert.ok(!fullPlan.includes('<h3>Introduction</h3>'));
+assert.ok(!fullPlan.includes('id="plan-dependency-graph"'));
+proseRenderer.setReaderMode('plan', 'guided', 'intro', false);
+assert.equal(proseRenderer.readers.plan.currentDestination, 'intro', 'introduction deep links restore guided mode');
 const proseSection = proseRenderer.renderPlanDestination({ kind: 'change', change: structure.changes[0] });
 assert.ok(proseSection.includes('<table>'));
 assert.ok(proseSection.includes('<h3>Not another change</h3>'));
@@ -818,8 +862,9 @@ for (const target of ['#read-document', '#plan-change-read-document', 'read-docu
 }
 assert.ok(renderMarkdown('[Other](#unknown)', { document: structuredPlan }).includes('href="#unknown"'));
 assert.ok(!renderMarkdown('[Unsafe](javascript:alert(1))', { document: structuredPlan }).includes('javascript:'));
-const reservedSlugs = planWithNodes(['goal', 'graph', 'testing', 'full', 'overall'].map((id) => ({ id, title: id, dependsOn: [] })));
-assert.equal(new Set(createPlanDestinations(planDocumentStructure(reservedSlugs)).map((destination) => destination.id)).size, 8, 'section names cannot collide with valid change slugs');
+const reservedSlugs = planWithNodes(['goal', 'intro', 'graph', 'testing', 'full', 'overall'].map((id) => ({ id, title: id, dependsOn: [] })), { intro: 'Background.' });
+assert.equal(new Set(createPlanDestinations(planDocumentStructure(reservedSlugs)).map((destination) => destination.id)).size, 10, 'section names cannot collide with valid change slugs');
+assert.ok(renderMarkdown('[Introduction change](#intro)', { document: reservedSlugs }).includes('href="#plan/change/intro"'));
 assert.ok(renderMarkdown('[Graph change](#graph)', { document: reservedSlugs }).includes('href="#plan/change/graph"'));
 
 // Reordering matches by slug, not by number, title, or source heading. It produces no prose deletions/additions.
@@ -845,7 +890,7 @@ assert.ok(!/class="diff-line (add|remove)"/.test(reorderDiff.html));
 assert.equal((reorderDiff.html.match(/data-change-id="read-document"/g) || []).length, 1, 'each slug has one matched comparison section');
 const reorderedGraph = snapshotFromHtml(renderWorkflowDashboard({ ...data, versions: [version(reordered)] })).versions[0].dependencyGraph;
 assert.equal(reorderedGraph.nodes[0].id, 'render-change');
-assert.ok(generateDependencyDiagram(reorderedGraph).includes('Change 1<br/>Render each change<br/>render-change'));
+assert.ok(generateDependencyDiagram(reorderedGraph).includes('dag_0["Change 1<br/>Render each change"]'));
 assert.deepEqual(dependencyChanges(prosePlan.dependencyGraph, reorderedGraph), { addedNodes: [], removedNodes: [], addedEdges: [], removedEdges: [] });
 
 const editedReorder = { ...reordered, changes: reordered.changes.map((change) => change.id === 'read-document' ? { ...change, title: 'Renamed without changing identity', content: change.content + '\n\nNew **prose**.' } : change) };

@@ -51,7 +51,7 @@ If planning is already active, continue through normal conversation instead of r
 The extension saves the submitted ask verbatim as immutable workflow metadata, creates an empty editable plan directory at `working-plan/`, and sends the ask as the planning kickoff message. No plan version is published until the first successful finalization. After each `workflow_update_plan` finalization, its output includes the HTTP dashboard link. It never opens the browser automatically. The extension serves a single-page dashboard styled with the Isara design system. It has:
 
 - a concise plain-English plan description as the main document title, beside its prominent current version number;
-- a **Plan** view with a guided reader ordered as Goal, Dependency graph, planned changes, and Testing; a full-document fallback; the immutable original ask; and structured user clarifications;
+- a **Plan** view with a guided reader ordered as Goal, optional Introduction, Dependency graph, planned changes, and Testing; a full-document fallback; the immutable original ask; and structured user clarifications;
 - GitHub-style Markdown rendering, including tables and Mermaid diagrams in `mermaid` fenced code blocks;
 - an automatically generated plan outline, top-anchored previous/next navigation, `[`/`]` section shortcuts, `S`/`C` controls for the navigation and workflow-context sidebars, and direct links to individual planned changes;
 - a **Compare versions** view with two version selectors, `[`/`]` diff-block navigation, and a rich, formatted plan diff with green additions and red deletions; nearby changes use Git's default three-line context rule, so changes separated by up to six unchanged lines form one block;
@@ -92,7 +92,7 @@ Each `change_metadata.json` contains exactly a title and direct prerequisites:
 
 Use `[]` for independent work. Dependencies can refer to later reading-order entries. An arrow **define-redrive-policy → implement-queue-redrive-mechanism** means that the redrive implementation requires the policy. Do not invent dependencies to force a linear sequence or match a pull request stack. Independent changes can still conflict in shared files.
 
-The **Dependency graph** in **Guided view** uses this structured metadata, not parsed Markdown. Select a node to highlight its prerequisites and downstream changes. Requires and Enables links connect the change explanations. The version comparison matches changes by slug and summarizes dependency and reading-order changes. Full-document Markdown is generated for display only; it is never a second editable source.
+The **Dependency graph** in **Guided view** uses this structured metadata, not parsed Markdown. Nodes display change numbers and titles, not slug IDs. Select a node to highlight its prerequisites and downstream changes. Requires and Enables links connect the change explanations. The version comparison matches changes by slug and summarizes dependency and reading-order changes. Full-document Markdown is generated for display only; it is never a second editable source.
 
 ### Prepare, edit, and finalize
 
