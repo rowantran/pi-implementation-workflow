@@ -31,7 +31,7 @@ export type ResolveWorkflowResult =
  * Resolves which workflow a verb targets, in priority order: explicit
  * argument, CURRENT WORKTREE active marker, session binding, then an
  * interactive pick over this repository's registered active worktrees.
- * Committed workflow directories are never interpreted as active workflows.
+ * Existing workflow directories are never interpreted as active workflows.
  */
 export async function resolveWorkflow(options: ResolveWorkflowOptions): Promise<ResolveWorkflowResult> {
 	const argument = options.argument?.trim();

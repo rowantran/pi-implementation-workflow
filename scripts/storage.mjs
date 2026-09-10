@@ -99,6 +99,7 @@ try {
 	const repositoryRoot = join(temporaryRoot, "repository");
 	await mkdir(repositoryRoot);
 	await exec("git", ["init", "-q", repositoryRoot]);
+	await writeFile(join(repositoryRoot, ".gitignore"), ".workflows/\n");
 	const metadata = metadataFor("local-planning", repositoryRoot);
 	const files = workflowFiles(metadata.identifier, metadata.worktreePath);
 	await mkdir(metadata.worktreePath, { recursive: true });
@@ -132,12 +133,13 @@ try {
 	assert.equal(portable.ask, ask);
 	assert.ok(!(await readFile(files.metadata, "utf8")).includes(temporaryRoot));
 	assert.equal((await listCompletedWorkflows()).length, 1, "planning workflows are discoverable");
-	// The common Git exclude applies to every linked worktree but not to bundle files.
+	// The repository's ignore rule covers both the marker and saved workflow records.
 	const exclude = await readFile(join(metadata.gitCommonDir, "info", "exclude"), "utf8");
-	assert.match(exclude, /^\/\.workflows\/active\.json$/m);
-	const ignored = await exec("git", ["-C", repositoryRoot, "check-ignore", ".workflows/active.json"]);
-	assert.equal(ignored.stdout.trim(), ".workflows/active.json");
-	await assert.rejects(exec("git", ["-C", repositoryRoot, "check-ignore", `.workflows/${metadata.identifier}/plan.md`]));
+	assert.doesNotMatch(exclude, /\.workflows/);
+	for (const path of [".workflows/active.json", `.workflows/${metadata.identifier}/plan.md`]) {
+		const ignored = await exec("git", ["-C", repositoryRoot, "check-ignore", path]);
+		assert.equal(ignored.stdout.trim(), path);
+	}
 
 	// Explicit finalization, not initialization, creates the first immutable version.
 	await writePlanDocument(files.workingPlan, makePlanDocument());

@@ -10,8 +10,6 @@ Treat these sources as truth, from highest to lowest priority:
 {{/reviewPath}}
 The original ask, approved plan, and workflow metadata are read-only.{{#reviewPath}} The review report is also read-only.{{/reviewPath}}
 
-Keep the committed .workflows/{{{identifier}}}/ artifacts in the delivery. Include automatically committed clarifications and review reports when pushing. The active marker, working draft, dashboard, and review cache are local generated files, not delivery files.
-
 Use declared dependsOn arrays in change_metadata.json to check affected prerequisites and downstream dependents, including their integration and tests. Respect prerequisites when sequencing revisions; reading order is not execution order, and the dependency DAG does not prescribe the pull request stack. Slugs are stable IDs; numbers are only visual positions derived from plan.json readingOrder. Independent changes may still conflict in shared files, so coordinate concurrent work explicitly.
 
 Keep approved change slugs and dependencies immutable. Ask for clarification about missing or incorrect dependencies instead of editing the frozen plan. Read the exact approved version directory, not latest-plan. Use slugs, not display numbers, in durable references.

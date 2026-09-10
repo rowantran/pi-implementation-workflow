@@ -28,7 +28,7 @@ Run `/reload` in an existing Pi session after installation.
 
 Each completed plan has a unique identifier, a complete numbered version history, an HTTP dashboard, and structured implementation clarifications.
 
-The workflow is built around two durable objects: the **plan bundle** (the immutable original ask, the frozen plan and its version history, and explicit clarifications) and the **workspace** (a dedicated Git worktree and branch). Everything else — pull requests, reviews, session phases — is discovered live from Git, GitHub, and the saved artifacts, so any command can run from any session at any time.
+The workflow is built around two objects: the **plan bundle** (the immutable original ask, the frozen plan and its version history, and explicit clarifications) and the **workspace** (a dedicated Git worktree and branch). Everything else — pull requests, reviews, session phases — is discovered live from Git, GitHub, and the saved artifacts, so any command can run from any session at any time.
 
 ## The main flow
 
@@ -119,16 +119,15 @@ From the planning session, this approves the saved plan in the existing worktree
 
 1. requires a saved English description, a valid plan, and no unsaved working-plan changes;
 2. records the approved plan version in metadata;
-3. makes the initial workflow-artifact commit under `.workflows/<identifier>/`, including the original ask, complete plan-directory version history, latest pointer, and clarifications;
-4. creates and switches to a separate implementation session in the same worktree.
+3. creates and switches to a separate implementation session in the same worktree.
 
-The artifact commit includes only that workflow's durable files; it does not consume unrelated staged changes. Git commit failures leave planning recoverable and do not start implementation. The base commit, slug, artifact paths, and dashboard URL remain unchanged.
+Approval saves local metadata without creating a Git commit. The base commit, slug, artifact paths, and dashboard URL remain unchanged.
 
 The separate slug-generation request at planning startup uses `low` reasoning for OpenAI-compatible APIs, clamped to the selected model's declared supported levels. This avoids disabling reasoning on models that require it and does not change the session's thinking level. Other APIs keep their default behavior.
 
 The planning conversation remains saved and does not enter implementation context. Running `/workflow-implement` again later — from any session — starts a fresh implementation session in the existing worktree.
 
-Implementation inspects three durable sources before it acts: the immutable original ask in `metadata.json`, the frozen approved scope in its exact `plan-versions/vN/` directory, and later explicit answers in `clarifications.json`. If the approved plan has material ambiguity, the agent asks through `workflow_questions`. Submitted answers are appended verbatim to `clarifications.json`, committed locally, and shown in the dashboard. Selected answers retain the exact option label; custom answers retain the exact submitted text. Cancelled questionnaires are not stored.
+Implementation inspects three durable sources before it acts: the immutable original ask in `metadata.json`, the frozen approved scope in its exact `plan-versions/vN/` directory, and later explicit answers in `clarifications.json`. If the approved plan has material ambiguity, the agent asks through `workflow_questions`. Submitted answers are appended verbatim to the local `clarifications.json` file and shown in the dashboard. Selected answers retain the exact option label; custom answers retain the exact submitted text. Cancelled questionnaires are not stored.
 
 The implementer chooses the lightest reviewable delivery. A small cohesive plan uses one pull request. A larger plan can use a linear stack through Graphite, GitHub's native stack tooling, or ordinary Git branches. The initial `workflow/<identifier>` branch is always the bottom branch. Its pull request targets the recorded base branch; every later pull request targets the branch directly below it; and the checked-out branch remains the stack tip. Planning does not add subplans or pull request boundaries.
 
@@ -151,12 +150,12 @@ The workflow then deterministically generates the review before entering a separ
 
 The review progress display nests a live status row under the active stage for every individual agent. Queued and running reviewers, completed or failed reviewers, and reused cached results remain visible while the workflow advances through analysis and synthesis.
 
-Reviews are derived artifacts with two storage layers:
+Reviews are local derived artifacts with two storage layers:
 
 - `review-runs/` is the work-in-progress cache of raw per-agent outputs, keyed by commit range and a fingerprint of the original ask, approved plan, and clarifications. A retry reuses every valid completed result, so a synthesis failure does not repeat the earlier reviews. It is safe to delete; deleting it only costs recomputation.
-- `reviews/` is the committed, append-only history of finished reports. Each saved report is the synthesized review of one commit range. `review.json` and `review.md` always mirror the newest report and feed the default **Review** tab in the browser dashboard.
+- `reviews/` is the local, append-only history of finished reports. Each saved report is the synthesized review of one commit range. `review.json` and `review.md` always mirror the newest report and feed the default **Review** tab in the browser dashboard.
 
-The extension commits finished reports locally, but never pushes automatically. Push the workflow branch to include those commits in the pull request. Implementation and revision agents include artifact commits in their normal push. Reviews, readiness reminders, and dashboard staleness ignore trailing `.workflows/`-only commits, so saving a report does not invalidate that same report. Delivery may accept an unpushed artifact-only suffix when the remote pull request tip is its ancestor and the implementation content is identical; unpushed code changes still block review.
+Saving a report updates local files without creating a Git commit. For compatibility with older branches, reviews, readiness reminders, and dashboard staleness still ignore trailing `.workflows/`-only commits. Delivery may accept such an unpushed suffix when the remote pull request tip is its ancestor and the implementation content is identical; unpushed code changes still block review.
 
 Running `/workflow-review` again selects the cheapest correct behavior from the saved artifacts and Git history — never an error:
 
@@ -196,9 +195,9 @@ Revision requires only the plan and the worktree — it works straight after imp
 /workflow-cleanup
 ```
 
-Cleanup first commits any pending durable workflow artifacts, including finalized versions of an unapproved plan. It asks before discarding an unsaved working draft; invalid drafts are not published or committed. If that commit fails, cleanup stops. It then removes the worktree directory and its Git worktree registration, keeping local branches, remote branches, and pull requests. The artifacts survive in the retained branch under `.workflows/<identifier>/`; no separate archive is needed. Push local artifact commits if you also want them in the pull request.
+Cleanup asks for confirmation before deleting local workflow records, including the original ask, plan versions, clarifications, finished reviews, and any working draft. It removes those files with the worktree directory and its Git worktree registration, keeping local branches, remote branches, and pull requests. It does not create a Git commit or an archive of the workflow files.
 
-Cleanup asks for confirmation before discarding other uncommitted changes or when no saved review covers the current implementation content. When the current session lives inside the worktree, the command switches Pi back to the original repository first and removes the worktree from there; otherwise it removes the worktree in place. The ignored active marker, working draft, dashboard, and review cache are removed with the worktree. The dashboard URL is no longer served after cleanup.
+Cleanup also asks for confirmation before discarding uncommitted code changes or when no saved review covers the current implementation content. When the current session lives inside the worktree, the command switches Pi back to the original repository first and removes the worktree from there; otherwise it removes the worktree in place. The active marker, dashboard, and review cache are also removed with the worktree. The dashboard URL is no longer served after cleanup.
 
 ## Targeting a workflow
 
@@ -209,7 +208,7 @@ Every worktree verb — `/workflow-brief`, `/workflow-implement`, `/workflow-rev
 3. the workflow already bound to the current session;
 4. otherwise, the active workflows recorded for the current repository: a single match is used directly, and multiple matches open an interactive picker sorted by recency.
 
-Committed `.workflows/` directories from previous workflows never imply an active workflow. Only the local active marker does. Opening a bound session or running a workflow command in an active worktree can rebuild a missing global locator.
+Other `.workflows/` directories never imply an active workflow. Only the local active marker does. Opening a bound session or running a workflow command in an active worktree can rebuild a missing global locator.
 
 Because the argument position is reserved for identifiers, only `/workflow-plan` accepts inline prefill text.
 
@@ -317,10 +316,10 @@ One Pi process owns the temporary listener on the configured port. Other Pi proc
 
 - `/workflow-plan [ask]` — open the required multiline ask editor, generate a stable slug, create the worktree, and start planning there. The dashboard link appears after `workflow_update_plan` saves the first plan version.
 - `/workflow-brief [identifier]` — load workflow context into the current session without assigning a role or changing its tools.
-- `/workflow-implement [identifier]` — from a planning session, approve and commit the plan and switch to implementation; otherwise start a fresh implementation session for an approved workflow.
+- `/workflow-implement [identifier]` — from a planning session, approve the saved plan and switch to implementation; otherwise start a fresh implementation session for an approved workflow.
 - `/workflow-review [identifier]` — validate the live delivery, generate or reuse the deterministic review, and switch to a read-only review session.
 - `/workflow-revise [identifier]` — open the required change-request editor and start a separate revision session in the workflow worktree.
-- `/workflow-cleanup [identifier]` — remove the workflow worktree, confirming first when work is uncommitted or unreviewed.
+- `/workflow-cleanup [identifier]` — confirm deletion of local workflow records and remove the worktree, with additional checks for uncommitted code or unreviewed work.
 - `/workflow-dashboard` — regenerate the active workflow dashboard and show its link.
 
 There is no state machine to advance: each command checks its own preconditions against Git, GitHub, and the saved plan when it runs, and the extension suggests the natural next command instead of enforcing an order.
@@ -342,15 +341,15 @@ After the first agent turn settles, the footer shows the suggested next command 
 
 ## State
 
-Each active worktree contains one marker and a bundle under its stable identifier:
+Workflow files are local to the worktree under `.workflows/`, which the consumer repository's `.gitignore` is expected to ignore. The extension saves these files locally; it does not automatically commit or push them. Each active worktree contains one marker and a bundle under its stable identifier:
 
 ```text
 <worktree>/.workflows/
-├── active.json                 # ignored: active identifier and machine-local paths
+├── active.json                 # active identifier and machine-local paths
 └── <identifier>/
 ```
 
-The bundle exists from planning onward. Earlier committed bundles may coexist, but are not active:
+The local bundle exists from planning until cleanup:
 
 ```text
 <worktree>/.workflows/<identifier>/
@@ -368,17 +367,17 @@ The bundle exists from planning onward. Earlier committed bundles may coexist, b
 │               └── change.md
 ├── latest-plan -> plan-versions/v2
 ├── clarifications.json
-├── working-plan/               # ignored: editable planning directory
-├── .plan-draft-base.json        # ignored: tool-owned draft base
-├── .plan.lock                  # ignored: prepare/finalize operation lock
-├── dashboard.html              # ignored: generated browser view
+├── working-plan/               # editable planning directory
+├── .plan-draft-base.json        # tool-owned draft base
+├── .plan.lock                  # prepare/finalize operation lock
+├── dashboard.html              # generated browser view
 ├── review.json
 ├── review.md
 ├── reviews/
 │   ├── 0001.json
 │   ├── 0001.md
 │   └── ...
-├── review-runs/                # ignored: recomputable review cache
+├── review-runs/                # recomputable review cache
 │   └── <base>..<head>/<source-fingerprint>/
 │       ├── manifest.json
 │       ├── incremental-review-scope.json  # re-reviews only
@@ -391,11 +390,11 @@ The bundle exists from planning onward. Earlier committed bundles may coexist, b
 └── metadata.json
 ```
 
-Tracked `metadata.json` records portable facts: the verbatim, write-once original ask, identifier, base branch and commit, workflow branch, creation time, and the approved plan version when one exists. Each plan snapshot stores its English description, creation time, and integrity digest in tool-owned `version-metadata.json`. The displayed description comes from the approved snapshot, or the latest finalized snapshot while planning; approval also records that description in workflow metadata. An absent approval version means the plan is still being drafted. The local `active.json` marker contains the active identifier, repository/worktree paths, Git common directory, and discovered pull requests as a display cache. Machine paths and the marker are not committed.
+Local `metadata.json` records workflow facts: the verbatim, write-once original ask, identifier, base branch and commit, workflow branch, creation time, and the approved plan version when one exists. Each plan snapshot stores its English description, creation time, and integrity digest in tool-owned `version-metadata.json`. The displayed description comes from the approved snapshot, or the latest finalized snapshot while planning; approval also records that description in workflow metadata. An absent approval version means the plan is still being drafted. The local `active.json` marker contains the active identifier, repository/worktree paths, Git common directory, and discovered pull requests as a display cache.
 
-The global `~/.pi/agent/workflows/<identifier>.json` files are small location pointers, not artifact copies. The extension uses them for identifier lookup and shared dashboard routing. Authoritative files stay inside the worktree; after cleanup, their committed versions remain in Git. Pi conversation transcripts continue to use Pi's normal session storage.
+The global `~/.pi/agent/workflows/<identifier>.json` files are small location pointers, not artifact copies. The extension uses them for identifier lookup and shared dashboard routing. Authoritative files stay inside the worktree and are deleted with it during cleanup. Stale pointers are skipped when listing workflows. Pi conversation transcripts continue to use Pi's normal session storage.
 
-Git's local exclude file ignores only the marker and disposable draft/dashboard/review-cache files, not the entire `.workflows/` directory. Plans, versions, clarifications, metadata, and finished reports enter the branch and pull request. There is no stored review round or lifecycle state machine; reviewability and staleness are derived from Git, open pull requests, approval metadata, and saved reports.
+There is no stored review round or lifecycle state machine; reviewability and staleness are derived from Git, open pull requests, approval metadata, and saved reports.
 
 The metadata format is version 6; plan manifests use schema version 1 and review reports use version 3. Workflow directories created by earlier releases are not migrated; they are skipped by workflow listing and rejected when targeted directly.
 

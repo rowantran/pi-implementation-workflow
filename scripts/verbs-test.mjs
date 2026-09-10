@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { lstat, mkdir, mkdtemp, readFile, readdir, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createJiti } from "jiti/static";
@@ -180,24 +180,8 @@ function createHarness(repositoryRoot, worktreePath, workflowBranch) {
 				return { code: 0, stdout: `${headCommit}\n`, stderr: "" };
 			}
 			if (gitArgs[0] === "show-ref" || (gitArgs[0] === "rev-parse" && gitArgs.includes("--verify"))) return { code: 1, stdout: "", stderr: "" };
-			if (gitArgs[0] === "ls-files") {
-				const listed = [];
-				async function listExisting(path) {
-					let info;
-					try { info = await lstat(join(cwd, path)); }
-					catch (error) { if (error.code === "ENOENT") return; throw error; }
-					if (info.isDirectory()) {
-						for (const name of await readdir(join(cwd, path))) await listExisting(`${path}/${name}`);
-					} else listed.push(path); // Keep latest-plan as a symlink; never traverse it.
-				}
-				for (const pathspec of gitArgs.slice(gitArgs.indexOf("--") + 1)) {
-					assert.ok(pathspec.startsWith(":(top,literal).workflows/"));
-					await listExisting(pathspec.slice(":(top,literal)".length));
-				}
-				return { code: 0, stdout: listed.map((path) => `${path}\0`).join(""), stderr: "" };
-			}
-			if (gitArgs[0] === "diff") return { code: gitArgs.includes("--quiet") && gitArgs.includes("--cached") ? 1 : 0, stdout: "", stderr: "" };
-			if (gitArgs[0] === "add" || gitArgs[0] === "commit") return { code: 0, stdout: "", stderr: "" };
+			assert.ok(gitArgs[0] !== "add" && gitArgs[0] !== "commit", "workflow verbs never stage or commit records");
+			if (gitArgs[0] === "diff") return { code: 0, stdout: "", stderr: "" };
 			if (gitArgs[0] === "worktree" && gitArgs[1] === "add") {
 				await mkdir(gitArgs[4], { recursive: true });
 				return { code: 0, stdout: "", stderr: "" };
@@ -282,7 +266,7 @@ function createHarness(repositoryRoot, worktreePath, workflowBranch) {
 			ui: {
 				confirm: async (title, message) => {
 					confirmations.push({ title, message });
-					return confirmResult;
+					return typeof confirmResult === "function" ? confirmResult(title) : confirmResult;
 				},
 				editor: async (_title, prefill) => (prefill === undefined || prefill === "" ? editorValue : prefill),
 				notify: (message, level) => notifications.push({ message, level }),
@@ -752,10 +736,7 @@ try {
 			assert.ok(prompt.includes(validPlan.changes[0].content), "reviewers receive the full approved prose");
 			assert.doesNotMatch(prompt, /PC-\d+|PC-\*/);
 		}
-		const stagedPaths = harness.executions.filter(({ args }) => args.includes("add")).flatMap(({ args }) => args);
-		assert.ok(stagedPaths.some((path) => path.endsWith("/plan-versions/v1/planned-changes/complete-verbs/change.md")));
-		assert.ok(stagedPaths.some((path) => path.endsWith("/latest-plan")));
-		assert.ok(!stagedPaths.some((path) => path.endsWith("/plan.md") || path.includes("/versions/0001.md")));
+		assert.ok(!harness.executions.some(({ args }) => args.includes("add") || args.includes("commit")), "review saves reports without staging or committing any workflow files");
 
 		// Reuse: the same approved inputs and commits are never re-reviewed.
 		const reviewCtx = harness.currentContext();
@@ -850,8 +831,10 @@ try {
 		const ctx = harness.context(workflow.repositoryRoot, []);
 		await harness.emit("session_start", ctx);
 		await harness.run("workflow-cleanup", "", ctx);
-		assert.equal(harness.confirmations.length, 1, "a missing review requires confirmation");
-		assert.match(harness.confirmations[0].title, /No up-to-date review/);
+		assert.equal(harness.confirmations.length, 2, "local records and a missing review each require confirmation");
+		assert.match(harness.confirmations[0].title, /Remove local workflow records/);
+		assert.match(harness.confirmations[0].message, /delete its local plans, clarifications, reviews, and working drafts/);
+		assert.match(harness.confirmations[1].title, /No up-to-date review/);
 		assert.equal(harness.switches.length, 0, "cleanup outside the worktree removes it in place");
 		assert.equal(await storage.pathExists(workflow.worktreePath), false);
 		assert.ok(
@@ -894,7 +877,8 @@ try {
 		]);
 		await harness.emit("session_start", ctx);
 		await harness.run("workflow-cleanup", "", ctx);
-		assert.equal(harness.confirmations.length, 0, "an up-to-date review needs no confirmation");
+		assert.equal(harness.confirmations.length, 1, "even reviewed workflows confirm deletion of local records");
+		assert.match(harness.confirmations[0].title, /Remove local workflow records/);
 		assert.equal(harness.switches.length, 1);
 		const cleanupPhase = await sessionPhase(harness.switches[0]);
 		assert.deepEqual(cleanupPhase.data, {
@@ -947,13 +931,28 @@ try {
 				review: await reviewAgentRunner({ role: "testing-criteria" }),
 			},
 		});
+		harness.setConfirmResult((title) => title === "Remove local workflow records");
+		const ctx = harness.context(workflow.repositoryRoot, []);
+		await harness.emit("session_start", ctx);
+		await harness.run("workflow-cleanup", "", ctx);
+		assert.equal(harness.confirmations.length, 2);
+		assert.match(harness.confirmations[1].message, /branch or workflow sources changed after the latest review/);
+		assert.equal(await storage.pathExists(workflow.worktreePath), true, "a declined confirmation keeps the worktree");
+	}
+
+	// Declining deletion of local records preserves the worktree and saved plan.
+	{
+		const workflow = await writeCompletedWorkflow("keep-local-records");
+		const harness = createHarness(workflow.repositoryRoot, workflow.worktreePath, workflow.workflowBranch);
 		harness.setConfirmResult(false);
 		const ctx = harness.context(workflow.repositoryRoot, []);
 		await harness.emit("session_start", ctx);
 		await harness.run("workflow-cleanup", "", ctx);
 		assert.equal(harness.confirmations.length, 1);
-		assert.match(harness.confirmations[0].message, /branch or workflow sources changed after the latest review/);
-		assert.equal(await storage.pathExists(workflow.worktreePath), true, "a declined confirmation keeps the worktree");
+		assert.equal(harness.confirmations[0].title, "Remove local workflow records");
+		assert.equal(await storage.pathExists(workflow.worktreePath), true);
+		assert.equal((await storage.readPlanVersion(workflow.files)).number, 1);
+		assert.ok(!harness.executions.some(({ args }) => args.includes("remove")));
 	}
 
 	// Identifier resolution: explicit arguments, pickers, and completions.

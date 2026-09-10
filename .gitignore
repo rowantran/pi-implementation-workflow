@@ -8,6 +8,8 @@ package-lock.json
 coverage/
 dist/
 .pi/
+.workflows/
+.worktrees/
 .DS_Store
 *.swp
 *.swo

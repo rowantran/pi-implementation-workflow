@@ -58,6 +58,40 @@ function assertCodeBlockGuidance(system, role) {
   assert.ok(!system.includes("<!--"), `${role} must not include template comments.`);
 }
 
+function assertNoArtifactDeliveryGuidance(system, role) {
+  const artifactReference = /\.workflows\b|\bartifacts?\b|\bworkflow (?:records?|metadata)\b|\bclarifications(?:\.json)?\b|\b(?:finished|review) reports?\b|\b(?:approved|frozen) plan\b|\bplan bundle\b|\bworking draft\b|\bactive marker\b|\bdashboard(?:\.html)?\b|\breview cache\b/i;
+  const gitDelivery = /\b(?:commits?|committed|committing|push(?:es|ed|ing)?|pull requests?|delivery)\b/i;
+  // Check sentences rather than lines so wrapping cannot hide artifact delivery guidance.
+  for (const sentence of system.replace(/\r?\n/g, " ").split(/(?<=[.!?])\s+/)) {
+    if (artifactReference.test(sentence)) {
+      assert.doesNotMatch(sentence, gitDelivery, `${role} must not tie workflow artifacts to Git delivery.`);
+    }
+  }
+}
+
+for (const guidance of [
+  "The approved workflow artifacts are already committed under .workflows/example/.",
+  "Keep the committed .workflows/example/ artifacts in the delivery.",
+  "Include the plan bundle in every pull request.",
+  "The workflow automatically commits later clarifications and finished review reports.",
+  "Include automatically committed clarifications and review reports when pushing.",
+  "Push\nworkflow records with the implementation.",
+  "Do not commit .workflows/active.json, working-plan/, or review-runs/ caches.",
+  "The reviewed head excludes trailing workflow-artifact-only commits.",
+]) {
+  assert.throws(() => assertNoArtifactDeliveryGuidance(guidance, "regression fixture"), /must not tie workflow artifacts to Git delivery/);
+}
+assert.doesNotThrow(() => assertNoArtifactDeliveryGuidance(
+  "The approved plan is read-only. Commit and push implementation changes and open a pull request.",
+  "normal implementation delivery",
+));
+
+function assertImplementationDelivery(system, role) {
+  assert.ok(system.includes("ensure every branch is committed, pushed, and represented by an open pull request"), `${role} must still deliver implementation commits.`);
+  assert.match(system, /Ensure the worktree is clean before considering (?:your work|the revision) complete\./, `${role} must still require a clean worktree.`);
+}
+
+const localArtifactPromptNames = new Set(["system/implementation.md", "system/revision.md", "system/review-agent.md"]);
 const templatePaths = markdownFiles(promptsDirectory);
 assert.ok(templatePaths.length > 0, "Expected at least one Markdown prompt template.");
 for (const path of templatePaths) {
@@ -66,7 +100,9 @@ for (const path of templatePaths) {
   const name = relative(promptsDirectory, path);
   assert.ok(usageComment, `${name} must start with a one-line <!-- Usage: ... --> comment.`);
   assert.ok(usageComment[1].trim(), `${name} must have a non-empty usage explanation.`);
-  assertLabeledCodeFences(prompts.stripHtmlComments(source, name), name);
+  const renderedSource = prompts.stripHtmlComments(source, name);
+  assertLabeledCodeFences(renderedSource, name);
+  if (localArtifactPromptNames.has(name)) assertNoArtifactDeliveryGuidance(renderedSource, name);
 }
 
 assert.equal(
@@ -111,6 +147,8 @@ const implementationValues = {
 };
 const implementationSystem = prompts.implementationSystemPrompt(implementationValues);
 assertCodeBlockGuidance(implementationSystem, "implementation");
+assertNoArtifactDeliveryGuidance(implementationSystem, "implementation");
+assertImplementationDelivery(implementationSystem, "implementation");
 for (const path of Object.values(durablePaths)) assert.ok(implementationSystem.includes(path));
 assert.ok(implementationSystem.includes(implementationValues.worktreePath));
 assert.ok(implementationSystem.includes(implementationValues.workflowBranch));
@@ -135,6 +173,11 @@ assert.ok(implementationSystem.includes("Use slugs, not display numbers"));
 for (const reviewPath of [undefined, "/tmp/review.json"]) {
   const revision = prompts.revisionSystemPrompt({ ...implementationValues, reviewPath });
   assertCodeBlockGuidance(revision, `revision (reviewPath=${reviewPath})`);
+  assertNoArtifactDeliveryGuidance(revision, `revision (reviewPath=${reviewPath})`);
+  assertImplementationDelivery(revision, `revision (reviewPath=${reviewPath})`);
+  assert.ok(revision.includes("The original ask, approved plan, and workflow metadata are read-only"));
+  assert.ok(revision.includes("use workflow_questions before changing code"));
+  assert.ok(revision.includes("bottom pull request must target main"));
   assert.ok(revision.includes("Use declared dependsOn arrays in change_metadata.json"));
   assert.ok(revision.includes("affected prerequisites and downstream dependents"));
   assert.ok(revision.includes("including their integration and tests"));
@@ -259,7 +302,10 @@ assert.ok(!reviewSystem.includes("&amp;"));
 const reviewAgentOutputTool = "submit_review_<result>&now";
 const reviewAgentSystem = prompts.reviewAgentSystemPrompt(reviewAgentOutputTool);
 assertCodeBlockGuidance(reviewAgentSystem, "common review agent");
+assertNoArtifactDeliveryGuidance(reviewAgentSystem, "common review agent");
 assert.ok(reviewAgentSystem.includes("read-only worker"));
+assert.ok(reviewAgentSystem.includes("Do not modify files, branches, commits, or pull requests"));
+assert.ok(reviewAgentSystem.includes("Local workflow records under .workflows/ are supporting artifacts, not implementation scope"));
 assert.ok(reviewAgentSystem.includes(reviewAgentOutputTool));
 assert.ok(!reviewAgentSystem.includes("&lt;result&gt;"));
 
@@ -345,5 +391,5 @@ assert.equal(guidelines.length, 1);
 for (const text of ['workflow_update_plan', 'action="prepare"', 'action="finalize"', 'expectedBaseVersion', 'readingOrder', 'invalid drafts never replace the saved plan', 'not a Git commit']) assert.ok(guidelines[0].includes(text));
 
 console.log(
-  `Prompt test passed: ${templatePaths.length} documented templates preserve rendered text, durable intent paths, and language-labeled code block guidance.`,
+  `Prompt test passed: ${templatePaths.length} documented templates preserve rendered text, durable intent paths, local workflow artifacts, implementation delivery requirements, and language-labeled code block guidance.`,
 );

@@ -28,7 +28,6 @@ import {
 import { writeWorkflowDashboard } from "./dashboard.ts";
 import { checkDelivery, findCurrentPullRequest } from "./delivery.ts";
 import {
-	commitWorkflowArtifacts,
 	gitValue,
 	installWorkflowExcludes,
 	workflowContentHead,
@@ -208,8 +207,6 @@ export default function implementationWorkflow(
 			throw new Error("Implementation clarifications can only be saved during implementation or revision.");
 		}
 		await saveClarifications(activeFiles, result);
-		if (!metadata) throw new Error("The workflow has no metadata.");
-		await commitWorkflowArtifacts(exec, metadata, `Record workflow clarifications: ${metadata.identifier}`);
 		await writeWorkflowDashboard(activeFiles);
 	});
 
@@ -593,7 +590,7 @@ export default function implementationWorkflow(
 	});
 
 	pi.registerCommand("workflow-implement", {
-		description: "Approve and commit the current plan, or start an implementation session for an approved workflow",
+		description: "Approve the current plan, or start an implementation session for an approved workflow",
 		getArgumentCompletions: (prefix) => workflowIdentifierCompletions(prefix),
 		handler: async (args, ctx) => {
 			await ctx.waitForIdle();
@@ -623,13 +620,6 @@ export default function implementationWorkflow(
 		ctx: ExtensionCommandContext,
 		workflow: CompletedWorkflowMetadata,
 	): Promise<void> {
-		// Retry an interrupted initial artifact commit before entering implementation.
-		try {
-			await commitWorkflowArtifacts(exec, workflow, `Save approved workflow artifacts: ${workflow.identifier}`);
-		} catch (error) {
-			ctx.ui.notify(`Cannot start implementation before committing its plan: ${errorMessage(error)}`, "error");
-			return;
-		}
 		const files = workflowFiles(workflow.identifier);
 		const sessionFile = await createPhaseSession(workflow.worktreePath, {
 			phase: "implementation",
@@ -658,12 +648,12 @@ export default function implementationWorkflow(
 		let approved: CompletedWorkflowMetadata;
 		try {
 			// Share the publication lock across processes. Approval cannot race a
-			// finalization between selecting the version and committing its artifacts.
+			// finalization between selecting the version and saving its approval.
 			approved = await withPlanLock(files, async () => {
 				const workflow = await readCompletedWorkflowMetadata(identifier!);
 				if (workflow.approvedPlanVersion !== undefined) return workflow;
 				if (await hasUnsavedPlanDraft(files)) {
-					throw new Error(`The working plan has uncommitted changes. Call ${WORKFLOW_UPDATE_PLAN_TOOL} before advancing to implementation.`);
+					throw new Error(`The working plan has unsaved changes. Call ${WORKFLOW_UPDATE_PLAN_TOOL} before advancing to implementation.`);
 				}
 				const latest = await readPlanVersion(files);
 				const completionError = planningCompletionError(latest?.document, latest?.description ?? workflow.description);
@@ -672,15 +662,8 @@ export default function implementationWorkflow(
 				const validation = await validateWorktree(exec, workflow);
 				if (validation) throw new Error(`Cannot approve plan: ${validation}.`);
 				const next = { ...workflow, description: latest.description, approvedPlanVersion: latest.number };
-				try {
-					await writeCompletedWorkflowMetadata(next);
-					await commitWorkflowArtifacts(exec, next, `Approve workflow plan: ${identifier}`);
-				} catch (error) {
-					// Approval is not complete until its initial artifact commit succeeds.
-					await writeCompletedWorkflowMetadata(workflow);
-					throw new Error(`Could not commit the approved plan: ${errorMessage(error)}`);
-				}
-				// Another session may have edited its draft during the Git commit.
+				await writeCompletedWorkflowMetadata(next);
+				// Another session may have edited its draft while approval was saved.
 				// Approval pins the saved version; never discard those newer edits.
 				if (!await hasUnsavedPlanDraft(files)) await rm(files.workingPlan, { recursive: true, force: true });
 				else ctx.ui.notify("The working draft changed during approval and was preserved. Implementation uses the approved saved version.", "warning");
@@ -775,8 +758,6 @@ export default function implementationWorkflow(
 		workflow: CompletedWorkflowMetadata,
 		files: WorkflowFiles,
 	): Promise<{ report: WorkflowReviewReport; reused: boolean }> {
-		// Recover a saved report or clarification whose prior Git commit failed.
-		await commitWorkflowArtifacts(exec, workflow, `Save workflow artifacts: ${workflow.identifier}`);
 		const delivery = await runWorkflowProgress(
 			ctx,
 			"Checking implementation delivery",
@@ -896,9 +877,7 @@ export default function implementationWorkflow(
 					throw new Error("The worktree or workflow sources changed during review. Wait for other agents to finish and run /workflow-review again.");
 				}
 				await appendWorkflowReview(files, report);
-				const artifactCommit = await commitWorkflowArtifacts(exec, workflow, `Save workflow review: ${workflow.identifier}`);
 				await writeWorkflowDashboard(files, delivery.headCommit);
-				if (artifactCommit) ctx.ui.notify("Review artifacts committed locally. Push the workflow branch to include them in the pull request.", "info");
 				progress.complete("Saved review report");
 				return { report, reused: false };
 			},
@@ -942,12 +921,6 @@ export default function implementationWorkflow(
 				ctx.ui.notify("Revision did not start because no change request was submitted.", "info");
 				return;
 			}
-			try {
-				await commitWorkflowArtifacts(exec, workflow, `Save workflow artifacts: ${workflow.identifier}`);
-			} catch (error) {
-				ctx.ui.notify(`Cannot start revision before saving its workflow artifacts: ${errorMessage(error)}`, "error");
-				return;
-			}
 			const files = workflowFiles(workflow.identifier);
 			let review: WorkflowReviewReport | undefined;
 			try {
@@ -977,20 +950,11 @@ export default function implementationWorkflow(
 			const workflow = await resolveTargetWorkflow(ctx, args, "cleanup");
 			if (!workflow) return;
 			const files = workflowFiles(workflow.identifier);
-			if (await hasUnsavedPlanDraft(files)) {
-				const discardDraft = await ctx.ui.confirm(
-					"Working plan has unsaved changes",
-					`Cleanup preserves finalized plan versions, but discards working-plan/. Save it with ${WORKFLOW_UPDATE_PLAN_TOOL} first to keep those edits. Discard the working draft?`,
-				);
-				if (!discardDraft) return;
-			}
-			try {
-				// Preserve unfinished planning too, before any destructive cleanup confirmation.
-				await commitWorkflowArtifacts(exec, workflow, `Preserve workflow artifacts: ${workflow.identifier}`);
-			} catch (error) {
-				ctx.ui.notify(`Cannot clean up before saving workflow artifacts: ${errorMessage(error)}`, "error");
-				return;
-			}
+			const discardRecords = await ctx.ui.confirm(
+				"Remove local workflow records",
+				`Removing ${workflow.worktreePath} will delete its local plans, clarifications, reviews, and working drafts. Copy any records you want to keep outside the worktree first. Continue?`,
+			);
+			if (!discardRecords) return;
 			const status = await worktreeStatus(exec, workflow.worktreePath);
 			if (status === undefined) {
 				ctx.ui.notify("Could not inspect the workflow worktree.", "error");
@@ -1087,8 +1051,8 @@ export default function implementationWorkflow(
 			title: "Workflow cleanup complete",
 			details: [
 				`Removed worktree: ${workflow.worktreePath}`,
-				`Workflow artifacts remain committed on the retained branch under .workflows/${workflow.identifier}/.`,
-				"Kept local and remote branches and pull requests. Locally committed artifacts need a push to appear in the pull request.",
+				"Removed local workflow records with the worktree.",
+				"Kept local and remote branches and pull requests.",
 			],
 		});
 		return true;
