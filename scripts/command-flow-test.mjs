@@ -37,7 +37,7 @@ async function unusedPort() {
 	return address.port;
 }
 
-async function scenario({ args = "", editorResult, planningModel, planningThinkingLevel, expectedIdentifier = "command-workflow", beforeStart, beforeApprovalCommit, afterFirstStart } = {}) {
+async function scenario({ args = "", editorResult, planningModel, planningThinkingLevel, expectedIdentifier = "command-workflow", beforeStart, duringApproval, afterFirstStart } = {}) {
 	const root = await realpath(await mkdtemp(join(tmpdir(), "pi-workflow-command-")));
 	const agentDir = join(root, "agent");
 	const repositoryRoot = join(root, "repository");
@@ -47,8 +47,8 @@ async function scenario({ args = "", editorResult, planningModel, planningThinki
 	process.env.PI_CODING_AGENT_DIR = agentDir;
 	await mkdir(repositoryRoot, { recursive: true });
 	const git = async (cwd, ...args) => {
-		if (args.includes("commit") && args.some((arg) => arg.startsWith("Approve workflow plan:"))) {
-			await beforeApprovalCommit?.({ workflowRoot });
+		if (args[0] === "branch" && args[1] === "--show-current" && existsSync(join(workflowRoot, ".plan.lock"))) {
+			await duringApproval?.({ workflowRoot });
 		}
 		try {
 			const result = await execFileAsync("git", ["-C", cwd, ...args]);
@@ -61,7 +61,8 @@ async function scenario({ args = "", editorResult, planningModel, planningThinki
 		assert.equal((await git(repositoryRoot, ...args)).code, 0);
 	}
 	await writeFile(join(repositoryRoot, "README.md"), "Workflow fixture\n");
-	assert.equal((await git(repositoryRoot, "add", "README.md")).code, 0);
+	await writeFile(join(repositoryRoot, ".gitignore"), ".workflows/\n");
+	assert.equal((await git(repositoryRoot, "add", "README.md", ".gitignore")).code, 0);
 	assert.equal((await git(repositoryRoot, "commit", "-m", "Initial content")).code, 0);
 	const baseCommit = (await git(repositoryRoot, "rev-parse", "HEAD")).stdout.trim();
 	const initialExclude = await readFile(join(repositoryRoot, ".git", "info", "exclude"), "utf8");
@@ -103,6 +104,8 @@ async function scenario({ args = "", editorResult, planningModel, planningThinki
 			exec: async (command, args) => {
 				assertCurrent();
 				executions.push({ command, args });
+				const gitCommand = args[2] === "-c" ? args[4] : args[2];
+				if (command === "git") assert.ok(gitCommand !== "add" && gitCommand !== "commit", "workflow commands never stage or commit local records");
 				if (command === "gh") return { code: 0, stdout: "[]", stderr: "" };
 				assert.equal(command, "git");
 				assert.equal(args[0], "-C");
@@ -353,11 +356,11 @@ assert.equal(started.phaseEntries.length, 1);
 assert.equal(started.sentMessages.length, 1);
 
 await scenario({
-	editorResult: "Leave a working plan uncommitted",
+	editorResult: "Leave a working plan unsaved",
 	afterFirstStart: async ({ workflowRoot, run, notifications }) => {
-		await writeFile(join(workflowRoot, "working-plan", "goal.md"), "Uncommitted.\n", "utf8");
+		await writeFile(join(workflowRoot, "working-plan", "goal.md"), "Unsaved.\n", "utf8");
 		await run("workflow-implement");
-		assert.match(notifications.at(-1).message, /working plan has uncommitted changes/);
+		assert.match(notifications.at(-1).message, /working plan has unsaved changes/);
 	},
 });
 
@@ -375,7 +378,7 @@ await scenario({
 		assert.deepEqual(await readdir(join(workflowRoot, "plan-versions")), []);
 		const plan = planFixture();
 		await writePlanFixture(prepared.details.draftPath, plan);
-		const result = await updatePlan.execute("finalize", { action: "finalize", expectedBaseVersion: 0, description: "Preserve workflow records in Git" });
+		const result = await updatePlan.execute("finalize", { action: "finalize", expectedBaseVersion: 0, description: "Keep workflow records local" });
 		assert.equal(result.details.version, 1);
 		assert.match(result.content[0].text, /Finalized implementation plan version 1/);
 		assert.match(result.details.dashboardUrl, /^http:\/\/127\.0\.0\.1:\d+\/implementation-workflow\/workflows\/command-workflow$/);
@@ -387,7 +390,7 @@ await scenario({
 		assert.equal(next.details.baseVersion, 1);
 		const metadataPath = join(next.details.draftPath, "planned-changes", plan.readingOrder[0], "change_metadata.json");
 		await writeFile(metadataPath, JSON.stringify({ title: "Store records", dependsOn: ["missing-change"], surprise: true }));
-		await assert.rejects(updatePlan.execute("invalid", { action: "finalize", expectedBaseVersion: 1, description: "Preserve workflow records in Git" }), (error) => {
+		await assert.rejects(updatePlan.execute("invalid", { action: "finalize", expectedBaseVersion: 1, description: "Keep workflow records local" }), (error) => {
 			assert.match(error.message, /unknown field/);
 			assert.match(error.message, /unknown change|unknown ID/);
 			return true;
@@ -395,12 +398,12 @@ await scenario({
 		assert.deepEqual((await readdir(join(workflowRoot, "plan-versions"))).sort(), ["v1"]);
 		assert.equal(await readFile(join(workflowRoot, "latest-plan", "goal.md"), "utf8"), savedGoal);
 		await run("workflow-implement");
-		assert.match(notifications.at(-1).message, /working plan has uncommitted changes/);
+		assert.match(notifications.at(-1).message, /working plan has unsaved changes/);
 		const resumed = await updatePlan.execute("resume-draft", { action: "prepare" });
 		assert.equal(resumed.details.baseVersion, 1);
 		assert.match(await readFile(metadataPath, "utf8"), /surprise/, "prepare must preserve invalid unsaved edits");
 		await writePlanFixture(next.details.draftPath, plan);
-		const second = await updatePlan.execute("finalize-next", { action: "finalize", expectedBaseVersion: 1, description: "Preserve workflow records in Git" });
+		const second = await updatePlan.execute("finalize-next", { action: "finalize", expectedBaseVersion: 1, description: "Keep workflow records local" });
 		assert.equal(second.details.version, 2, "identical valid content can still create a snapshot");
 		await assert.rejects(updatePlan.execute("stale-base", { action: "finalize", expectedBaseVersion: 1, description: "Stale edit" }), /stale|base version|baseVersion/i);
 	},
@@ -420,54 +423,69 @@ await scenario({
 const approvedPlan = planFixture();
 
 await scenario({
-	editorResult: "Preserve all workflow records in the pull request",
+	editorResult: "Keep workflow records local",
 	afterFirstStart: async ({ workflowRoot, tools, run, git, worktreePath, repositoryRoot, identifier, baseCommit, switches }) => {
 		await writePlanFixture(join(workflowRoot, "working-plan"), approvedPlan);
-		await tools.get("workflow_update_plan").execute("save-plan", { action: "finalize", expectedBaseVersion: 0, description: "Preserve workflow records in Git" });
+		await tools.get("workflow_update_plan").execute("save-plan", { action: "finalize", expectedBaseVersion: 0, description: "Keep workflow records local" });
 		await writeFile(join(worktreePath, "README.md"), "An unrelated staged code change\n");
 		assert.equal((await git(worktreePath, "add", "README.md")).code, 0);
+		const indexBefore = (await git(worktreePath, "ls-files", "--stage", "-z")).stdout;
 		await run("workflow-implement");
 		assert.equal(switches.length, 2, "approval starts implementation in a separate session");
-		const metadataPath = `.workflows/${identifier}/metadata.json`;
-		const saved = JSON.parse((await git(worktreePath, "show", `HEAD:${metadataPath}`)).stdout);
+		const saved = JSON.parse(await readFile(join(workflowRoot, "metadata.json"), "utf8"));
 		assert.equal(saved.approvedPlanVersion, 1);
-		assert.equal(saved.ask, "Preserve all workflow records in the pull request");
+		assert.equal(saved.ask, "Keep workflow records local");
 		for (const key of ["repositoryRoot", "gitCommonDir", "worktreePath", "pullRequests"]) assert.ok(!(key in saved));
-		const paths = (await git(worktreePath, "diff-tree", "--no-commit-id", "--name-only", "-r", "HEAD")).stdout.trim().split("\n");
-		assert.ok(paths.every((path) => path.startsWith(`.workflows/${identifier}/`)), "the first workflow commit contains only the bundle");
-		assert.ok(!paths.some((path) => /active\.json|working-plan|dashboard|review-runs/.test(path)));
-		assert.equal((await git(worktreePath, "rev-parse", "HEAD^")).stdout.trim(), baseCommit);
-		assert.equal((await git(worktreePath, "diff", "--cached", "--name-only")).stdout.trim(), "README.md", "unrelated staging survives approval");
+		assert.equal(await readFile(join(workflowRoot, "plan-versions", "v1", "goal.md"), "utf8"), approvedPlan.goal);
+		assert.equal((await git(worktreePath, "rev-parse", "HEAD")).stdout.trim(), baseCommit, "approval creates no Git commit");
+		assert.equal((await git(worktreePath, "ls-files", "--stage", "-z")).stdout, indexBefore, "approval leaves the index unchanged");
+		assert.equal((await git(worktreePath, "ls-files", ".workflows")).stdout, "");
 		assert.equal((await git(worktreePath, "status", "--porcelain")).stdout.trim(), "M  README.md");
 		await run("workflow-cleanup");
 		assert.equal(await exists(worktreePath), false);
-		assert.equal((await git(repositoryRoot, "show", `workflow/${identifier}:.workflows/${identifier}/plan-versions/v1/goal.md`)).stdout, approvedPlan.goal);
-		assert.equal(JSON.parse((await git(repositoryRoot, "show", `workflow/${identifier}:${metadataPath}`)).stdout).ask, saved.ask);
+		assert.equal((await git(repositoryRoot, "rev-parse", `workflow/${identifier}`)).stdout.trim(), baseCommit, "cleanup creates no Git commit");
+		assert.equal((await git(repositoryRoot, "ls-tree", "-r", `workflow/${identifier}`, "--", ".workflows")).stdout, "");
 		assert.equal((await git(repositoryRoot, "show", `workflow/${identifier}:README.md`)).stdout, "Workflow fixture\n", "cleanup did not commit unrelated edits");
 	},
 });
 
 await scenario({
-	editorResult: "Recover an initial artifact commit failure",
-	afterFirstStart: async ({ workflowRoot, tools, run, git, worktreePath, switches, notifications }) => {
+	editorResult: "Approve without Git signing credentials",
+	afterFirstStart: async (test) => {
+		const { workflowRoot, tools, run, git, worktreePath, baseCommit, switches } = test;
 		await writePlanFixture(join(workflowRoot, "working-plan"), approvedPlan);
-		await tools.get("workflow_update_plan").execute("save-plan", { action: "finalize", expectedBaseVersion: 0, description: "Recover artifact commit failures" });
+		await tools.get("workflow_update_plan").execute("save-plan", { action: "finalize", expectedBaseVersion: 0, description: "Approve a local plan" });
 		await git(worktreePath, "config", "commit.gpgsign", "true");
 		await git(worktreePath, "config", "gpg.program", "/missing-workflow-test-signing-program");
 		await run("workflow-implement");
-		assert.equal(switches.length, 1, "failed approval stays in planning");
-		assert.match(notifications.at(-1).message, /Could not commit the approved plan/);
-		assert.equal(JSON.parse(await readFile(join(workflowRoot, "metadata.json"), "utf8")).approvedPlanVersion, undefined);
+		assert.equal(switches.length, 2, "approval does not require a working Git signer");
+		assert.equal(JSON.parse(await readFile(join(workflowRoot, "metadata.json"), "utf8")).approvedPlanVersion, 1);
 		assert.equal(await readFile(join(workflowRoot, "latest-plan", "goal.md"), "utf8"), approvedPlan.goal);
-		await git(worktreePath, "config", "commit.gpgsign", "false");
-		await run("workflow-implement");
-		assert.equal(switches.length, 2, "approval can be retried without another slug or worktree");
+		assert.equal((await git(worktreePath, "rev-parse", "HEAD")).stdout.trim(), baseCommit);
+		assert.equal((await git(worktreePath, "status", "--porcelain")).stdout.trim(), "");
+		const indexBefore = (await git(worktreePath, "ls-files", "--stage", "-z")).stdout;
+		for (const phase of ["implementation", "revision"]) {
+			if (phase === "revision") await run("workflow-revise");
+			const question = { id: phase, label: "Storage", question: "Where should records stay?", options: [{ label: "Local" }, { label: "Elsewhere" }], allowOther: true };
+			const answer = { id: phase, answer: "Local", index: 1, custom: false };
+			const result = await test.tools.get("workflow_questions").execute("clarify", { questions: [question] }, undefined, undefined, {
+				mode: "tui", ui: { custom: async () => ({ questions: [question], answers: [answer], cancelled: false }) },
+			});
+			assert.equal(result.details.cancelled, false);
+			assert.equal((await git(worktreePath, "rev-parse", "HEAD")).stdout.trim(), baseCommit, `${phase} clarifications create no commit`);
+			assert.equal((await git(worktreePath, "ls-files", "--stage", "-z")).stdout, indexBefore);
+			assert.equal((await git(worktreePath, "status", "--porcelain")).stdout.trim(), "");
+		}
+		const clarifications = JSON.parse(await readFile(join(workflowRoot, "clarifications.json"), "utf8"));
+		assert.deepEqual(clarifications.entries.map(({ answer }) => answer), ["Local", "Local"]);
+		await run("workflow-cleanup");
+		assert.equal(await exists(worktreePath), false, "cleanup also works without signing credentials");
 	},
 });
 
 await scenario({
 	editorResult: "Preserve a draft edit made during approval",
-	beforeApprovalCommit: async ({ workflowRoot }) => {
+	duringApproval: async ({ workflowRoot }) => {
 		await writeFile(join(workflowRoot, "working-plan", "goal.md"), "A newer draft edit from another session.\n");
 	},
 	afterFirstStart: async ({ workflowRoot, tools, run, notifications, switches }) => {
@@ -481,4 +499,4 @@ await scenario({
 	},
 });
 
-console.log("Command-flow test passed: early worktrees, immutable asks, strict approval, recoverable commits, and Git-backed cleanup.");
+console.log("Command-flow test passed: early worktrees, immutable asks, strict local approval, and cleanup without artifact commits.");

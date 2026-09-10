@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { lstatSync, readFileSync, realpathSync } from "node:fs";
-import { appendFile, link, mkdir, readFile, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
+import { link, mkdir, readFile, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
 import { isWorkflowPullRequest, type WorkflowPullRequest } from "./pull-requests.ts";
@@ -239,7 +239,7 @@ export async function createWorkflow(files: WorkflowFiles, metadata: CompletedWo
 	}
 }
 
-/** Reading a brief must never repair, create, or rewrite tracked artifacts. */
+/** Reading a brief must never repair, create, or rewrite saved artifacts. */
 export async function ensureWorkflowFiles(files: WorkflowFiles): Promise<WorkflowMetadata> {
 	const metadata = await readWorkflowMetadata(files);
 	await readClarifications(files);
@@ -455,8 +455,7 @@ export async function registerWorkflow(metadata: CompletedWorkflowMetadata): Pro
 		throw new Error(`Worktree ${metadata.worktreePath} already has active workflow ${previous.identifier}.`);
 	}
 	await assertLocatorAvailable(metadata);
-	// The marker is machine-local; never ignore the portable workflow bundle itself.
-	await installActiveMarkerExclude(metadata.gitCommonDir);
+	// The marker records which local bundle is active in this worktree.
 	const marker: ActiveWorkflowMarker = {
 		...previous,
 		...locatorFrom(metadata),
@@ -491,7 +490,7 @@ export async function unregisterWorkflow(identifier: string): Promise<void> {
 
 /**
  * The marker is the sole authority for current-worktree discovery. In particular,
- * committed .workflows/<id> directories never imply an active workflow.
+ * existing .workflows/<id> directories never imply an active workflow.
  * A fresh Pi process can rebuild the disposable registry from this marker alone.
  */
 export async function readActiveWorkflow(worktreeRoot: string): Promise<CompletedWorkflowMetadata | undefined> {
@@ -808,16 +807,6 @@ async function writeLocator(metadata: WorkflowLocator, exclusive = false): Promi
 async function writeJsonIfChanged(path: string, value: unknown): Promise<void> {
 	const content = `${JSON.stringify(value, null, 2)}\n`;
 	if (await readText(path) !== content) await atomicWrite(path, content);
-}
-
-async function installActiveMarkerExclude(gitCommonDir: string): Promise<void> {
-	const path = join(gitCommonDir, "info", "exclude");
-	assertNoSymlinks(gitCommonDir, path);
-	const content = await readText(path);
-	const rule = "/.workflows/active.json";
-	if (content.split("\n").some((line) => line.trim() === rule)) return;
-	await mkdir(dirname(path), { recursive: true });
-	await appendFile(path, `${content && !content.endsWith("\n") ? "\n" : ""}${rule}\n`, "utf8");
 }
 
 function readJsonSync(path: string): unknown {
