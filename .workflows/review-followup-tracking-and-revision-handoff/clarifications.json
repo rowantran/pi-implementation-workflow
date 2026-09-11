@@ -9,6 +9,14 @@
       "custom": false,
       "answeredAt": "2026-09-11T02:49:36.752Z",
       "optionIndex": 2
+    },
+    {
+      "id": "published-acceptance-source",
+      "label": "Acceptance record",
+      "question": "How should followups record acceptance when publishing does not require a separate user agreement?",
+      "answer": "we don't need to overcomplicate things. we can just treat them the same way as the original planned changes, where if they're in the plan, the user implicitly accepts them by moving to the next phase",
+      "custom": true,
+      "answeredAt": "2026-09-11T03:13:37.992Z"
     }
   ]
 }
