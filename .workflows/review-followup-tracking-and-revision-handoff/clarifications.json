@@ -1,4 +1,14 @@
 {
   "version": 1,
-  "entries": []
+  "entries": [
+    {
+      "id": "followup-acceptance",
+      "label": "Followup acceptance",
+      "question": "Should review suggestions remain proposed until you explicitly agree, while direct requests from you become accepted immediately?",
+      "answer": "Accept suggestions when published",
+      "custom": false,
+      "answeredAt": "2026-09-11T02:49:36.752Z",
+      "optionIndex": 2
+    }
+  ]
 }
