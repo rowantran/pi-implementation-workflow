@@ -98,6 +98,9 @@ function assertImplementationDelivery(system, role, baseBranch = "main") {
 const localArtifactPromptNames = new Set(["system/implementation.md", "system/revision.md", "system/review-agent.md"]);
 const templatePaths = markdownFiles(promptsDirectory);
 assert.ok(templatePaths.length > 0, "Expected at least one Markdown prompt template.");
+assert.ok(!templatePaths.some((path) => path.endsWith("/revision.md")), "Revision templates must be removed.");
+assert.equal(prompts.revisionSystemPrompt, undefined);
+assert.equal(prompts.revisionUserMessage, undefined);
 for (const path of templatePaths) {
   const source = readFileSync(path, "utf8");
   const usageComment = /^<!-- Usage: ([^\r\n]+) -->\r?\n/.exec(source);
@@ -179,29 +182,25 @@ assert.ok(implementationSystem.includes("false means no current claim of complet
 assert.ok(implementationSystem.includes("Flags never reset automatically"));
 assert.ok(implementationSystem.includes("If all items are marked"));
 assert.ok(implementationSystem.includes("finalization does not verify code"));
-assert.ok(prompts.implementationSystemPrompt({ ...implementationValues, scopeContext: "Current finalized plan: /exact/v2\nNot marked implemented: followup" }).includes("Current finalized plan: /exact/v2"));
+assert.ok(implementationSystem.includes("1. the original ask"));
+assert.ok(implementationSystem.includes("2. later explicit clarifications"));
+assert.ok(implementationSystem.includes("3. the approved plan directory"));
+assert.ok(implementationSystem.includes("approved path above is the immutable baseline"));
+assert.ok(implementationSystem.includes("Explicit followup amendments govern only their cited requirements"));
+assert.ok(implementationSystem.includes("unrelated original requirements remain in force"));
+assert.ok(implementationSystem.includes("implicitly accepts all finalized followups"));
+assert.ok(implementationSystem.includes("Work only on changes whose implemented flag is false"));
+assert.ok(implementationSystem.includes("Inspect existing code before edits"));
+assert.ok(implementationSystem.includes("not evidence that tests or independent review passed"));
+assert.ok(implementationSystem.includes("preserve manual edits, commits, branches, pull requests, and the current stack tip"));
+assert.ok(implementationSystem.includes("Do not reset, discard work, or switch back to the bottom branch"));
+assert.ok(implementationSystem.includes("working draft is not finalized scope"));
+assert.ok(implementationSystem.includes('workflow_update_plan action="prepare"'));
+assert.ok(implementationSystem.includes('action="finalize" with the returned expectedBaseVersion'));
+assert.ok(implementationSystem.includes("not as authority to replace the sources above"));
+assert.ok(implementationSystem.includes("do not manufacture edits or claim tests/review passed"));
 
-for (const reviewPath of [undefined, "/tmp/review.json"]) {
-  const revision = prompts.revisionSystemPrompt({ ...implementationValues, reviewPath });
-  assertCodeBlockGuidance(revision, `revision (reviewPath=${reviewPath})`);
-  assertNoArtifactDeliveryGuidance(revision, `revision (reviewPath=${reviewPath})`);
-  assertImplementationDelivery(revision, `revision (reviewPath=${reviewPath})`);
-  assert.ok(revision.includes("The original ask, approved plan, and workflow metadata are read-only"));
-  assert.ok(revision.includes("use workflow_questions before changing code"));
-  assert.ok(revision.includes("bottom pull request must target main"));
-  assert.ok(revision.includes("Use declared dependsOn arrays in change_metadata.json"));
-  assert.ok(revision.includes("affected prerequisites and downstream dependents"));
-  assert.ok(revision.includes("including their integration and tests"));
-  assert.ok(revision.includes("reading order is not execution order"));
-  assert.ok(revision.includes("does not prescribe the pull request stack"));
-  assert.ok(revision.includes("conflict in shared files"));
-  assert.ok(revision.includes("Keep approved change slugs and dependencies immutable"));
-  assert.ok(revision.includes("Ask for clarification about missing or incorrect dependencies"));
-  assert.ok(revision.includes("Read the exact approved version directory, not latest-plan"));
-  assert.ok(!revision.includes("undefined"));
-}
-
-for (const render of [prompts.implementationSystemPrompt, prompts.revisionSystemPrompt]) {
+for (const render of [prompts.implementationSystemPrompt]) {
   const baseBranch = "release/next";
   assertImplementationDelivery(render({ ...implementationValues, baseBranch }), render.name, baseBranch);
 }
@@ -213,12 +212,57 @@ const implementationUserValues = {
 const implementationUser = prompts.implementationUserMessage(implementationUserValues);
 assert.ok(implementationUser.includes(durablePaths.metadataPath));
 assert.ok(implementationUser.includes(durablePaths.planPath));
-assert.ok(!implementationUser.includes(durablePaths.clarificationsPath));
+assert.ok(implementationUser.includes(durablePaths.clarificationsPath));
 assert.ok(!implementationUser.includes(implementationValues.worktreePath));
 assert.ok(!implementationUser.includes(implementationValues.workflowBranch));
 assert.ok(implementationUser.includes("using the implementation questionnaire"));
 assert.ok(implementationUser.includes("proceed with the implementation"));
 assert.ok(!implementationUser.includes("&lt;plan&gt;"));
+assert.ok(implementationUser.includes("exact current finalized plan"));
+assert.ok(implementationUser.includes("implicitly accepts all finalized followups"));
+assert.ok(implementationUser.includes("no separate per-followup approval or new change request is needed"));
+assert.ok(implementationUser.includes("Work only on items whose implemented flag is false"));
+assert.ok(implementationUser.includes("Inspect relevant existing code, manual edits, and the current branch/stack before making edits"));
+assert.ok(implementationUser.includes("Preserve existing work and the stack tip on repeated calls"));
+assert.ok(implementationUser.includes("true is an implementation assessment, not proof that tests or independent review passed"));
+assert.ok(implementationUser.includes("If all items are true"));
+assert.ok(implementationUser.includes("instead of manufacturing work"));
+assert.ok(implementationUser.includes('workflow_update_plan action="prepare"'));
+assert.ok(implementationUser.includes('action="finalize" with the returned expectedBaseVersion'));
+assert.ok(implementationUser.includes("Leave incomplete items false"));
+assert.ok(implementationUser.includes("Do not edit finalized snapshots directly"));
+assert.doesNotMatch(implementationUser, /open (?:an? |the )?editor|enter (?:an? |the )?(?:revision|change) request/i);
+
+const scopeContext = [
+  `Approved baseline: ${durablePaths.planPath}`,
+  "Current finalized plan: /tmp/a & b/<current>/v0002",
+  "Working draft: /tmp/a & b/{{working-plan}}",
+  "Not marked implemented (false): fix-followup, original-remaining",
+  "Marked implemented (true): original-done",
+].join("\n");
+const reviewContext = [
+  "Latest review: /tmp/a & b/<review>.json",
+  "Coverage: base123..head456; original-done, original-remaining, fix-followup",
+].join("\n");
+for (const context of [
+  {},
+  { scopeContext: undefined, reviewContext: undefined },
+  { scopeContext: "", reviewContext: "" },
+  { scopeContext },
+  { reviewContext },
+  { scopeContext, reviewContext },
+]) {
+  for (const [name, rendered] of [
+    ["implementation system", prompts.implementationSystemPrompt({ ...implementationValues, ...context })],
+    ["implementation kickoff", prompts.implementationUserMessage({ ...implementationUserValues, ...context })],
+  ]) {
+    for (const value of Object.values(context).filter(Boolean)) {
+      assert.equal(rendered.split(value).length - 1, 1, `${name} must preserve each supplied context exactly once.`);
+    }
+    assert.ok(!rendered.includes("undefined"), `${name} must omit undefined optional context.`);
+    assert.doesNotMatch(rendered, /&amp;|&lt;|{{[#/]?(?:scopeContext|reviewContext)}}/);
+  }
+}
 
 for (const approved of [true, false]) {
   const values = {
@@ -230,14 +274,30 @@ for (const approved of [true, false]) {
   assertCodeBlockGuidance(system, `briefing (approved=${approved})`);
   for (const path of Object.values(durablePaths)) assert.ok(system.includes(path));
   assert.ok(user.includes(system));
-  assert.ok(system.includes("does not assign an implementation, review, or revision role"));
+  assert.ok(system.includes("does not assign an implementation or review role"));
   assert.ok(system.includes("re-read them when relevant"));
   assert.ok(system.includes("does not change this session's working directory"));
   assert.ok(user.includes("then wait for my next task"));
   assert.ok(user.includes("Do not implement, edit files, commit, push, or advance"));
+  assert.ok(system.includes("exact baseline/current paths and stable IDs"));
+  assert.ok(system.includes("False means no current claim of completion"));
+  assert.ok(system.includes("not evidence that tests or independent review passed"));
+  assert.ok(system.includes("working draft, if present"));
+  assert.ok(system.includes(values.workingPlanPath));
+  assert.ok(!system.includes("undefined"));
+  for (const optionalScope of [undefined, "", scopeContext]) {
+    const contextualSystem = prompts.briefingSystemPrompt({ ...values, scopeContext: optionalScope });
+    const contextualUser = prompts.briefingUserMessage({ ...values, scopeContext: optionalScope });
+    if (optionalScope) assert.equal(contextualSystem.split(optionalScope).length - 1, 1);
+    assert.ok(contextualUser.includes(contextualSystem));
+    assert.doesNotMatch(contextualSystem, /undefined|&amp;|&lt;/);
+  }
   if (approved) {
     assert.ok(system.includes("The plan is approved"));
     assert.ok(system.includes(values.reviewPath));
+    assert.ok(system.includes("exact baseline version, not latest-plan or the current finalized version"));
+    assert.ok(system.includes("Explicit followup amendments govern only their cited requirements"));
+    assert.ok(system.includes("implicitly accepts all finalized followups"));
     assert.ok(!system.includes("NOT approved"));
   } else {
     assert.ok(system.includes("NOT approved"));

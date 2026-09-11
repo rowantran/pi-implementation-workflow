@@ -38,36 +38,53 @@ thinking_level = "high"
 [models.implementing]
 provider = "openai-codex"
 model = "gpt-5.4"
+thinking_level = "low"
 
 [models.reviewing]
 provider = "isara-review"
 model = "openai/gpt-5.4:review"
 thinking_level = "max"
-
-[models.revising]
-thinking_level = "low"
 `);
 	const configured = await configModule.loadImplementationWorkflowConfig(configuredAgentDirectory);
 	assert.deepEqual(configured.models, {
 		planning: { provider: "isara", model: "anthropic/claude-opus:planning", thinkingLevel: "high" },
-		implementing: { provider: "openai-codex", model: "gpt-5.4" },
+		implementing: { provider: "openai-codex", model: "gpt-5.4", thinkingLevel: "low" },
 		reviewing: { provider: "isara-review", model: "openai/gpt-5.4:review", thinkingLevel: "max" },
-		revising: { thinkingLevel: "low" },
 	});
 	assert.equal(configured.dashboard.public_base_url, "http://devbox:43121");
 
+	assert.deepEqual(configModule.MODEL_OVERRIDE_PHASES, ["planning", "implementing", "reviewing"]);
 	assert.deepEqual(
-		["planning", "implementation", "review", "revision", "cleanup", "complete", undefined].map(
+		["planning", "implementation", "review", "cleanup", "complete", undefined].map(
 			workflowModule.phaseModelOverrideName,
 		),
-		["planning", "implementing", "reviewing", "revising", undefined, undefined, undefined],
+		["planning", "implementing", "reviewing", undefined, undefined, undefined],
 	);
+
+	for (const [name, content] of [
+		["revision-only", `[models.revising]\nthinking_level = "low"\n`],
+		["revision-and-implementation", `[models.implementing]\nthinking_level = "high"\n[models.revising]\nprovider = "isara"\nmodel = "reviser"\n`],
+		["empty-revision", `[models.revising]\n`],
+	]) {
+		const agentDirectory = join(temporaryRoot, name);
+		await writeConfig(agentDirectory, content);
+		await assert.rejects(
+			configModule.loadImplementationWorkflowConfig(agentDirectory),
+			/models\.revising is no longer supported\. Move its settings to models\.implementing; \/workflow-implement now continues implementation and followups:/,
+		);
+	}
+
+	const thinkingOnlyAgentDirectory = join(temporaryRoot, "thinking-only-agent");
+	await writeConfig(thinkingOnlyAgentDirectory, `[models.implementing]\nthinking_level = "low"\n`);
+	assert.deepEqual((await configModule.loadImplementationWorkflowConfig(thinkingOnlyAgentDirectory)).models, {
+		implementing: { thinkingLevel: "low" },
+	});
 
 	const unknownPhaseAgentDirectory = join(temporaryRoot, "unknown-phase-agent");
 	await writeConfig(unknownPhaseAgentDirectory, `[models.review]\nprovider = "isara"\nmodel = "reviewer"\n`);
 	await assert.rejects(
 		configModule.loadImplementationWorkflowConfig(unknownPhaseAgentDirectory),
-		/Unknown model override phase review; expected planning, implementing, reviewing, or revising/,
+		/Unknown model override phase review; expected planning, implementing, or reviewing/,
 	);
 
 	const incompleteAgentDirectory = join(temporaryRoot, "incomplete-agent");
@@ -106,7 +123,7 @@ thinking_level = "low"
 		/legacy JSON configuration.*implementation-workflow\.json.*implementation-workflow.*config\.toml/is,
 	);
 
-	console.log("Config test passed: TOML parsing, model and thinking overrides, strict phase names, and legacy migration errors work.");
+	console.log("Config test passed: TOML parsing, model and thinking overrides, strict phase names, revising-to-implementing migration, and legacy migration errors work.");
 } finally {
 	await rm(temporaryRoot, { recursive: true, force: true });
 }
