@@ -86,9 +86,13 @@ assert.doesNotThrow(() => assertNoArtifactDeliveryGuidance(
   "normal implementation delivery",
 ));
 
-function assertImplementationDelivery(system, role) {
+function assertImplementationDelivery(system, role, baseBranch = "main") {
   assert.ok(system.includes("ensure every branch is committed, pushed, and represented by an open pull request"), `${role} must still deliver implementation commits.`);
   assert.match(system, /Ensure the worktree is clean before considering (?:your work|the revision) complete\./, `${role} must still require a clean worktree.`);
+  assert.ok(system.includes("When Graphite is unavailable, submit the stack **as a native GitHub PR stack** through GitHub CLI (`gh`)"), `${role} must submit a native GitHub PR stack when Graphite is unavailable.`);
+  assert.ok(system.includes(`bottom pull request must target ${baseBranch}`), `${role} must keep the bottom PR on the recorded base branch.`);
+  assert.ok(system.includes("each later pull request must target the branch directly below it"), `${role} must preserve the PR stack's parent branches.`);
+  assert.ok(system.includes("the checked-out branch must remain the stack tip"), `${role} must keep the stack tip checked out.`);
 }
 
 const localArtifactPromptNames = new Set(["system/implementation.md", "system/revision.md", "system/review-agent.md"]);
@@ -157,6 +161,8 @@ assert.ok(implementationSystem.includes("The original ask and approved plan are 
 assert.ok(implementationSystem.includes("use workflow_questions before changing code"));
 assert.ok(implementationSystem.includes("use one pull request only for a small cohesive change"));
 assert.ok(implementationSystem.includes("default to a linear stack"));
+assert.ok(implementationSystem.includes("For a single pull request, use ordinary Git and GitHub CLI commands."));
+assert.ok(implementationSystem.includes("use Graphite to manage the stack and submit it with `gt submit --stack --no-interactive --no-edit`"));
 assert.ok(implementationSystem.includes("bottom pull request must target main"));
 assert.ok(!implementationSystem.includes("&amp;"));
 assert.ok(implementationSystem.includes("dependsOn array in change_metadata.json"));
@@ -188,6 +194,11 @@ for (const reviewPath of [undefined, "/tmp/review.json"]) {
   assert.ok(revision.includes("Ask for clarification about missing or incorrect dependencies"));
   assert.ok(revision.includes("Read the exact approved version directory, not latest-plan"));
   assert.ok(!revision.includes("undefined"));
+}
+
+for (const render of [prompts.implementationSystemPrompt, prompts.revisionSystemPrompt]) {
+  const baseBranch = "release/next";
+  assertImplementationDelivery(render({ ...implementationValues, baseBranch }), render.name, baseBranch);
 }
 
 const implementationUserValues = {
