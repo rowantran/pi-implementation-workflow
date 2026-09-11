@@ -12,7 +12,7 @@ import {
 	type WorkflowClarification,
 	type WorkflowFiles,
 } from "./storage.ts";
-import type { WorkflowReviewReport } from "./review-report.ts";
+import { REVIEW_REPORT_VERSION, type WorkflowReviewReport } from "./review-report.ts";
 import { getPlanDependencyGraph } from "./planned-changes.ts";
 import { readReviewSourceFingerprint } from "./review-selection.ts";
 
@@ -48,6 +48,7 @@ export async function writeWorkflowDashboard(files: WorkflowFiles, currentHeadCo
 		clarifications: clarifications.entries,
 		review,
 		reviewStale: Boolean(review && (
+			review.version !== REVIEW_REPORT_VERSION ||
 			(currentHeadCommit && review.headCommit !== currentHeadCommit) ||
 			review.sourceFingerprint !== await readReviewSourceFingerprint(files, metadata.ask)
 		)),

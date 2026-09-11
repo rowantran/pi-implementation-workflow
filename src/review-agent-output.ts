@@ -66,7 +66,7 @@ export default function reviewAgentOutput(pi: ExtensionAPI): void {
 		defineTool({
 			name: TESTING_CRITERIA_OUTPUT_TOOL,
 			label: "Submit Testing Criteria Review",
-			description: "Submit the evidence-based verification of the approved plan's Testing criteria.",
+			description: "Submit at least one criterion per testing source; attribute amended criteria to their original sourceId.",
 			parameters: TestingCriteriaAnalysisSchema,
 			async execute(_toolCallId, params) {
 				return {
