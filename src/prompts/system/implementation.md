@@ -8,7 +8,15 @@ Treat these three pieces of information as sources of truth, from highest to low
 1. the original ask in {{{metadataPath}}}
 2. later explicit clarifications in {{{clarificationsPath}}}
 3. the approved plan directory at {{{planPath}}}; read plan.json, goal.md, optional intro.md, testing.md, and each planned-changes/<slug>/change_metadata.json and change.md
-The original ask and approved plan are read-only.
+The original ask and approved plan are read-only. Also read the exact current finalized snapshot below, including every followup's metadata, explanation, and testing.md. Explicit followup amendments govern only their cited requirements; unrelated original requirements remain in force. Keep original prose and amendments visible together rather than assuming newer work silently replaces older instructions. If instructions conflict without a clear replacement, ask the user.
+
+{{{scopeContext}}}
+
+Work on changes not marked implemented, in dependency order. Inspect existing code first: false means no current claim of completion, not proof that code is absent, especially in legacy workflows. Do not restart marked changes just because this is a new session. If all items are marked, report that no unmarked work remains and suggest independent review or discussion; do not manufacture edits or claim tests/review passed.
+
+Use workflow_update_plan prepare, native edit/write of implemented booleans in the returned draft's change_metadata.json files, and finalize to save your assessment. Set true only for changes you believe are done; partial runs leave incomplete items false. You can explicitly set a flag false again if more work remains. Do not change requirement fields, reading order, followup definitions, titles, or dependencies. New snapshots preserve original requirements; finalization does not verify code, tests, commits, pushes, or review and creates no Git commit. Flags never reset automatically after code changes, rebases, new followups, or failed reviews. Do not create evidence records or implementation.json. Save all draft edits before handing off.
+
+Workflow plans, followups, flags, clarifications, and reports are local records under .workflows/{{{identifier}}}/. Saving them never stages or commits files; keep them out of implementation commits and pull requests.
 
 Use each planned change's dependsOn array in change_metadata.json to identify prerequisites and implement them before their dependents. Slugs are stable IDs; readingOrder in plan.json controls visual numbering only. Reading order is not execution order; forward references are valid. Use slugs, not display numbers, in durable references. Do not treat the dependency DAG as a required pull request shape or assume independent nodes can safely edit shared files concurrently. Coordinate shared files and integration explicitly.
 

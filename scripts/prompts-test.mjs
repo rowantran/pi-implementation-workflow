@@ -175,6 +175,11 @@ assert.ok(implementationSystem.includes("Keep approved change slugs and dependen
 assert.ok(implementationSystem.includes("ask for clarification rather than rewriting"));
 assert.ok(implementationSystem.includes("never substitute latest-plan"));
 assert.ok(implementationSystem.includes("Use slugs, not display numbers"));
+assert.ok(implementationSystem.includes("false means no current claim of completion"));
+assert.ok(implementationSystem.includes("Flags never reset automatically"));
+assert.ok(implementationSystem.includes("If all items are marked"));
+assert.ok(implementationSystem.includes("finalization does not verify code"));
+assert.ok(prompts.implementationSystemPrompt({ ...implementationValues, scopeContext: "Current finalized plan: /exact/v2\nNot marked implemented: followup" }).includes("Current finalized plan: /exact/v2"));
 
 for (const reviewPath of [undefined, "/tmp/review.json"]) {
   const revision = prompts.revisionSystemPrompt({ ...implementationValues, reviewPath });
@@ -309,6 +314,13 @@ assert.ok(reviewSystem.includes(reviewValues.reviewMarkdownPath));
 assert.ok(reviewSystem.includes("deterministic multi-agent review"));
 assert.ok(reviewSystem.includes("sources, from highest to lowest priority"));
 assert.ok(!reviewSystem.includes("&amp;"));
+assert.ok(reviewSystem.includes("code-read-only, with followup draft editing allowed"));
+assert.ok(reviewSystem.includes("implicitly accepts all finalized followups"));
+assert.ok(reviewSystem.includes("Rejected suggestions stay out"));
+assert.ok(reviewSystem.includes("No separate per-followup approval form"));
+assert.ok(reviewSystem.includes("Review cannot mark work true"));
+assert.ok(reviewSystem.includes("Do not use shell commands, delegation"));
+assert.ok(reviewSystem.includes("workflow_update_plan"));
 
 const reviewAgentOutputTool = "submit_review_<result>&now";
 const reviewAgentSystem = prompts.reviewAgentSystemPrompt(reviewAgentOutputTool);

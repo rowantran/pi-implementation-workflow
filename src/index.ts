@@ -39,6 +39,8 @@ import {
 	type ExecFn,
 } from "./git.ts";
 import { planningCompletionError } from "./planning.ts";
+import { readWorkflowScope, selectImplementationWork, type WorkflowScope } from "./workflow-scope.ts";
+import type { PlanPublicationPolicy } from "./plan-storage.ts";
 import {
 	formatPullRequestStack,
 	toWorkflowPullRequests,
@@ -131,7 +133,8 @@ const PHASE_ENTRY = "implementation-workflow-phase";
 const BINDING_ENTRY = "implementation-workflow-binding";
 const DASHBOARD_SHORTCUT = "ctrl+alt+d";
 const WORKFLOW_BRANCH_PREFIX = "workflow/";
-const REVIEW_DISABLED_TOOLS = new Set(["edit", "write"]);
+// Shell and delegated agents must not bypass the review assistant's draft-only writes.
+const REVIEW_TOOLS = new Set(["read", "grep", "find", "ls", "edit", "write", WORKFLOW_UPDATE_PLAN_TOOL]);
 
 type WorktreeVerb = "implement" | "review" | "revise" | "cleanup" | "brief";
 
@@ -164,26 +167,45 @@ export default function implementationWorkflow(
 	let currentPullRequest: WorkflowPullRequest | undefined;
 	let pullRequestRefreshGeneration = 0;
 
-	registerWorkflowPlanTool(pi, async (input) => {
-		if (phase !== "planning" || !activeFiles) {
-			throw new Error("The implementation plan can only be updated during workflow planning.");
+	registerWorkflowPlanTool(pi, async (input, ctx) => {
+		if (!activeFiles || !identifier || (phase !== "planning" && phase !== "review" && phase !== "implementation")) {
+			throw new Error("Plan updates require a bound planning, review, or implementation session.");
 		}
 		const files = activeFiles;
 		return withFileMutationQueue(files.workingPlan, async () => {
 			if (identifier) metadata = await readCompletedWorkflowMetadata(identifier);
-			if (!metadata || metadata.approvedPlanVersion !== undefined) {
-				throw new Error("Only an unapproved workflow plan can be updated.");
+			if (!metadata) throw new Error("The workflow has no metadata.");
+			if (phase === "planning" && metadata.approvedPlanVersion !== undefined) throw new Error("Only an unapproved workflow plan can be updated during planning.");
+			if (phase !== "planning" && metadata.approvedPlanVersion === undefined) throw new Error("Review and implementation plan updates require approval.");
+			let policy: PlanPublicationPolicy = { phase: phase as "planning" | "implementation" };
+			let reviewContext: { reviewPath: string; followupOrigin: { reviewNumber: number; sessionId: string; entryId: string } } | undefined;
+			if (phase === "review") {
+				if (!ctx) throw new Error("Review plan updates require the current session context.");
+				const savedReview = (await listSavedReviews(files)).at(-1);
+				if (!savedReview) throw new Error("Review followups require an actual saved review.");
+				const entryIds = ctx.sessionManager.getBranch().map((entry) => entry.id).filter((id) => typeof id === "string" && id.length > 0);
+				const sessionId = ctx.sessionManager.getSessionId();
+				if (!entryIds.length) throw new Error("Review followups require a saved conversation entry.");
+				policy = { phase: "review", reviewOrigin: { reviewNumber: savedReview.number, sessionId, entryIds } };
+				reviewContext = { reviewPath: savedReview.path, followupOrigin: { reviewNumber: savedReview.number, sessionId, entryId: entryIds.at(-1)! } };
 			}
 			if (input.action === "prepare") {
 				const draft = await preparePlanDraft(files);
-				return { action: "prepare", draftPath: draft.path, baseVersion: draft.baseVersion };
+				return {
+					action: "prepare", draftPath: draft.path, baseVersion: draft.baseVersion,
+					allowedEdits: phase === "planning" ? "Plan JSON and Markdown; all implemented fields must be false."
+						: phase === "implementation" ? "Only implemented booleans in existing change_metadata.json files. Requirements and readingOrder are read-only."
+						: "Followup change_metadata.json, change.md, testing.md, and the followup portion of readingOrder. New or revised followups must be false; preserve every other flag. Original files are read-only.",
+					...(metadata.approvedPlanVersion === undefined ? {} : { baselinePath: planPathForWorkflow(files, metadata) }),
+					...reviewContext,
+				};
 			}
 			const description = normalizePlanDescription(input.description);
-			const version = await finalizePlanDraft(files, description, input.expectedBaseVersion);
+			const version = await finalizePlanDraft(files, description, input.expectedBaseVersion, policy);
 			// The snapshot owns its description. No fallible durable writes after publication.
 			metadata = { ...metadata, description };
 			planDescription = description;
-			pi.setSessionName(workflowSessionName("Planning", identifier, description));
+			pi.setSessionName(workflowSessionName(phase === "planning" ? "Planning" : phase === "review" ? "Review" : "Implement", identifier, description));
 			let dashboardUrl: string | undefined;
 			let dashboardError: string | undefined;
 			try {
@@ -308,11 +330,11 @@ export default function implementationWorkflow(
 			return;
 		}
 		if (phase === "implementation" || phase === "revision") {
-			pi.setActiveTools([...new Set([...withoutWorkflowTools, WORKFLOW_QUESTION_TOOL])]);
+			pi.setActiveTools([...new Set([...withoutWorkflowTools, WORKFLOW_QUESTION_TOOL, WORKFLOW_UPDATE_PLAN_TOOL])]);
 			return;
 		}
 		if (phase === "review") {
-			pi.setActiveTools(withoutWorkflowTools.filter((name) => !REVIEW_DISABLED_TOOLS.has(name)));
+			pi.setActiveTools([...new Set([...withoutWorkflowTools, "edit", "write", WORKFLOW_UPDATE_PLAN_TOOL])].filter((name) => REVIEW_TOOLS.has(name)));
 			return;
 		}
 		pi.setActiveTools(withoutWorkflowTools);
@@ -621,6 +643,17 @@ export default function implementationWorkflow(
 		workflow: CompletedWorkflowMetadata,
 	): Promise<void> {
 		const files = workflowFiles(workflow.identifier);
+		// Handoff selects validated local scope under the publication lock.
+		try {
+			await withPlanLock(files, async () => {
+				await requireFinalizedDraft(files);
+				await readWorkflowScope(files, workflow);
+				await requireFinalizedDraft(files);
+			});
+		} catch (error) {
+			ctx.ui.notify(`Cannot start implementation before saving its plan: ${errorMessage(error)}`, "error");
+			return;
+		}
 		const sessionFile = await createPhaseSession(workflow.worktreePath, {
 			phase: "implementation",
 			identifier: workflow.identifier,
@@ -758,6 +791,8 @@ export default function implementationWorkflow(
 		workflow: CompletedWorkflowMetadata,
 		files: WorkflowFiles,
 	): Promise<{ report: WorkflowReviewReport; reused: boolean }> {
+		// Do not omit an unfinished followup or assessment from handoff.
+		await withPlanLock(files, () => requireFinalizedDraft(files));
 		const delivery = await runWorkflowProgress(
 			ctx,
 			"Checking implementation delivery",
@@ -1152,6 +1187,7 @@ export default function implementationWorkflow(
 		if (!activeFiles || !identifier || phase === "cleanup" || (phase === "complete" && !briefed)) return;
 		// Refresh approval and artifact paths after another session updates the workflow.
 		metadata = await readCompletedWorkflowMetadata(identifier);
+		const currentScope = metadata.approvedPlanVersion !== undefined ? await readWorkflowScope(activeFiles, metadata) : undefined;
 		let instructions = !phase || (phase === "complete" && briefed) ? briefingSystemPrompt(briefingValues(metadata, activeFiles)) : "";
 		if (phase === "planning" && metadata.approvedPlanVersion === undefined) {
 			instructions = planningSystemPrompt({
@@ -1170,6 +1206,7 @@ export default function implementationWorkflow(
 				worktreePath: metadata.worktreePath,
 				workflowBranch: metadata.workflowBranch,
 				baseBranch: metadata.baseBranch,
+				scopeContext: currentScope ? scopePromptContext(currentScope, activeFiles) : undefined,
 			});
 		}
 		if (phase === "revision" && metadata) {
@@ -1197,6 +1234,7 @@ export default function implementationWorkflow(
 				clarificationsPath: activeFiles.clarifications,
 				reviewPath: activeFiles.review,
 				reviewMarkdownPath: activeFiles.reviewMarkdown,
+				scopeContext: currentScope ? scopePromptContext(currentScope, activeFiles) : undefined,
 			});
 		}
 		if (!instructions) return;
@@ -1204,13 +1242,18 @@ export default function implementationWorkflow(
 	});
 
 	pi.on("tool_call", async (event, ctx) => {
-		if (!activeFiles || (event.toolName !== "edit" && event.toolName !== "write")) return;
+		if (!activeFiles) return;
+		if (phase === "review" && !REVIEW_TOOLS.has(event.toolName)) return { block: true, reason: "Review is code-read-only. Use read/grep/find/ls and native draft edits; shell, delegation, and other mutation tools cannot bypass this boundary." };
+		if (event.toolName !== "edit" && event.toolName !== "write") return;
 		const rawPath = (event.input as { path?: unknown }).path;
 		if (typeof rawPath !== "string") return;
 		const target = resolve(ctx.cwd, rawPath.replace(/^@/, ""));
 		const currentMetadata = identifier ? await readCompletedWorkflowMetadata(identifier) : undefined;
 		const writePhase = phase === "planning" && currentMetadata?.approvedPlanVersion !== undefined ? "complete" : phase ?? "complete";
-		const reason = workflowWriteBlockReason(writePhase, activeFiles, target);
+		const scope = currentMetadata?.approvedPlanVersion !== undefined ? await readWorkflowScope(activeFiles, currentMetadata) : undefined;
+		const reason = workflowWriteBlockReason(writePhase, activeFiles, target, scope ? {
+			originalIds: scope.approvedPlan.document.readingOrder, changeIds: scope.currentPlan.document.readingOrder,
+		} : undefined);
 		if (reason) return { block: true, reason };
 	});
 
@@ -1293,12 +1336,17 @@ export function workflowWriteBlockReason(
 	phase: SessionWorkflowPhase,
 	files: WorkflowFiles,
 	targetPath: string,
+	permissions?: { originalIds: readonly string[]; changeIds: readonly string[] },
 ): string | undefined {
 	const target = resolve(targetPath);
-	if (phase === "planning") {
+	if (phase === "planning" || phase === "review" || (phase === "implementation" && isPathInside(target, files.workingPlan))) {
 		const path = relative(resolve(files.workingPlan), target).split(sep).join("/");
-		const allowed = /^(?:plan\.json|goal\.md|intro\.md|testing\.md)$/.test(path) ||
-			/^planned-changes\/[a-z][a-z0-9]*(?:-[a-z0-9]+)*\/(?:change_metadata\.json|change\.md)$/.test(path);
+		const changePath = /^planned-changes\/([a-z][a-z0-9]*(?:-[a-z0-9]+)*)\/(change_metadata\.json|change\.md|testing\.md)$/.exec(path);
+		const allowed = phase === "planning"
+			? /^(?:plan\.json|goal\.md|intro\.md|testing\.md)$/.test(path) || Boolean(changePath && changePath[2] !== "testing.md")
+			: phase === "implementation"
+				? Boolean(changePath && changePath[2] === "change_metadata.json" && permissions?.changeIds.includes(changePath[1]!))
+				: Boolean(permissions && (path === "plan.json" || (changePath && !permissions.originalIds.includes(changePath[1]!))));
 		if (allowed && isPathInside(target, files.workingPlan)) {
 			// Native file edits must not follow a draft link into frozen or unrelated files.
 			let current = target;
@@ -1315,15 +1363,18 @@ export function workflowWriteBlockReason(
 			}
 			return undefined;
 		}
-		return `Planning edit/write calls may only change plan JSON and Markdown files inside ${files.workingPlan}. Prepare and finalize drafts with ${WORKFLOW_UPDATE_PLAN_TOOL}.`;
+		return phase === "planning"
+			? `Planning edit/write calls may only change plan JSON and Markdown files inside ${files.workingPlan}. Prepare and finalize drafts with ${WORKFLOW_UPDATE_PLAN_TOOL}.`
+			: phase === "review"
+				? `Review code and original requirements are frozen and read-only. Edit only followup files and readingOrder inside ${files.workingPlan}; prepare and finalize with ${WORKFLOW_UPDATE_PLAN_TOOL}.`
+				: `Implementation may edit only implemented booleans in existing change_metadata.json files inside ${files.workingPlan}. Finalization rejects all requirement edits.`;
 	}
 	const physicalTarget = resolveExistingPath(target);
 	if (target === resolve(files.metadata) || physicalTarget === resolveExistingPath(files.metadata)) {
 		return "Workflow metadata, including the original ask, is managed by the workflow and read-only.";
 	}
-	if ([files.plan, files.versions, files.workingPlan, files.planDraftBase].some((path) =>
-		isPathInside(target, path) || isPathInside(physicalTarget, resolveExistingPath(path)))) {
-		return "The workflow plan is frozen and read-only in this phase.";
+	if (isPathInside(target, files.root) || isPathInside(physicalTarget, resolveExistingPath(files.root))) {
+		return "Finalized plans, reports, clarifications, and workflow bookkeeping are tool-managed and read-only. Use workflow tools for permitted updates.";
 	}
 	return undefined;
 }
@@ -1335,6 +1386,23 @@ function resolveExistingPath(path: string): string {
 		const parent = dirname(path);
 		return parent === path ? path : join(resolveExistingPath(parent), relative(parent, path));
 	}
+}
+
+async function requireFinalizedDraft(files: WorkflowFiles): Promise<void> {
+	if (await hasUnsavedPlanDraft(files)) throw new Error(`The working plan has unsaved changes. Finalize or discard/reconcile ${files.workingPlan} before handoff; saved followups and flag edits must not be omitted.`);
+}
+
+function scopePromptContext(scope: WorkflowScope, files: WorkflowFiles): string {
+	const work = selectImplementationWork(scope);
+	return [
+		`Original approved baseline: ${scope.approvedPlan.path}`,
+		`Current finalized plan: ${scope.currentPlan.path}. Read this exact version, not latest-plan.`,
+		`Working draft, if present: ${files.workingPlan}. Draft edits are not active requirements until finalized.`,
+		`Not marked implemented: ${work.remaining.map(({ id }) => id).join(", ") || "None"}.`,
+		`Marked implemented: ${work.reportedImplemented.map(({ id }) => id).join(", ") || "None"}.`,
+		`Followup amendments: ${scope.amendments.map(({ id }) => id).join(", ") || "None"}. Read their cited requirements and testing criteria.`,
+		"Every finalized followup is included when the user advances to the next phase. There are no per-followup decision states. Flags are the implementer's assessment, not independent verification.",
+	].join("\n");
 }
 
 function planPathForWorkflow(files: WorkflowFiles, workflow: CompletedWorkflowMetadata): string {
