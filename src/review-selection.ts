@@ -1,50 +1,61 @@
-import { createHash } from "node:crypto";
+import { isDeepStrictEqual } from "node:util";
 import { validatePlanDocument, type PlanDocument } from "./planned-changes.ts";
-import { REVIEW_REPORT_VERSION, type WorkflowReviewReport } from "./review-report.ts";
+import {
+	ORIGINAL_TESTING_SOURCE_ID, REVIEW_REPORT_VERSION,
+	type PlannedChangeDefinition, type TestingGroup, type WorkflowReviewReport, type WorkflowReviewReportV4,
+} from "./review-report.ts";
 import { readPlanVersion, readText, readWorkflowMetadata, type WorkflowFiles } from "./storage.ts";
+import { readWorkflowScope, requirementFingerprint, workflowScopeFingerprint, type WorkflowScope } from "./workflow-scope.ts";
 
-/** Hash semantic structure and verbatim prose, never the generated Markdown presentation. */
+/** Compatibility entry point; canonicalization belongs to the shared scope reader. */
 export function reviewSourceFingerprint(ask: string, plan: PlanDocument | undefined, clarifications: string): string {
-	const document = plan === undefined ? undefined : validatePlanDocument(plan);
-	const canonicalPlan = document === undefined ? null : {
-		schemaVersion: document.schemaVersion,
-		readingOrder: document.readingOrder,
-		goal: document.goal,
-		...(document.intro === undefined ? {} : { intro: document.intro }),
-		testing: document.testing,
-		changes: [...document.changes]
-			.sort((left, right) => left.id < right.id ? -1 : left.id > right.id ? 1 : 0)
-			.map(({ id, title, dependsOn, content }) => ({ id, title, dependsOn: [...dependsOn].sort(), content })),
-	};
-	return createHash("sha256").update(JSON.stringify([ask, canonicalPlan, clarifications])).digest("hex");
+	return requirementFingerprint(ask, plan, clarifications);
 }
 
 export async function readReviewSourceFingerprint(files: WorkflowFiles, ask: string): Promise<string> {
-	const [metadata, clarifications] = await Promise.all([readWorkflowMetadata(files), readText(files.clarifications)]);
-	const approvedVersion = "approvedPlanVersion" in metadata ? metadata.approvedPlanVersion : undefined;
-	const version = await readPlanVersion(files, approvedVersion);
-	if (approvedVersion !== undefined && !version) {
-		throw new Error(`The approved plan version v${approvedVersion} is missing.`);
+	const metadata = await readWorkflowMetadata(files);
+	if ("approvedPlanVersion" in metadata && metadata.approvedPlanVersion !== undefined) {
+		return (await readWorkflowScope(files, metadata)).fingerprint;
 	}
-	// Unapproved workflows may have a latest finalized plan, or no finalized plan yet.
+	// Cleanup also supports unapproved workflows with no finalized plan.
+	const [version, clarifications] = await Promise.all([readPlanVersion(files), readText(files.clarifications)]);
 	return reviewSourceFingerprint(ask, version?.document, clarifications);
 }
 
-/** The live inputs that a review of the current delivery would be generated from. */
+/** Requirement-only inputs. Neither provenance nor implementation assessments select reviews. */
 export interface ReviewInputsSnapshot {
 	pullRequestUrls: string[];
 	baseCommit: string;
 	headCommit: string;
 	sourceFingerprint: string;
 	testingCriteria: string;
-	plannedChanges: Array<{ id: string; title: string }>;
+	testingGroups: TestingGroup[];
+	plannedChanges: PlannedChangeDefinition[];
 }
 
-/**
- * True when the saved report already reviews exactly the current delivery, so
- * no new review needs to be generated.
- */
-export function reviewIsCurrent(report: WorkflowReviewReport, inputs: ReviewInputsSnapshot): boolean {
+export function reviewInputsFromScope(
+	scope: WorkflowScope,
+	delivery: Pick<ReviewInputsSnapshot, "pullRequestUrls" | "baseCommit" | "headCommit">,
+): ReviewInputsSnapshot {
+	const changes = validatePlanDocument({ ...scope.currentPlan.document, changes: scope.changes }, { originalAsk: scope.originalAsk }).changes;
+	return {
+		...delivery,
+		pullRequestUrls: [...delivery.pullRequestUrls],
+		sourceFingerprint: workflowScopeFingerprint({ ...scope, changes }),
+		testingCriteria: scope.approvedPlan.document.testing,
+		testingGroups: [
+			{ sourceId: ORIGINAL_TESTING_SOURCE_ID, criteria: scope.approvedPlan.document.testing },
+			...changes.filter((change) => change.followup).map((change) => ({ sourceId: `followup:${change.id}`, criteria: change.testing! })),
+		],
+		plannedChanges: changes.map(({ id, title, dependsOn, content, followup }) => ({
+			id, title, dependsOn: [...dependsOn], content,
+			...(followup ? { kind: "followup" as const, effect: structuredClone(followup.effect) } : { kind: "original" as const }),
+		})),
+	};
+}
+
+/** True only for a current-format report of exactly this delivery and requirement scope. */
+export function reviewIsCurrent(report: WorkflowReviewReport, inputs: ReviewInputsSnapshot): report is WorkflowReviewReportV4 {
 	return (
 		report.version === REVIEW_REPORT_VERSION &&
 		report.headCommit === inputs.headCommit &&
@@ -55,18 +66,11 @@ export function reviewIsCurrent(report: WorkflowReviewReport, inputs: ReviewInpu
 	);
 }
 
-/**
- * True when the saved report reviewed an earlier state of the same plan, so
- * its per-planned-change results can seed an incremental re-review. The
- * caller must additionally verify with Git that the report's head commit is
- * an ancestor of the current head. Pull requests may differ: a revision can
- * add or remove stack entries without invalidating prior planned-change
- * reviews.
- */
+/** The caller must also check that the earlier content head is a Git ancestor. */
 export function reviewCanSeedIncremental(
 	report: WorkflowReviewReport,
 	inputs: ReviewInputsSnapshot,
-): boolean {
+): report is WorkflowReviewReportV4 {
 	return (
 		report.version === REVIEW_REPORT_VERSION &&
 		report.headCommit !== inputs.headCommit &&
@@ -76,18 +80,15 @@ export function reviewCanSeedIncremental(
 	);
 }
 
-function plannedWorkMatches(report: WorkflowReviewReport, inputs: ReviewInputsSnapshot): boolean {
+function plannedWorkMatches(report: WorkflowReviewReportV4, inputs: ReviewInputsSnapshot): boolean {
 	return (
 		report.testingCriteria.originalCriteria === inputs.testingCriteria &&
+		isDeepStrictEqual(report.testingCriteria.groups, inputs.testingGroups) &&
 		report.plannedChanges.length === inputs.plannedChanges.length &&
-		report.plannedChanges.every((change, index) => {
+		report.plannedChanges.every(({ review, ...definition }, index) => {
 			const expected = inputs.plannedChanges[index];
-			return (
-				change.id === expected?.id &&
-				change.title === expected.title &&
-				change.review.id === expected.id &&
-				change.review.title === expected.title
-			);
+			return expected !== undefined && review.id === expected.id && review.title === expected.title &&
+				isDeepStrictEqual({ ...definition, dependsOn: [...definition.dependsOn].sort() }, { ...expected, dependsOn: [...expected.dependsOn].sort() });
 		})
 	);
 }

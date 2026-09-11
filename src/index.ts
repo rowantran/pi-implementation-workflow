@@ -74,12 +74,12 @@ import {
 	generateWorkflowReview,
 	type ReviewAgentRunner,
 } from "./review.ts";
-import type { WorkflowReviewReport } from "./review-report.ts";
+import { REVIEW_REPORT_VERSION, type WorkflowReviewReport } from "./review-report.ts";
 import {
 	readReviewSourceFingerprint,
 	reviewCanSeedIncremental,
 	reviewIsCurrent,
-	reviewSourceFingerprint,
+	reviewInputsFromScope,
 	type ReviewInputsSnapshot,
 } from "./review-selection.ts";
 import {
@@ -93,7 +93,6 @@ import {
 	readActiveWorkflow,
 	registerWorkflow,
 	readCompletedWorkflowMetadata,
-	readText,
 	readWorkflowReview,
 	readPlanVersion,
 	preparePlanDraft,
@@ -792,7 +791,12 @@ export default function implementationWorkflow(
 		files: WorkflowFiles,
 	): Promise<{ report: WorkflowReviewReport; reused: boolean }> {
 		// Do not omit an unfinished followup or assessment from handoff.
-		await withPlanLock(files, () => requireFinalizedDraft(files));
+		const scope = await withPlanLock(files, async () => {
+			await requireFinalizedDraft(files);
+			const current = await readWorkflowScope(files, workflow);
+			await requireFinalizedDraft(files);
+			return current;
+		});
 		const delivery = await runWorkflowProgress(
 			ctx,
 			"Checking implementation delivery",
@@ -816,22 +820,12 @@ export default function implementationWorkflow(
 		await writeCompletedWorkflowMetadata(workflow);
 		if (identifier === workflow.identifier) metadata = workflow;
 
-		const [planVersion, clarifications, existing, savedReviews] = await Promise.all([
-			readPlanVersion(files, workflow.approvedPlanVersion),
-			readText(files.clarifications),
-			readWorkflowReview(files).catch(() => undefined),
-			listSavedReviews(files),
-		]);
-		if (!planVersion) throw new Error("The approved plan version is missing.");
-		const plan = planVersion.document;
-		const inputs: ReviewInputsSnapshot = {
+		const [existing, savedReviews] = await Promise.all([readWorkflowReview(files), listSavedReviews(files)]);
+		const inputs = reviewInputsFromScope(scope, {
 			pullRequestUrls: delivery.pullRequests.map(({ url }) => url),
 			baseCommit: workflow.baseCommit,
 			headCommit: delivery.headCommit,
-			sourceFingerprint: reviewSourceFingerprint(workflow.ask, plan, clarifications),
-			testingCriteria: plan.testing,
-			plannedChanges: plan.changes.map(({ id, title }) => ({ id, title })),
-		};
+		});
 		if (existing && reviewIsCurrent(existing, inputs)) {
 			await writeWorkflowDashboard(files, delivery.headCommit);
 			return { report: existing, reused: true };
@@ -864,13 +858,11 @@ export default function implementationWorkflow(
 						pullRequests: workflow.pullRequests!,
 						baseCommit: workflow.baseCommit,
 						headCommit: delivery.headCommit,
-						sourceFingerprint: inputs.sourceFingerprint,
+						scope,
 						worktreePath: workflow.worktreePath,
 						metadataPath: files.metadata,
-						planPath: planVersion.path,
 						clarificationsPath: files.clarifications,
 						reviewRunsPath: files.reviewRuns,
-						plan,
 						previousReview: seed?.report,
 						previousReviewPath: seed?.path,
 						onStage: (stage) => {
@@ -901,6 +893,8 @@ export default function implementationWorkflow(
 							signal: ctx.signal,
 						}),
 				);
+				await withPlanLock(files, async () => {
+				await requireFinalizedDraft(files);
 				const [headAfterReview, statusAfterReview, sourcesAfterReview] = await Promise.all([
 					gitValue(exec, workflow.worktreePath, ["rev-parse", "HEAD"]),
 					worktreeStatus(exec, workflow.worktreePath),
@@ -912,6 +906,7 @@ export default function implementationWorkflow(
 					throw new Error("The worktree or workflow sources changed during review. Wait for other agents to finish and run /workflow-review again.");
 				}
 				await appendWorkflowReview(files, report);
+				});
 				await writeWorkflowDashboard(files, delivery.headCommit);
 				progress.complete("Saved review report");
 				return { report, reused: false };
@@ -1008,7 +1003,7 @@ export default function implementationWorkflow(
 				readWorkflowReview(files).catch(() => undefined),
 				workflowContentHead(exec, workflow),
 			]);
-			const sourcesCurrent = review?.sourceFingerprint === await readReviewSourceFingerprint(files, workflow.ask);
+			const sourcesCurrent = review?.version === REVIEW_REPORT_VERSION && review.sourceFingerprint === await readReviewSourceFingerprint(files, workflow.ask);
 			if (!review || !headCommit || review.headCommit !== headCommit || !sourcesCurrent) {
 				const confirmed = await ctx.ui.confirm(
 					"No up-to-date review",
@@ -1104,13 +1099,10 @@ export default function implementationWorkflow(
 				workflowContentHead(exec, metadata),
 			]);
 			let ready = status === "" && headCommit !== undefined;
-			if (ready && phase === "revision") {
-				const review = await readWorkflowReview(activeFiles).catch(() => undefined);
-				ready = !review || review.headCommit !== headCommit ||
-					review.sourceFingerprint !== await readReviewSourceFingerprint(activeFiles, metadata.ask);
-			}
-			if (ready && phase === "implementation") {
-				ready = headCommit !== metadata.baseCommit;
+			if (ready) {
+				const review = await readWorkflowReview(activeFiles);
+				ready = headCommit !== metadata.baseCommit && (!review || review.version !== REVIEW_REPORT_VERSION || review.headCommit !== headCommit ||
+					review.sourceFingerprint !== await readReviewSourceFingerprint(activeFiles, metadata.ask));
 			}
 			showReviewReadyNotice(ctx, ready);
 		} catch {

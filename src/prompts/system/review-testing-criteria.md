@@ -1,19 +1,24 @@
-<!-- Usage: Appended to the system prompt for the agent that verifies the approved plan's Testing criteria. -->
-Verify the approved plan's original Testing criteria against the implemented delivery.
+<!-- Usage: Appended to the system prompt for the agent that verifies all scoped testing groups. -->
+Verify the original plan's Testing criteria and every finalized followup's testing criteria against the complete implemented delivery.
 
-<approved-testing-criteria>
+<original-testing-criteria>
 {{{testingCriteria}}}
-</approved-testing-criteria>
+</original-testing-criteria>
 
-Durable sources, in priority order:
+Durable sources:
 1. Original ask and metadata: {{{metadataPath}}}
 2. Later clarifications: {{{clarificationsPath}}}
-3. Exact approved plan version: {{{planPath}}} (the complete structured snapshot is included below)
+3. Exact baseline plan version: {{{planPath}}}
+4. The appended requirement-only workflow scope supplies the exact immutable current path, explicit amendments, and every testing group with its exact source ID.
 
 Implementation range: {{{baseCommit}}}..{{{headCommit}}}
 Pull request stack (bottom to top):
 {{{pullRequestStack}}}
 
-Identify each independently verifiable criterion in the approved structured plan's testing content, preserved verbatim above. Read the full freeform planned-change prose and declared dependencies in the snapshot below for context. For each criterion, determine whether the implementation and available test results satisfy it. Cite repository-relative implementation and test evidence. Run safe read-only verification commands when useful. Do not infer success from test names alone, and use needs-human-review when a criterion cannot be verified from repository evidence or safe local execution.
+Identify every independently verifiable material criterion in each supplied testing group. Return each result with its exact sourceId: plan:testing for original criteria, or followup:<stable-slug> for that followup's criteria. Cover every group at least once; multiple results for one source are valid. Do not invent IDs or use display numbers. The original criteria above and the plan:testing group are the same source, not two separate groups.
 
-Return one result for every material requirement in the approved testing content. When referring to a planned change, use its stable slug ID rather than its display number. Put test-specific gaps and risks in concerns. Do not repeat a per-change design review or the holistic review, which will be handled by dedicated subagents.
+Read the full freeform change prose, dependency edges, and explicit amendments for context. An amendment changes only its cited requirements; unrelated original criteria remain in force. Keep an explicitly amended original criterion attributed to plan:testing and explain which amendment changes its assessment and how. Do not silently omit an original testing group because it was amended.
+
+For each criterion, determine whether implementation and available test results satisfy it. Cite repository-relative implementation and test evidence. Run safe read-only verification commands when useful. Do not infer success from test names or implementation flags, and use needs-human-review when a criterion cannot be verified from repository evidence or safe local execution.
+
+Put test-specific gaps and risks in concerns. Do not repeat a per-change design review or the holistic review assigned to other agents. Never modify drafts, flags, code, or other workflow records.

@@ -18,7 +18,7 @@ export default function reviewAgentOutput(pi: ExtensionAPI): void {
 		defineTool({
 			name: PLANNED_CHANGE_OUTPUT_TOOL,
 			label: "Submit Planned Change Review",
-			description: "Submit the final structured review for one assigned planned change, using its exact stable slug ID.",
+			description: "Submit the final structured review for one assigned original or finalized followup change, using its exact stable slug ID.",
 			parameters: PlannedChangeAnalysisSchema,
 			async execute(_toolCallId, params) {
 				return {
@@ -66,7 +66,7 @@ export default function reviewAgentOutput(pi: ExtensionAPI): void {
 		defineTool({
 			name: TESTING_CRITERIA_OUTPUT_TOOL,
 			label: "Submit Testing Criteria Review",
-			description: "Submit the evidence-based verification of the approved plan's Testing criteria.",
+			description: "Submit evidence-based verification of every supplied testing group. Each criterion requires its exact sourceId; cover original testing and every finalized followup's testing criteria.",
 			parameters: TestingCriteriaAnalysisSchema,
 			async execute(_toolCallId, params) {
 				return {

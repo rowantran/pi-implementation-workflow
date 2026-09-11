@@ -63,6 +63,7 @@ async function reviewAgentRunner(request) {
 			summary: "The verb criterion is satisfied.",
 			satisfied: { status: "yes", explanation: "Verb tests pass." },
 			criteria: [{
+				sourceId: "plan:testing",
 				criterion: "Verify each verb.",
 				status: "yes",
 				explanation: "The verb test covers each command.",
@@ -79,6 +80,11 @@ async function reviewAgentRunner(request) {
 		},
 		overallConcerns: [],
 	};
+}
+
+async function legacyTestingReview() {
+	const result = await reviewAgentRunner({ role: "testing-criteria" });
+	return { ...result, criteria: result.criteria.map(({ sourceId, ...criterion }) => criterion) };
 }
 
 function phaseEntry(phase, values = {}) {
@@ -725,8 +731,10 @@ try {
 		}]);
 		const firstReport = await storage.readWorkflowReview(workflow.files);
 		assert.equal(firstReport.headCommit, "head111");
-		assert.equal(firstReport.version, 3);
-		assert.deepEqual(firstReport.plannedChanges.map(({ review, ...change }) => change), validPlan.changes);
+		assert.equal(firstReport.version, 4);
+		assert.equal(firstReport.baselinePlanVersion, 1);
+		assert.equal(firstReport.currentPlanVersion, 2);
+		assert.deepEqual(firstReport.plannedChanges.map(({ review, ...change }) => change), validPlan.changes.map((change) => ({ ...change, kind: "original" })));
 		assert.equal(await storage.pathExists(join(workflow.files.reviews, "0001.json")), true);
 		const firstRunRoles = harness.reviewRequests.map(({ role }) => role);
 		assert.ok(!firstRunRoles.includes("incremental-scope"), "the first review is a full review");
@@ -870,7 +878,7 @@ try {
 			}],
 			testingCriteria: {
 				originalCriteria: validPlan.testing,
-				review: await reviewAgentRunner({ role: "testing-criteria" }),
+				review: await legacyTestingReview(),
 			},
 		});
 		const ctx = harness.context(workflow.worktreePath, [
@@ -878,8 +886,9 @@ try {
 		]);
 		await harness.emit("session_start", ctx);
 		await harness.run("workflow-cleanup", "", ctx);
-		assert.equal(harness.confirmations.length, 1, "even reviewed workflows confirm deletion of local records");
+		assert.equal(harness.confirmations.length, 2, "cleanup confirms local record deletion and legacy v3 reviews cannot certify current coverage");
 		assert.match(harness.confirmations[0].title, /Remove local workflow records/);
+		assert.match(harness.confirmations[1].title, /No up-to-date review/);
 		assert.equal(harness.switches.length, 1);
 		const cleanupPhase = await sessionPhase(harness.switches[0]);
 		assert.deepEqual(cleanupPhase.data, {
@@ -929,7 +938,7 @@ try {
 			}],
 			testingCriteria: {
 				originalCriteria: validPlan.testing,
-				review: await reviewAgentRunner({ role: "testing-criteria" }),
+				review: await legacyTestingReview(),
 			},
 		});
 		harness.setConfirmResult((title) => title === "Remove local workflow records");

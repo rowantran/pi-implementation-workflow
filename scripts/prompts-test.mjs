@@ -405,7 +405,7 @@ assert.ok(!synthesisReview.includes("&amp;"));
 
 assert.equal(
   prompts.reviewAgentUserMessage({ role: "planned-change", outputTool: reviewAgentOutputTool }),
-  `Perform the assigned planned-change task now using the exact approved structured plan snapshot and its full freeform prose. Use stable slug IDs, not display numbers, for planned-change references. Submit the result with ${reviewAgentOutputTool}.`,
+  `Perform the assigned planned-change task now using the supplied requirement-only workflow scope: original changes, every finalized followup, explicit amendments, and testing groups. Use the exact immutable baseline/current paths and full freeform prose. Implementation flags are not correctness evidence. Use stable slug IDs, not display numbers, for change references. Submit the result with ${reviewAgentOutputTool}.`,
 );
 
 assert.match(prompts.updatePlanToolPromptSnippet(), /Prepare an editable plan directory.*immutable version/);

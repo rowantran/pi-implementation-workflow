@@ -1,2 +1,2 @@
-<!-- Usage: Sent as the user message that starts a spawned implementation-review agent. -->
-Perform the assigned {{{role}}} task now using the exact approved structured plan snapshot and its full freeform prose. Use stable slug IDs, not display numbers, for planned-change references. Submit the result with {{{outputTool}}}.
+<!-- Usage: Sent to each spawned implementation-review agent. -->
+Perform the assigned {{{role}}} task now using the supplied requirement-only workflow scope: original changes, every finalized followup, explicit amendments, and testing groups. Use the exact immutable baseline/current paths and full freeform prose. Implementation flags are not correctness evidence. Use stable slug IDs, not display numbers, for change references. Submit the result with {{{outputTool}}}.

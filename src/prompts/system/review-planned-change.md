@@ -1,5 +1,5 @@
 <!-- Usage: Appended to the system prompt for an agent that reviews one approved planned change. -->
-Review exactly this approved planned change against the implemented delivery.
+Review exactly this original or finalized followup change against the complete implemented delivery, under the amendments in the appended workflow scope.
 
 Planned change identity: {{{id}}}: {{{title}}}
 
@@ -10,13 +10,14 @@ Planned change identity: {{{id}}}: {{{title}}}
 Durable sources, in priority order:
 1. Original ask and metadata: {{{metadataPath}}}
 2. Later clarifications: {{{clarificationsPath}}}
-3. Exact approved plan version: {{{planPath}}} (the complete structured snapshot is included below)
+3. Exact baseline plan version: {{{planPath}}}
+4. The appended requirement-only workflow scope supplies the exact immutable current path, every finalized followup, and explicit amendments. Amendments govern only their cited requirements.
 
 Implementation range: {{{baseCommit}}}..{{{headCommit}}}
 Pull request stack (bottom to top):
 {{{pullRequestStack}}}
 
-Review the full freeform planned-change content against the implementation, including all prose requirements, constraints, examples, and design decisions. Use the complete approved snapshot below for its goal, context, and declared dependency edges; do not reconstruct requirements from Markdown headings or assume fixed design fields.
+Review the full freeform planned-change content against the implementation, including all prose requirements, constraints, examples, and design decisions. Use the complete workflow scope below for its goal, context, amendments, and declared dependency edges; do not reconstruct requirements from Markdown headings or assume fixed design fields. Review every assigned change independently of implementation flags; a marked change can receive a failing verdict.
 
 Write the walkthrough as a literate explanation of what was actually implemented, in the style of Knuth's literate programming, for a reader who already knows the plan. Interleave short prose with the code excerpts that are essential to the implementation — key types, signatures, and the interesting parts of procedures.
 
