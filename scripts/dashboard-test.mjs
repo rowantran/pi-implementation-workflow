@@ -1,5 +1,9 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { writePlanDocument } from "./fixtures/plan-document.mjs";
 import { runInNewContext } from "node:vm";
 import { createJiti } from "jiti/static";
 import { marked } from "marked";
@@ -7,7 +11,7 @@ import { marked } from "marked";
 // Exercise the same precompiled browser library that the HTTP server serves.
 globalThis.hljs = runInNewContext(readFileSync(new URL(import.meta.resolve("@highlightjs/cdn-assets/highlight.min.js")), "utf8") + ";hljs;");
 const jiti = createJiti(import.meta.url, { moduleCache: false });
-const { renderWorkflowDashboard } = await jiti.import(
+const { renderWorkflowDashboard, writeWorkflowDashboard } = await jiti.import(
   new URL("../src/dashboard.ts", import.meta.url).pathname,
 );
 
@@ -147,7 +151,10 @@ assert.ok(!html.includes('parsePlanStructure'), 'generated Markdown is not parse
 assert.ok(!html.includes('id="plan-graph-mode-button"'), "Graph is a guided section, not a reading mode");
 assert.ok(html.includes('data-reader="plan" data-reader-destination="graph">Dependency graph</button>'));
 assert.ok(html.includes('id="plan-intro-link" type="button" data-reader="plan" data-reader-destination="intro" hidden>Introduction</button>'));
-assert.ok(html.includes('document.getElementById("plan-intro-link").hidden=!planDestinations.some(function(section){return section.kind==="intro";});'));
+assert.ok(html.includes("document.getElementById('plan-intro-link').hidden=!destinations.some(function(section){return section.kind==='intro';});"));
+assert.ok(html.includes('id="plan-version"'));
+assert.ok(html.includes('id="implementation-summary"'));
+assert.ok(!html.includes('/workflow-revise'));
 assert.ok(html.indexOf('data-reader-destination="goal"') < html.indexOf('data-reader-destination="intro"'));
 assert.ok(html.indexOf('data-reader-destination="intro"') < html.indexOf('data-reader-destination="graph"'));
 assert.ok(html.indexOf('data-reader-destination="graph"') < html.indexOf('id="plan-change-links"'));
@@ -1030,4 +1037,233 @@ assert.ok(emptyElements['diff-content'].innerHTML.includes('No saved plan yet'))
 assert.equal(emptyElements['diff-previous-block'].disabled, true);
 assert.equal(emptyElements['diff-next-block'].disabled, true);
 
-console.log('Dashboard test passed: structured plans, slug navigation, reading-order diffs, approved reviews, safe DAGs, and rich Markdown readers.');
+// Every finalized original and followup is in the checklist, regardless of flag or verdict.
+const followupOrigin = { reviewNumber: 2, sessionId: 'review-session', entryId: 'followup-entry' };
+const mixedOriginals = [
+  { id: 'store-records', title: 'Store records', dependsOn: [], implemented: true, content: 'Persist each record.' },
+  { id: 'load-records', title: 'Load records', dependsOn: ['store-records'], implemented: false, content: 'Load all records.' },
+];
+const mixedFollowups = [
+  { id: 'retry-storage', title: 'Retry storage', dependsOn: ['store-records'], implemented: true, content: 'Retry a transient storage failure.', testing: 'Assert one retry after a transient failure.', followup: { origin: followupOrigin, effect: { type: 'addition' } } },
+  { id: 'page-records', title: 'Page records', dependsOn: ['load-records'], implemented: false, content: 'Load one page of records at a time. See [storage](../retry-storage/change.md).', testing: 'Assert each page contains at most ten records.', followup: { origin: followupOrigin, effect: { type: 'amendment', requirements: [
+    { source: { type: 'change', id: 'load-records' }, quotedRequirement: 'Load all records.' },
+    { source: { type: 'original-ask' }, quotedRequirement: 'Read every record.' },
+    { source: { type: 'plan-section', name: 'testing' }, quotedRequirement: 'Verify the graph and guided reader.' },
+  ] } } },
+];
+const mixedBaseline = planWithNodes(mixedOriginals.map((change) => ({ ...change, implemented: false })), { schemaVersion: 2 });
+const mixedPlan = planWithNodes([...mixedOriginals, ...mixedFollowups], { schemaVersion: 2 });
+const assessmentOnly = structuredClone(mixedPlan);
+assessmentOnly.changes[0].implemented = false;
+assessmentOnly.changes[3].implemented = true;
+const revisedFollowup = structuredClone(assessmentOnly);
+revisedFollowup.changes[2].implemented = false;
+revisedFollowup.changes[2].testing = 'Assert two retries before giving up.';
+revisedFollowup.changes[2].content = 'Retry a transient storage failure twice.';
+const mixedVersions = [version(mixedBaseline, 1), version(mixedPlan, 2), version(assessmentOnly, 3), version(revisedFollowup, 4)];
+const groups = [{ sourceId: 'plan:testing', criteria: mixedPlan.testing }, ...mixedFollowups.map((change) => ({ sourceId: 'followup:' + change.id, criteria: change.testing }))];
+const mixedReport = {
+  ...data.review, version: 4, baselinePlanVersion: 1, currentPlanVersion: 2,
+  plannedChanges: mixedPlan.changes.map(({ id, title, content, dependsOn, followup }) => ({
+    id, title, content, dependsOn, kind: followup ? 'followup' : 'original', ...(followup ? { effect: followup.effect } : {}),
+    review: { ...data.review.plannedChanges[0].review, id, title, sufficient: { status: 'no', explanation: 'The implementation is incomplete despite its assessment.' } },
+  })),
+  testingCriteria: { originalCriteria: mixedPlan.testing, groups, review: {
+    ...data.review.testingCriteria.review,
+    criteria: groups.map(({ sourceId, criteria }) => ({ sourceId, criterion: criteria, status: 'no', explanation: 'Missing coverage.', evidence: [{ location: 'scripts/dashboard-test.mjs:1', description: 'The required failure case is not covered.' }] })),
+  } },
+};
+const mixedDashboard = snapshotFromHtml(renderWorkflowDashboard({ ...data, ask: 'Read every record.', approvedPlanVersion: 1, versions: mixedVersions, review: mixedReport, reviewStale: true }));
+const selectedPlanElements = Object.fromEntries(['version-badge', 'plan-title', 'implementation-summary', 'plan-change-links', 'plan-intro-link', 'plan-content', 'plan-pagination', 'plan-reader', 'plan-outline', 'plan-navigation-sidebar-button', 'plan-guided-mode-button', 'plan-full-mode-button', 'plan-previous-section', 'plan-next-section', 'plan-position'].map((id) => [id, readerElement()]));
+selectedPlanElements['plan-change-links'].children = [];
+selectedPlanElements['plan-change-links'].appendChild = function(child) { this.children.push(child); };
+const selectedPlanDocument = { getElementById(id) { return selectedPlanElements[id]; }, createElement() { return readerElement(); }, querySelectorAll() { return []; } };
+const mixedBrowser = new Function('dashboard', 'marked', 'document', 'location', 'history', `let latestPlan=null,planStructure=null,navigationSidebarCollapsed=false,selectedGraphNode=null;const readers={};${helperSource};return {selectPlanSnapshot,renderPlanDestination,renderFullPlan,renderReviewDestination,reviewPlanSnapshot,renderImplementationSummary,createReviewDestinations,renderImplemented,setReaderMode,readers};`)(mixedDashboard, marked, selectedPlanDocument, fakeLocation, fakeHistory);
+mixedBrowser.selectPlanSnapshot();
+assert.equal(selectedPlanElements['version-badge'].textContent, 'Version 4', 'selection defaults to the latest finalized snapshot, not the baseline');
+assert.match(selectedPlanElements['implementation-summary'].innerHTML, /Marked implemented: 1 · Not marked implemented: 3/);
+assert.match(selectedPlanElements['implementation-summary'].innerHTML, /Original approved baseline: version 1/);
+mixedBrowser.selectPlanSnapshot(2);
+assert.match(selectedPlanElements['implementation-summary'].innerHTML, /Marked implemented: 2 · Not marked implemented: 2/);
+assert.match(selectedPlanElements['implementation-summary'].innerHTML, /not independent verification/);
+assert.match(selectedPlanElements['implementation-summary'].innerHTML, /False is not proof that code is missing/);
+assert.equal(selectedPlanElements['plan-change-links'].children.at(-1).dataset.readerDestination, 'change/page-records');
+assert.match(selectedPlanElements['plan-change-links'].children.at(-1).textContent, /Followup/);
+for (const [index, change] of mixedPlan.changes.entries()) {
+  const section = mixedBrowser.renderPlanDestination({ kind: 'change', change: { ...change, number: index + 1 } });
+  assert.match(section, new RegExp(`<span class="implementation-flag">${change.implemented ? 'Marked implemented' : 'Not marked implemented'}</span>`));
+  assert.match(section, /Independent review verdicts/);
+  assert.match(section, /Sufficient: No/);
+  assert.ok(section.indexOf('implementation-flag') < section.indexOf('Independent review verdicts'));
+  if (change.followup) {
+    assert.match(section, /Followup · Source review 2/);
+    assert.ok(section.includes(change.testing));
+    if (change.followup.effect.type === 'amendment') {
+      assert.match(section, /Scope effect:<\/strong> Amendment/);
+      assert.match(section, /Amends Original ask/);
+      assert.match(section, /Amends Plan section: testing/);
+      assert.match(section, /href="#plan\/change\/load-records"/);
+      assert.match(section, /Load all records\./);
+      assert.match(section, /href="#plan\/change\/retry-storage"/);
+    }
+  }
+}
+const snapshotTesting = mixedBrowser.renderPlanDestination({ kind: 'testing' });
+assert.match(snapshotTesting, /Original testing criteria/);
+for (const group of groups) assert.ok(snapshotTesting.includes(group.criteria));
+mixedBrowser.renderFullPlan();
+assert.equal(selectedPlanElements['plan-content'].innerHTML.match(/class="implementation-flag"/g).length, 4);
+assert.match(selectedPlanElements['plan-content'].innerHTML, /id="plan-change-page-records"/);
+mixedBrowser.setReaderMode('plan', 'guided', 'change/retry-storage', false);
+assert.match(selectedPlanElements['plan-content'].innerHTML, /Marked implemented/);
+assert.match(selectedPlanElements['plan-content'].innerHTML, /Sufficient: No/);
+mixedBrowser.selectPlanSnapshot(4);
+assert.equal(mixedBrowser.readers.plan.currentDestination, 'change/retry-storage', 'stable slug selection survives version changes');
+assert.match(selectedPlanElements['plan-content'].innerHTML, /Not marked implemented/);
+assert.match(selectedPlanElements['plan-content'].innerHTML, /Assert two retries/);
+assert.doesNotMatch(selectedPlanElements['plan-content'].innerHTML, /Independent review verdicts/, 'an older report is not applied to revised followup requirements');
+assert.doesNotMatch(mixedBrowser.renderPlanDestination({ kind: 'change', change: { ...revisedFollowup.changes[0], number: 1 } }), /Independent review verdicts/, 'unchanged originals cannot inherit verdicts from a different overall requirement scope');
+mixedBrowser.selectPlanSnapshot(3);
+assert.match(selectedPlanElements['plan-content'].innerHTML, /Independent review verdicts/, 'flag-only scope changes can still show separate verdicts');
+mixedBrowser.selectPlanSnapshot(2);
+assert.match(selectedPlanElements['plan-content'].innerHTML, /Assert one retry/);
+assert.doesNotMatch(selectedPlanElements['plan-content'].innerHTML, /Assert two retries/);
+assert.match(fakeLocation.href, /#plan\/change\/retry-storage$/);
+mixedBrowser.selectPlanSnapshot(1);
+assert.match(selectedPlanElements['implementation-summary'].innerHTML, /Marked implemented: 0 · Not marked implemented: 2/);
+mixedBrowser.renderFullPlan();
+assert.doesNotMatch(selectedPlanElements['plan-content'].innerHTML, /Source review 2|Retry storage|Page records/);
+assert.doesNotMatch(selectedPlanElements['plan-content'].innerHTML, /Independent review verdicts/, 'a pre-followup snapshot does not receive amended-scope verdicts');
+assert.deepEqual(mixedDashboard.versions[1].dependencyGraph.nodes.map(({ id }) => id), mixedPlan.readingOrder);
+assert.match(generateDependencyDiagram(mixedDashboard.versions[1].dependencyGraph), /dag_0 --> dag_2/);
+
+// Flag-only snapshots compare as assessments, not changed requirements or passing reviews.
+const flagComparison = renderPlanComparison(mixedVersions[1], mixedVersions[2]);
+assert.equal(flagComparison.comparison.modified.length, 0);
+assert.equal(flagComparison.comparison.flags.length, 2);
+assert.equal(flagComparison.added, 0);
+assert.equal(flagComparison.removed, 0);
+assert.match(flagComparison.html, /Implementation flag changes/);
+assert.match(flagComparison.html, /Flag-only edit/);
+assert.match(flagComparison.html, /Version 2: Marked implemented → Version 3: Not marked implemented/);
+assert.match(flagComparison.html, /Version 2: Not marked implemented → Version 3: Marked implemented/);
+assert.doesNotMatch(flagComparison.html, /Requirements changed|Sufficient:|Review passed/);
+const followupComparison = renderPlanComparison(mixedVersions[2], mixedVersions[3]);
+assert.deepEqual(followupComparison.comparison.modified.map(({ id }) => id), ['retry-storage']);
+assert.match(followupComparison.html, /Requirements also changed/);
+assert.match(followupComparison.html, /Followup definition before · Version 3/);
+assert.match(followupComparison.html, /Assert one retry/);
+assert.match(followupComparison.html, /Followup definition after · Version 4/);
+assert.match(followupComparison.html, /Assert two retries/);
+const onlyTestingChange = structuredClone(mixedPlan);
+onlyTestingChange.changes[2].testing += ' Also assert the delay.';
+assert.deepEqual(comparePlanDocuments(mixedPlan, onlyTestingChange).modified.map(({ id }) => id), ['retry-storage']);
+const onlyAmendmentChange = structuredClone(mixedPlan);
+onlyAmendmentChange.changes[3].followup.effect.requirements.pop();
+assert.deepEqual(comparePlanDocuments(mixedPlan, onlyAmendmentChange).modified.map(({ id }) => id), ['page-records']);
+const addedFollowups = renderPlanComparison(mixedVersions[0], mixedVersions[1]);
+assert.equal(addedFollowups.comparison.added.length, 2);
+assert.match(addedFollowups.html, /Followup · Source review 2/);
+assert.match(addedFollowups.html, /Scope effect:<\/strong> Amendment/);
+const amendmentDiff = renderPlanComparison(mixedVersions[1], version(onlyAmendmentChange, 5));
+assert.match(amendmentDiff.html, /Amends Plan section: testing/);
+assert.match(amendmentDiff.html, /Requirements changed/);
+const mixedDiffIndexes = [...followupComparison.html.matchAll(/data-diff-block-index="(\d+)"/g)].map((match) => Number(match[1]));
+assert.deepEqual(mixedDiffIndexes, mixedDiffIndexes.map((_value, index) => index));
+
+// V4 reports show their own exact historical flags and definitions, never latest-plan's.
+assert.equal(mixedBrowser.reviewPlanSnapshot().number, 2);
+const reviewHeaderElements = Object.fromEntries(['review-tab', 'review-meta', 'review-pull-requests', 'review-change-links'].map((id) => [id, { ...readerElement(), appendChild() {} }]));
+const reviewHeaderBrowser = new Function('dashboard', 'document', `${helperSource};const readers={};return {prepareReview};`)(mixedDashboard, { getElementById(id) { return reviewHeaderElements[id]; }, createElement() { return readerElement(); } });
+reviewHeaderBrowser.prepareReview();
+assert.match(reviewHeaderElements['review-meta'].textContent, /Original approved baseline: version 1 · Reviewed plan version 2/);
+const reviewedFollowup = mixedBrowser.createReviewDestinations(mixedReport).find(({ id }) => id === 'change/retry-storage');
+for (const fullDocument of [false, true]) {
+  const reviewSection = mixedBrowser.renderReviewDestination(reviewedFollowup, fullDocument);
+  assert.match(reviewSection, /Marked implemented/);
+  assert.match(reviewSection, /reviewed plan version 2/);
+  assert.match(reviewSection, /Sufficient: No/);
+  assert.match(reviewSection, /Followup · Source review 2/);
+  assert.match(reviewSection, /Retry a transient storage failure\./);
+  assert.doesNotMatch(reviewSection, /twice|Not marked implemented/);
+}
+const reviewedTesting = mixedBrowser.renderReviewDestination({ kind: 'testing' });
+for (const group of groups) {
+  assert.ok(reviewedTesting.includes(group.sourceId));
+  assert.ok(reviewedTesting.includes(group.criteria));
+}
+assert.match(reviewedTesting, /Original testing criteria/);
+assert.match(reviewedTesting, /Followup testing: retry-storage/);
+const reviewedAmendment = mixedBrowser.renderReviewDestination(mixedBrowser.createReviewDestinations(mixedReport).at(-2));
+assert.match(reviewedAmendment, /Not marked implemented/);
+assert.match(reviewedAmendment, /href="#review\/change\/load-records"/);
+const noHistoricalSnapshot = new Function('dashboard', 'marked', `${helperSource};return {reviewPlanSnapshot,renderReviewDestination};`)({ ...mixedDashboard, versions: [mixedDashboard.versions.at(-1)] }, marked);
+assert.equal(noHistoricalSnapshot.reviewPlanSnapshot(), null);
+const standaloneReview = noHistoricalSnapshot.renderReviewDestination(reviewedFollowup);
+assert.doesNotMatch(standaloneReview, /implementation-flag|Source review/, 'missing review snapshots do not borrow flags or origins from a later version');
+assert.match(standaloneReview, /Sufficient: No/);
+assert.match(standaloneReview, /Followup/);
+assert.match(mixedBrowser.renderReviewDestination({ kind: 'overall' }), /requirements, or report format/);
+assert.doesNotMatch(mixedBrowser.renderReviewDestination({ kind: 'overall' }), /workflow-revise/);
+assert.equal(snapshotFromHtml(html).versions[0].document.changes[0].implemented, false, 'legacy missing flags normalize to false without changing saved files');
+assert.equal(Object.hasOwn(baseDocument.changes[0], 'implemented'), false, 'normalizing for the dashboard does not mutate the input');
+const legacyExplicitFalse = { ...baseDocument, changes: baseDocument.changes.map((change) => ({ ...change, implemented: false })) };
+assert.equal(comparePlanDocuments(baseDocument, legacyExplicitFalse).flags.length, 0);
+assert.equal(renderPlanComparison(version(baseDocument), version(legacyExplicitFalse, 2)).html, '');
+
+// Disk dashboard generation must use the shared scope reader even without a report.
+const { workflowFiles, createWorkflow, writeWorkflowMetadata } = await jiti.import(new URL('../src/storage.ts', import.meta.url).pathname);
+const { preparePlanDraft, finalizePlanDraft } = await jiti.import(new URL('../src/plan-storage.ts', import.meta.url).pathname);
+const { requirementFingerprint } = await jiti.import(new URL('../src/workflow-scope.ts', import.meta.url).pathname);
+const temporary = await mkdtemp(join(tmpdir(), 'pi-dashboard-followups-'));
+const files = workflowFiles('dashboard-followups', temporary);
+const metadata = { version: 6, identifier: 'dashboard-followups', description: 'Dashboard followups', ask: 'Read every record.', repositoryRoot: temporary, gitCommonDir: join(temporary, '.git'), baseBranch: 'main', baseCommit: 'base', workflowBranch: 'workflow/dashboard-followups', worktreePath: temporary, createdAt: '2026-01-01T00:00:00.000Z' };
+const json = (value) => JSON.stringify(value, null, 2) + '\n';
+async function publishDashboardFixture(document, policy) {
+  const draft = await preparePlanDraft(files);
+  await writePlanDocument(files.workingPlan, document);
+  return finalizePlanDraft(files, 'Dashboard followups', draft.baseVersion, policy);
+}
+try {
+  await createWorkflow(files, metadata);
+  // Keep this rendering fixture local: no global locator or Git registration is needed.
+  await writeFile(join(temporary, '.workflows', 'active.json'), json({ version: 6, identifier: metadata.identifier, repositoryRoot: temporary, gitCommonDir: metadata.gitCommonDir, worktreePath: temporary }));
+  await publishDashboardFixture(mixedBaseline, { phase: 'planning' });
+  await writeWorkflowDashboard(files);
+  assert.equal(snapshotFromHtml(await readFile(files.dashboard, 'utf8')).approvedPlanVersion, undefined, 'unapproved finalized plans remain readable');
+  metadata.approvedPlanVersion = 1;
+  await writeWorkflowMetadata(files, metadata);
+  await writeWorkflowDashboard(files);
+  assert.equal(snapshotFromHtml(await readFile(files.dashboard, 'utf8')).approvedPlanVersion, 1);
+  const validDashboard = await readFile(files.dashboard, 'utf8');
+  await writeWorkflowMetadata(files, { ...metadata, approvedPlanVersion: 99 });
+  await assert.rejects(writeWorkflowDashboard(files), /Approved plan version v99 is missing/, 'approval validation is not conditional on review existence');
+  assert.equal(await readFile(files.dashboard, 'utf8'), validDashboard, 'failed validation preserves the prior dashboard');
+  await writeWorkflowMetadata(files, metadata);
+  const unmarkedFollowups = { ...mixedPlan, changes: mixedPlan.changes.map((change) => ({ ...change, implemented: false })) };
+  await publishDashboardFixture(unmarkedFollowups, { phase: 'review', reviewOrigin: { ...followupOrigin, entryIds: [followupOrigin.entryId] } });
+  await writeWorkflowMetadata(files, { ...metadata, approvedPlanVersion: 2 });
+  await assert.rejects(writeWorkflowDashboard(files), /original approved plan cannot contain followups/, 'the shared scope reader validates original/followup history without any review');
+  await writeWorkflowMetadata(files, metadata);
+  await publishDashboardFixture(mixedPlan, { phase: 'implementation' });
+  const persistedReport = { ...mixedReport, currentPlanVersion: 3, sourceFingerprint: requirementFingerprint(metadata.ask, mixedPlan, await readFile(files.clarifications, 'utf8')) };
+  await writeFile(files.review, json(persistedReport));
+  await writeWorkflowDashboard(files, persistedReport.headCommit);
+  const beforeFlags = snapshotFromHtml(await readFile(files.dashboard, 'utf8'));
+  assert.equal(beforeFlags.reviewStale, false, 'v4 is fresh for the exact requirement scope');
+  await publishDashboardFixture(assessmentOnly, { phase: 'implementation' });
+  await writeWorkflowDashboard(files, persistedReport.headCommit);
+  const afterFlags = snapshotFromHtml(await readFile(files.dashboard, 'utf8'));
+  assert.equal(afterFlags.reviewStale, false, 'flag-only changes do not stale a v4 report');
+  assert.equal(afterFlags.versions.at(-1).document.changes[0].implemented, false);
+  assert.equal(afterFlags.versions[2].document.changes[0].implemented, true, 'historical flags are preserved');
+  await writeWorkflowDashboard(files, 'new-code-head');
+  assert.equal(snapshotFromHtml(await readFile(files.dashboard, 'utf8')).reviewStale, true, 'code changes still stale a report');
+  await writeFile(files.review, json(data.review));
+  await writeWorkflowDashboard(files, data.review.headCommit);
+  assert.equal(snapshotFromHtml(await readFile(files.dashboard, 'utf8')).reviewStale, true, 'legacy v3 reports remain readable but stale');
+} finally {
+  await rm(temporary, { recursive: true, force: true });
+}
+
+console.log('Dashboard test passed: original/followup assessments, independent verdicts, historical scope, comparisons, stable links, safe DAGs, and rich Markdown readers.');
