@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import { fork } from "node:child_process";
-import { mkdtemp, mkdir, readFile, readdir, readlink, rm, stat, symlink, writeFile, lstat } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, readdir, readlink, rm, stat, symlink, writeFile, lstat, link } from "node:fs/promises";
+import { writeFileSync } from "node:fs";
+import { makePlanDocument, writePlanDocument } from "./fixtures/plan-document.mjs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createJiti } from "jiti/static";
@@ -45,7 +47,7 @@ async function tree(root) {
   }
   return result;
 }
-async function invalid(mutate, pattern, base = 1) {
+async function invalid(mutate, pattern, base = 1, unreadableHistory = false) {
   await populate();
   await mutate();
   const draft = await tree(files.workingPlan);
@@ -55,8 +57,127 @@ async function invalid(mutate, pattern, base = 1) {
   assert.deepEqual(await tree(files.workingPlan), draft, "invalid finalization never repairs or discards edits");
   assert.deepEqual(await tree(files.versions), history, "invalid finalization never changes published history");
   assert.equal(await readlink(files.latestPlan), pointer);
-  assert.equal(await hasUnsavedPlanDraft(files), true);
+  if (unreadableHistory) await assert.rejects(hasUnsavedPlanDraft(files), /Hard links/);
+  else assert.equal(await hasUnsavedPlanDraft(files), true);
 }
+async function testFollowupStorage() {
+  const f = workflowFiles("followup-storage", temporary);
+  const m = { ...metadata, identifier: "followup-storage", workflowBranch: "workflow/followup-storage", ask: "Use a queue and preserve registration ordering." };
+  await createWorkflow(f, m);
+  const original = makePlanDocument({ changes: [{ id: "queue", title: "Queue", dependsOn: [], content: "Use a queue with owner-reentrant locking." }] });
+  const review = { phase: "review", reviewOrigin: { reviewNumber: 1, sessionId: "review-session", entryIds: ["finding", "discussion"] } };
+  const implementation = { phase: "implementation" };
+  async function draft(document) {
+    await rm(f.workingPlan, { recursive: true, force: true });
+    const prepared = await preparePlanDraft(f);
+    await writePlanDocument(f.workingPlan, document);
+    return prepared.baseVersion;
+  }
+  async function reject(document, pattern, policy = review) {
+    const base = await draft(document);
+    const beforeDraft = await tree(f.workingPlan), beforeHistory = await tree(f.versions);
+    const pointer = await readlink(f.latestPlan).catch(() => undefined);
+    await assert.rejects(finalizePlanDraft(f, "Invalid attempt", base, policy), pattern);
+    assert.deepEqual(await tree(f.workingPlan), beforeDraft);
+    assert.deepEqual(await tree(f.versions), beforeHistory);
+    assert.equal(await readlink(f.latestPlan).catch(() => undefined), pointer);
+  }
+  async function save(document, policy) { const base = await draft(document); return finalizePlanDraft(f, "Publish requirements or assessment", base, policy); }
+  for (const flag of [undefined, "false", 0, null]) {
+    const candidate = structuredClone(original); candidate.changes[0].implemented = flag;
+    await reject(candidate, /implemented must be boolean/, { phase: "planning" });
+  }
+  const prematurelyDone = structuredClone(original); prematurelyDone.changes[0].implemented = true;
+  await reject(prematurelyDone, /Initial planning cannot/, { phase: "planning" });
+  const baseline = await save(original);
+  const baselineTree = await tree(baseline.path);
+  await writeJson(f.metadata, { ...m, approvedPlanVersion: baseline.number });
+  await reject(original, /approved and cannot be finalized/, { phase: "planning" });
+  const implemented = structuredClone(original); implemented.changes[0].implemented = true;
+  const marked = await save(implemented, implementation);
+  assert.equal(marked.document.changes[0].implemented, true, "marking needs no Git commit or evidence file");
+  await reject(original, /review cannot change implemented/);
+  const origin = { reviewNumber: 1, sessionId: "review-session", entryId: "finding" };
+  const followup = {
+    id: "registration-order", title: "Register after acquisition", dependsOn: ["queue"], implemented: false,
+    content: "Register only after acquiring the lock.", testing: "Test acquisition failure before registration.",
+    followup: { origin, effect: { type: "amendment", requirements: [{ source: { type: "original-ask" }, quotedRequirement: "preserve registration ordering" }] } },
+  };
+  const combined = { ...implemented, readingOrder: ["queue", followup.id], changes: [...implemented.changes, followup] };
+  await reject(combined, /only implemented fields/, implementation);
+  const addedDone = structuredClone(combined); addedDone.changes[1].implemented = true;
+  await reject(addedDone, /new followups must start/);
+  for (const changedOrigin of [{ ...origin, reviewNumber: 2 }, { ...origin, sessionId: "foreign" }, { ...origin, entryId: "unknown" }]) {
+    const candidate = structuredClone(combined); candidate.changes[1].followup.origin = changedOrigin;
+    await reject(candidate, /new followup origin must reference/);
+  }
+  const decisions = structuredClone(combined); decisions.changes[1].followup.decision = { type: "accepted" };
+  await reject(decisions, /unknown field "decision"/);
+  const missingTesting = structuredClone(combined); delete missingTesting.changes[1].testing;
+  await reject(missingTesting, /require nonempty testing/);
+  for (const source of [{ type: "change", id: "unknown" }, { type: "change", id: followup.id }, { type: "plan-section", name: "intro" }]) {
+    const candidate = structuredClone(combined); candidate.changes[1].followup.effect.requirements[0].source = source;
+    await reject(candidate, /unknown change|cannot target itself|missing plan section/);
+  }
+  const badQuote = structuredClone(combined); badQuote.changes[1].followup.effect.requirements[0].quotedRequirement = "not in the ask";
+  await reject(badQuote, /does not occur verbatim/);
+  const badDependency = structuredClone(combined); badDependency.changes[1].dependsOn = ["missing"];
+  await reject(badDependency, /depends on unknown change/);
+  const originalEdits = [
+    (p) => { p.goal += "changed"; }, (p) => { p.testing += "changed"; }, (p) => { p.intro = "Added intro"; },
+    (p) => { p.changes[0].content += "changed"; }, (p) => { p.changes[0].content = "\ufeff" + p.changes[0].content; }, (p) => { p.changes[0].title += "changed"; },
+    (p) => { p.changes[0].dependsOn = [followup.id]; p.changes[1].dependsOn = []; },
+    (p) => { p.readingOrder.reverse(); },
+    (p) => { p.changes[0].followup = { origin, effect: { type: "addition" } }; p.changes[0].testing = "Testing"; },
+    (p) => { p.changes.push({ id: "unlabelled", title: "Unlabelled", content: "New requirement", dependsOn: [], implemented: false }); p.readingOrder.push("unlabelled"); },
+  ];
+  for (const mutate of originalEdits) { const candidate = structuredClone(combined); mutate(candidate); await reject(candidate, /Original|original requirements|new requirements must be followups/); }
+  const published = await save(combined, review);
+  const combinedTree = await tree(published.path);
+  assert.equal(published.document.changes[1].testing, followup.testing);
+  assert.equal(JSON.parse(await readFile(f.metadata, "utf8")).approvedPlanVersion, baseline.number);
+  const deleted = structuredClone(implemented);
+  await reject(deleted, /published IDs must be retained/);
+  const newOrigin = structuredClone(combined); newOrigin.changes[1].followup.origin.entryId = "discussion";
+  await reject(newOrigin, /published followup origin must remain unchanged/);
+  const done = structuredClone(combined); done.changes[1].implemented = true;
+  await save(done, implementation);
+  const changed = structuredClone(done); changed.changes[1].content += " Preserve retries.";
+  await reject(changed, /must explicitly reset implemented to false/);
+  changed.changes[1].implemented = false;
+  await reject(changed, /only implemented fields/, implementation);
+  await save(changed, review);
+  const noChange = structuredClone(changed); noChange.changes[0].implemented = false;
+  await save(noChange, implementation);
+  assert.equal((await readPlanVersion(f)).document.changes[0].implemented, false, "implementer can clear a flag explicitly");
+  assert.deepEqual(await tree(baseline.path), baselineTree);
+  assert.deepEqual(await tree(published.path), combinedTree, "old definitions and old assessments remain immutable");
+  // A followup can amend a followup without hiding either requirement.
+  const second = { id: "registration-retry", title: "Retry registration", dependsOn: [], implemented: false, content: "Retry after a transient registration failure.", testing: "Test one transient failure.", followup: { origin: { ...origin, entryId: "discussion" }, effect: { type: "amendment", requirements: [{ source: { type: "change", id: followup.id }, quotedRequirement: "Register only after acquiring the lock." }] } } };
+  const extended = { ...noChange, readingOrder: [...noChange.readingOrder, second.id], changes: [...noChange.changes, second] };
+  const cycle = structuredClone(extended);
+  cycle.changes[1].followup.effect.requirements = [{ source: { type: "change", id: second.id }, quotedRequirement: second.content }];
+  await reject(cycle, /amendment cycle/);
+  const mixedCycle = structuredClone(extended); mixedCycle.changes[1].dependsOn.push(second.id);
+  await reject(mixedCycle, /dependency\/amendment cycle/);
+  await save(extended, review);
+  // Changing a raw draft after capture must fail even though it passed field validation.
+  const newAddition = { ...second, id: "another-followup", followup: { origin, effect: { type: "addition" } } };
+  const concurrent = { ...extended, readingOrder: [...extended.readingOrder, newAddition.id], changes: [...extended.changes, newAddition] };
+  const base = await draft(concurrent);
+  const beforeHistory = await tree(f.versions);
+  const mutatingContext = { ...review.reviewOrigin, get sessionId() { writeFileSync(join(f.workingPlan, "planned-changes", newAddition.id, "testing.md"), "Concurrent native edit."); return "review-session"; } };
+  await assert.rejects(finalizePlanDraft(f, "Concurrent draft", base, { phase: "review", reviewOrigin: mutatingContext }), /working plan changed during finalize/);
+  assert.deepEqual(await tree(f.versions), beforeHistory);
+  assert.equal(await readFile(join(f.workingPlan, "planned-changes", newAddition.id, "testing.md"), "utf8"), "Concurrent native edit.");
+  // Invalid/edited legacy drafts are preserved rather than mechanically upgraded.
+  const legacy = { ...plan, goal: "User edits in a legacy draft." };
+  await writePlanDocument(f.workingPlan, legacy);
+  const legacyTree = await tree(f.workingPlan);
+  await preparePlanDraft(f);
+  assert.deepEqual(await tree(f.workingPlan), legacyTree);
+}
+
 try {
   await createWorkflow(files, metadata);
   assert.equal(files.workingPlan, join(files.root, "working-plan"));
@@ -69,7 +190,7 @@ try {
   await assert.rejects(lstat(files.latestPlan), /ENOENT/);
   assert.equal(files.plan, files.latestPlan);
   await assert.rejects(lstat(join(files.root, "plan.md")), /ENOENT/, "no generated root Markdown is needed");
-  assert.deepEqual(JSON.parse(await readFile(join(files.workingPlan, "plan.json"), "utf8")), { schemaVersion: 1, readingOrder: [] });
+  assert.deepEqual(JSON.parse(await readFile(join(files.workingPlan, "plan.json"), "utf8")), { schemaVersion: 2, readingOrder: [] });
   assert.deepEqual(await readdir(join(files.workingPlan, "planned-changes")), []);
   assert.deepEqual(await preparePlanDraft(files), { path: files.workingPlan, baseVersion: 0 });
   await assert.rejects(finalizePlanDraft(files, "", 0), (error) => {
@@ -91,12 +212,18 @@ try {
   assert.equal(first.path, join(files.versions, "v1"));
   assert.deepEqual(first.document.changes.map(({ id }) => id), plan.readingOrder);
   assert.equal(first.document.testing, plan.testing, "headings inside change prose are not structure");
+  assert.equal(first.document.schemaVersion, 1);
+  assert.ok(first.document.changes.every((change) => change.implemented === false), "legacy reads normalize missing flags to false");
+  assert.equal(JSON.parse(await readFile(join(first.path, "plan.json"), "utf8")).schemaVersion, 1, "legacy reads never rewrite files");
   assert.ok(first.content.includes(plan.changes[0].content));
   assert.equal(await readlink(files.latestPlan), "plan-versions/v1");
   assert.deepEqual(await readPlanVersion(files), first);
   assert.equal(await hasUnsavedPlanDraft(files), false);
   assert.notEqual((await stat(join(first.path, "goal.md"))).ino, (await stat(join(files.workingPlan, "goal.md"))).ino, "draft and version never share hard links");
   assert.equal(await preparePlanDraft(files).then(({ baseVersion }) => baseVersion), 1);
+  assert.equal(JSON.parse(await readFile(join(files.workingPlan, "plan.json"), "utf8")).schemaVersion, 2, "unchanged legacy drafts upgrade during prepare");
+  assert.ok(JSON.parse(await readFile(join(files.workingPlan, "planned-changes", "wire-storage", "change_metadata.json"), "utf8")).implemented === false);
+  assert.equal(await hasUnsavedPlanDraft(files), false, "mechanical conversion alone is not unsaved scope");
   const immutable = await tree(first.path);
   const metadataFile = JSON.parse(await readFile(join(first.path, "version-metadata.json"), "utf8"));
   assert.equal(metadataFile.description, first.description);
@@ -122,7 +249,7 @@ try {
     return true;
   });
   await invalid(() => writeJson(join(files.workingPlan, "plan.json"), { schemaVersion: 1, readingOrder: ["wire-storage", "wire-storage", "absent"], title: "Unknown" }), /readingOrder repeats wire-storage/);
-  await invalid(() => writeJson(join(files.workingPlan, "plan.json"), { schemaVersion: 2, readingOrder: plan.readingOrder }), /schemaVersion must be 1/);
+  await invalid(() => writeJson(join(files.workingPlan, "plan.json"), { schemaVersion: 3, readingOrder: plan.readingOrder }), /schemaVersion must be 1 or 2/);
   await invalid(() => writeJson(join(changeRoot, "change_metadata.json"), { title: "Wire", dependsOn: "define-schema" }), /dependsOn must be an array/);
   await invalid(() => writeJson(join(changeRoot, "change_metadata.json"), { title: "Wire", dependsOn: ["wire-storage"] }), /cannot depend on itself/);
   await invalid(() => writeJson(join(files.workingPlan, "planned-changes", "define-schema", "change_metadata.json"), { title: "Define", dependsOn: ["wire-storage"] }), /dependency cycle/);
@@ -141,6 +268,14 @@ try {
     await symlink(outside, join(changeRoot, "change.md"));
   }, /symbolic links/);
   assert.equal(await readFile(outside, "utf8"), "Keep this file unchanged.");
+  await invalid(async () => {
+    await rm(join(changeRoot, "change.md"));
+    await link(outside, join(changeRoot, "change.md"));
+  }, /Hard links/);
+  await invalid(async () => {
+    await rm(join(changeRoot, "change.md"));
+    await link(join(first.path, "planned-changes", "wire-storage", "change.md"), join(changeRoot, "change.md"));
+  }, /Hard links/, 1, true);
   await invalid(async () => {
     await rm(changeRoot, { recursive: true });
     await symlink(temporary, changeRoot, "dir");
@@ -233,5 +368,6 @@ try {
   await rm(files.versions, { recursive: true });
   await symlink(temporary, files.versions, "dir");
   await assert.rejects(listPlanVersions(files), /symbolic links/);
-  console.log("Directory plan storage tests passed: snapshots, aggregated validation, stale bases, cross-process locking, immutable history, pointer safety, and reorder.");
+  await testFollowupStorage();
+  console.log("Directory plan storage tests passed: schema v2, legacy upgrades, phase policies, followups, amendments, immutable history, concurrency, and link safety.");
 } finally { await rm(temporary, { recursive: true, force: true }); }
