@@ -2,7 +2,7 @@ import { access, readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { parse } from "smol-toml";
 
-export const MODEL_OVERRIDE_PHASES = ["planning", "implementing", "reviewing", "revising"] as const;
+export const MODEL_OVERRIDE_PHASES = ["planning", "implementing", "reviewing"] as const;
 export const THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const;
 
 export type ModelOverridePhase = (typeof MODEL_OVERRIDE_PHASES)[number];
@@ -91,11 +91,17 @@ function parseModelOverrides(
 	if (value === undefined) return {};
 	if (!isRecord(value)) throw new Error(`models must be a TOML table: ${configPath}`);
 
+	if (Object.prototype.hasOwnProperty.call(value, "revising")) {
+		throw new Error(
+			`models.revising is no longer supported. Move its settings to models.implementing; /workflow-implement now continues implementation and followups: ${configPath}`,
+		);
+	}
+
 	const allowedPhases = new Set<string>(MODEL_OVERRIDE_PHASES);
 	const unknownPhases = Object.keys(value).filter((phase) => !allowedPhases.has(phase));
 	if (unknownPhases.length > 0) {
 		throw new Error(
-			`Unknown model override phase${unknownPhases.length === 1 ? "" : "s"} ${unknownPhases.join(", ")}; expected planning, implementing, reviewing, or revising: ${configPath}`,
+			`Unknown model override phase${unknownPhases.length === 1 ? "" : "s"} ${unknownPhases.join(", ")}; expected planning, implementing, or reviewing: ${configPath}`,
 		);
 	}
 

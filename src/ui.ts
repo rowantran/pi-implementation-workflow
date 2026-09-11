@@ -17,7 +17,7 @@ const FAILURE_DELAY_MS = 600;
 
 type ProgressStatus = "pending" | "active" | "complete" | "failed";
 export type WorkflowSubstepStatus = "queued" | "running" | "complete" | "failed" | "reused";
-export type WorkflowStatusPhase = "planning" | "implementation" | "revision" | "review" | "cleanup" | "complete";
+export type WorkflowStatusPhase = "planning" | "implementation" | "review" | "cleanup" | "complete";
 
 interface ProgressSubstep {
 	id: string;
@@ -191,10 +191,10 @@ export function workflowPhaseStatusText(
 ): string | undefined {
 	let guidance: string | undefined;
 	if (phase === "planning") guidance = "/workflow-implement when the plan is ready";
-	if (phase === "implementation" || phase === "revision") {
+	if (phase === "implementation") {
 		guidance = pullRequest ? "/workflow-review to review" : "/workflow-review when ready";
 	}
-	if (phase === "review") guidance = "/workflow-revise to request changes · /workflow-cleanup to finish";
+	if (phase === "review") guidance = "/workflow-implement after finalizing followups · /workflow-cleanup to finish";
 	if (!guidance) return undefined;
 	if (!pullRequest) return guidance;
 	const label = `PR #${pullRequest.number}`;
@@ -217,12 +217,12 @@ export function workflowReviewTranscriptCardContent(
 ): WorkflowReviewTranscriptCardContent | undefined {
 	if (phase !== "review") return undefined;
 	return {
-		title: "Review ready · Read-only session",
-		description: "The generated review is open in the workflow dashboard.",
-		guidance: "Ask me to explain a finding, inspect its cited code, or assess whether a concern is valid.",
+		title: "Review ready · Code-read-only session",
+		description: "The generated review is open in the workflow dashboard. Followup draft editing is allowed; code edits are not.",
+		guidance: "Ask me to explain a finding, inspect its cited code, or edit followups in the plan. Finalize followups before continuing implementation.",
 		actions: [
-			{ label: "Request changes", command: "/workflow-revise" },
-			{ label: "Accept and clean up", command: "/workflow-cleanup" },
+			{ label: "Implement after finalizing followups", command: "/workflow-implement" },
+			{ label: "Clean up", command: "/workflow-cleanup" },
 		],
 	};
 }

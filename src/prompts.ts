@@ -17,8 +17,6 @@ const REVIEW_INCREMENTAL_SCOPE_TEMPLATE = loadTemplate("system/review-incrementa
 const REVIEW_TESTING_CRITERIA_TEMPLATE = loadTemplate("system/review-testing-criteria.md");
 const REVIEW_SYNTHESIS_TEMPLATE = loadTemplate("system/review-synthesis.md");
 const REVIEW_AGENT_USER_TEMPLATE = loadTemplate("injected-user-messages/review-agent.md");
-const REVISION_SYSTEM_TEMPLATE = loadTemplate("system/revision.md");
-const REVISION_USER_TEMPLATE = loadTemplate("injected-user-messages/revision.md");
 const UPDATE_PLAN_TOOL_GUIDELINE = loadTemplate("system/update-plan-tool-guideline.md");
 const UPDATE_PLAN_TOOL_SNIPPET = loadTemplate("system/update-plan-tool-snippet.md");
 const MARKDOWN_CODE_BLOCK_GUIDANCE = loadTemplate("system/markdown-code-block-guidance.md");
@@ -51,8 +49,12 @@ export function implementationSystemPrompt(values: {
 	worktreePath: string;
 	workflowBranch: string;
 	baseBranch: string | undefined;
+	reviewPath?: string;
 }): string {
-	return renderProseSystemPrompt(IMPLEMENTATION_SYSTEM_TEMPLATE, stringifyUndefined(values));
+	return renderProseSystemPrompt(IMPLEMENTATION_SYSTEM_TEMPLATE, {
+		...stringifyUndefined(values),
+		reviewPath: values.reviewPath ?? "",
+	});
 }
 
 export function implementationUserMessage(values: {
@@ -94,33 +96,6 @@ export function reviewSystemPrompt(values: {
 	reviewMarkdownPath: string;
 }): string {
 	return renderProseSystemPrompt(REVIEW_SYSTEM_TEMPLATE, stringifyUndefined(values));
-}
-
-export function revisionSystemPrompt(values: {
-	identifier: string | undefined;
-	metadataPath: string;
-	planPath: string;
-	clarificationsPath: string;
-	/** Omitted when the workflow has no saved review yet. */
-	reviewPath?: string;
-	questionTool: string;
-	worktreePath: string;
-	workflowBranch: string;
-	baseBranch: string;
-}): string {
-	const { reviewPath, ...required } = values;
-	return renderProseSystemPrompt(REVISION_SYSTEM_TEMPLATE, {
-		...stringifyUndefined(required),
-		...(reviewPath === undefined ? {} : { reviewPath }),
-	});
-}
-
-export function revisionUserMessage(values: { request: string; reviewPath?: string }): string {
-	const { reviewPath, ...required } = values;
-	return render(REVISION_USER_TEMPLATE, {
-		...required,
-		...(reviewPath === undefined ? {} : { reviewPath }),
-	});
 }
 
 export function reviewAgentSystemPrompt(outputTool: string): string {

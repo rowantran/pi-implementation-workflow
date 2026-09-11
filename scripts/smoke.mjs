@@ -39,7 +39,6 @@ const expected = {
     "workflow-implement",
     "workflow-brief",
     "workflow-review",
-    "workflow-revise",
     "workflow-cleanup",
     "workflow-dashboard",
   ],
@@ -54,6 +53,10 @@ for (const [kind, names] of Object.entries(expected)) {
   for (const name of names) {
     if (!actual.includes(name)) throw new Error(`Missing ${kind} registration: ${name}`);
   }
+}
+
+if (registrations.commands.includes("workflow-revise")) {
+  throw new Error("Removed /workflow-revise command must not be registered; use /workflow-implement.");
 }
 
 if (registrations.commands.length !== expected.commands.length) {
