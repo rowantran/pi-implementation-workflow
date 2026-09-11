@@ -17,6 +17,15 @@
       "answer": "we don't need to overcomplicate things. we can just treat them the same way as the original planned changes, where if they're in the plan, the user implicitly accepts them by moving to the next phase",
       "custom": true,
       "answeredAt": "2026-09-11T03:13:37.992Z"
+    },
+    {
+      "id": "simple-followup-scope",
+      "label": "Simple plan membership",
+      "question": "To apply the same approval model as original changes, should I remove per-followup proposed/accepted/dismissed states and user-message citations, and treat every finalized followup as agreed scope when you run the next /workflow-implement or /workflow-review?",
+      "answer": "Yes — use plan membership",
+      "custom": false,
+      "answeredAt": "2026-09-11T03:14:49.137Z",
+      "optionIndex": 1
     }
   ]
 }
