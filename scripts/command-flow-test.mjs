@@ -15,6 +15,8 @@ const jiti = createJiti(import.meta.url, { moduleCache: false });
 const workflowModule = await jiti.import(new URL("../src/index.ts", import.meta.url).pathname);
 const implementationWorkflow = workflowModule.default;
 const { registerWorkflowPlanTool } = await jiti.import(new URL("../src/plan-tool.ts", import.meta.url).pathname);
+const storage = await jiti.import(new URL("../src/storage.ts", import.meta.url).pathname);
+const { readWorkflowScope } = await jiti.import(new URL("../src/workflow-scope.ts", import.meta.url).pathname);
 
 async function exists(path) {
 	try {
@@ -208,6 +210,14 @@ async function scenario({ args = "", editorResult, planningModel, planningThinki
 			await afterFirstStart({
 				get ctx() { return current.ctx; },
 				get tools() { return current.tools; },
+				get activeTools() { return activeTools; },
+				async resumePhase(phase) {
+					install(worktreePath, [
+						{ type: "custom", id: "phase-entry", customType: "implementation-workflow-phase", data: { phase, identifier } },
+						{ type: "message", id: "discussion-entry", message: { role: "user", content: "Save followups in the plan. Keep the helper unchanged.", timestamp: Date.now() } },
+					], "review-session");
+					await emit("session_start", { reason: "resume" });
+				},
 				run, emit, git, switches, slugRequests, executions, baseCommit, repositoryRoot, worktreePath,
 				identifier, workflowRoot, agentDir, editorCalls, notifications, phaseEntries, sentMessages,
 				setEditorResult(value) { editorValue = value; },
@@ -492,11 +502,94 @@ await scenario({
 		await writePlanFixture(join(workflowRoot, "working-plan"), approvedPlan);
 		await tools.get("workflow_update_plan").execute("save-plan", { action: "finalize", expectedBaseVersion: 0, description: "Preserve concurrent draft edits" });
 		await run("workflow-implement");
-		assert.equal(switches.length, 2);
+		assert.equal(switches.length, 1, "an unsaved concurrent draft blocks implementation handoff");
+		assert.match(notifications.at(-1).message, /working plan has unsaved changes/);
 		assert.equal(await readFile(join(workflowRoot, "working-plan", "goal.md"), "utf8"), "A newer draft edit from another session.\n");
 		assert.equal(await readFile(join(workflowRoot, "plan-versions", "v1", "goal.md"), "utf8"), approvedPlan.goal);
 		assert.ok(notifications.some(({ message }) => /draft changed during approval and was preserved/.test(message)));
 	},
 });
 
-console.log("Command-flow test passed: early worktrees, immutable asks, strict local approval, and cleanup without artifact commits.");
+await scenario({
+	editorResult: "Save review followups without relaying the conversation",
+	afterFirstStart: async (harness) => {
+		const { workflowRoot, worktreePath, identifier, run, emit, git } = harness;
+		const files = storage.workflowFiles(identifier, worktreePath);
+		const callPlan = (params) => harness.tools.get("workflow_update_plan").execute("plan-edit", params, undefined, undefined, harness.ctx);
+		await writePlanFixture(files.workingPlan, approvedPlan);
+		await callPlan({ action: "finalize", expectedBaseVersion: 0, description: "Save review followups" });
+		await run("workflow-implement");
+		assert.ok(harness.activeTools.includes("workflow_update_plan"), "first implementation can save original flags");
+		let prepared = await callPlan({ action: "prepare" });
+		assert.match(prepared.content[0].text, /Only implemented booleans/);
+		const originalId = approvedPlan.readingOrder[0];
+		const originalMetadataPath = join(files.workingPlan, "planned-changes", originalId, "change_metadata.json");
+		const originalMetadata = JSON.parse(await readFile(originalMetadataPath, "utf8"));
+		await writeFile(originalMetadataPath, JSON.stringify({ ...originalMetadata, title: "Not authorized" }));
+		const switchesBeforeDraft = harness.switches.length;
+		for (const command of ["workflow-implement", "workflow-review"]) {
+			await run(command);
+			assert.equal(harness.switches.length, switchesBeforeDraft);
+			assert.match(harness.notifications.at(-1).message, /working plan has unsaved changes/);
+		}
+		await assert.rejects(callPlan({ action: "finalize", expectedBaseVersion: 1, description: "Save review followups" }), /original requirements|only implemented/);
+		await writeFile(originalMetadataPath, JSON.stringify({ ...originalMetadata, implemented: true }));
+		const headBeforeFlag = (await git(worktreePath, "rev-parse", "HEAD")).stdout;
+		await callPlan({ action: "finalize", expectedBaseVersion: 1, description: "Save review followups" });
+		assert.equal((await git(worktreePath, "rev-parse", "HEAD")).stdout, headBeforeFlag, "flag publication is not a Git commit");
+		let scope = await readWorkflowScope(files, await storage.readCompletedWorkflowMetadata(identifier));
+		assert.equal(scope.changes[0].implemented, true);
+		const failing = { status: "no", explanation: "The implementation misses a failure case." };
+		const report = {
+			version: 3, pullRequestUrls: ["https://example.test/pull/1"], baseCommit: "base", headCommit: "head", generatedAt: new Date().toISOString(),
+			overallResult: { summary: "A correction is needed.", necessary: failing, sufficient: failing }, overallConcerns: [],
+			plannedChanges: scope.changes.map(({ id, title, dependsOn, content }) => ({ id, title, dependsOn, content, review: { id, title, walkthrough: "Inspect the missing case.", necessary: failing, sufficient: failing, concerns: [] } })),
+			testingCriteria: { originalCriteria: scope.currentPlan.document.testing, review: { summary: "Coverage is missing.", satisfied: failing, criteria: [{ criterion: "Failure regression", status: "no", explanation: "Missing coverage", evidence: [{ location: "README.md:1", description: "Fixture source" }] }], concerns: [] } },
+		};
+		await storage.appendWorkflowReview(files, report);
+		assert.equal((await readWorkflowScope(files, await storage.readCompletedWorkflowMetadata(identifier))).changes[0].implemented, true, "a failed independent report leaves flags unchanged");
+		await harness.resumePhase("review");
+		assert.ok(harness.activeTools.includes("edit") && harness.activeTools.includes("workflow_update_plan"));
+		assert.ok(!harness.activeTools.includes("bash"));
+		prepared = await callPlan({ action: "prepare" });
+		assert.deepEqual(prepared.details.followupOrigin, { reviewNumber: 1, sessionId: "review-session", entryId: "discussion-entry" });
+		for (const path of [originalMetadataPath, join(files.workingPlan, "goal.md"), files.review, files.metadata, join(worktreePath, "README.md")]) {
+			assert.equal((await emit("tool_call", { toolName: "write", input: { path } })).block, true, `review cannot write ${path}`);
+		}
+		assert.equal((await emit("tool_call", { toolName: "bash", input: { command: "touch README.md" } })).block, true);
+		assert.equal((await emit("tool_call", { toolName: "background_start", input: { kind: "agent", task: "edit code" } })).block, true);
+		const followup = { id: "shared-layout", title: "Share the deployment layout", dependsOn: [originalId], implemented: false,
+			content: "Use a shared layout for the implementation.", testing: "Verify both callers use the shared layout.",
+			followup: { origin: prepared.details.followupOrigin, effect: { type: "amendment", requirements: [{ source: { type: "change", id: originalId }, quotedRequirement: scope.changes[0].content }] } },
+		};
+		const followupPath = join(files.workingPlan, "planned-changes", followup.id, "change_metadata.json");
+		assert.equal(await emit("tool_call", { toolName: "write", input: { path: followupPath } }), undefined);
+		await writePlanFixture(files.workingPlan, { ...scope.currentPlan.document, readingOrder: [originalId, followup.id], changes: [...scope.changes, followup] });
+		await callPlan({ action: "finalize", expectedBaseVersion: 2, description: "Save review followups" });
+		assert.equal((await git(worktreePath, "rev-parse", "HEAD")).stdout, headBeforeFlag, "followup publication creates no Git commit");
+		await harness.resumePhase("review");
+		scope = await readWorkflowScope(files, await storage.readCompletedWorkflowMetadata(identifier));
+		assert.deepEqual(scope.changes.map(({ id, implemented }) => [id, implemented]), [[originalId, true], [followup.id, false]]);
+		assert.ok(!scope.changes.some(({ id }) => id === "rewrite-helper"), "rejected suggestions stay out; no decision store is needed");
+		assert.equal(await exists(join(workflowRoot, "implementation.json")), false);
+		assert.equal(harness.tools.has("workflow_followups"), false);
+		prepared = await callPlan({ action: "prepare" });
+		await writeFile(followupPath, JSON.stringify({ title: followup.title, dependsOn: followup.dependsOn, implemented: true, followup: followup.followup }));
+		await assert.rejects(callPlan({ action: "finalize", expectedBaseVersion: 3, description: "Save review followups" }), /review cannot change implemented/i);
+		await writeFile(followupPath, JSON.stringify({ title: followup.title, dependsOn: followup.dependsOn, implemented: false, followup: followup.followup }));
+		await callPlan({ action: "finalize", expectedBaseVersion: 3, description: "Save review followups" });
+		await harness.resumePhase("implementation");
+		prepared = await callPlan({ action: "prepare" });
+		await writeFile(followupPath, JSON.stringify({ title: followup.title, dependsOn: followup.dependsOn, implemented: true, followup: followup.followup }));
+		await callPlan({ action: "finalize", expectedBaseVersion: 4, description: "Save review followups" });
+		await harness.resumePhase("review");
+		await callPlan({ action: "prepare" });
+		await writeFile(join(files.workingPlan, "planned-changes", followup.id, "change.md"), "Refine the shared layout requirement.");
+		await assert.rejects(callPlan({ action: "finalize", expectedBaseVersion: 5, description: "Save review followups" }), /reset implemented to false/);
+		await writeFile(followupPath, JSON.stringify({ title: followup.title, dependsOn: followup.dependsOn, implemented: false, followup: followup.followup }));
+		await callPlan({ action: "finalize", expectedBaseVersion: 5, description: "Save review followups" });
+		assert.equal((await readWorkflowScope(files, await storage.readCompletedWorkflowMetadata(identifier))).changes[1].implemented, false);
+	},
+});
+
+console.log("Command-flow test passed: local approval, immutable asks, followup drafts, flags, and cleanup without artifact commits.");

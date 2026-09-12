@@ -485,7 +485,8 @@ try {
 		const tools = harness.getActiveTools();
 		await harness.run("workflow-brief");
 		assert.deepEqual(harness.getActiveTools(), tools);
-		assert.ok(!tools.includes("write"));
+		assert.ok(tools.includes("write"), "briefing preserves review draft-editing permissions");
+		assert.ok(!tools.includes("bash"));
 		assert.equal(harness.switches.length, 0);
 		const messageCount = harness.userMessages.length;
 		await harness.run("workflow-brief", other.metadata.identifier);
@@ -688,17 +689,14 @@ try {
 
 	// /workflow-review checks the live delivery, generates, reuses, re-reviews incrementally, and falls back.
 	{
-		const workflow = await writeCompletedWorkflow("verb-review", { metadata: { approvedPlanVersion: undefined } });
-		// Publish both versions before approval, which freezes further finalization.
+		const workflow = await writeCompletedWorkflow("verb-review");
+		// A progress-only version preserves every baseline requirement and does not certify it.
 		await storage.preparePlanDraft(workflow.files);
 		await writePlanFixture(workflow.files.workingPlan, {
-			...validPlan,
-			goal: "Unapproved next plan.",
-			changes: validPlan.changes.map((change) => ({ ...change, content: "Unapproved replacement prose." })),
+			...validPlan, schemaVersion: 2,
+			changes: validPlan.changes.map((change) => ({ ...change, implemented: true })),
 		});
-		await storage.finalizePlanDraft(workflow.files, "Unapproved next plan", 1);
-		workflow.metadata.approvedPlanVersion = 1;
-		await storage.writeCompletedWorkflowMetadata(workflow.metadata);
+		await storage.finalizePlanDraft(workflow.files, "Record implementation assessment", 1, { phase: "implementation" });
 		assert.equal((await storage.readPlanVersion(workflow.files)).number, 2);
 		assert.equal((await readMetadata(workflow.metadata.identifier)).approvedPlanVersion, 1);
 		const harness = createHarness(workflow.repositoryRoot, workflow.worktreePath, workflow.workflowBranch);
@@ -742,7 +740,9 @@ try {
 		// Reuse: the same approved inputs and commits are never re-reviewed.
 		const reviewCtx = harness.currentContext();
 		assert.notEqual(reviewCtx, ctx);
-		assert.equal(harness.getActiveTools().includes("edit"), false, "review sessions stay read-only");
+		assert.equal(harness.getActiveTools().includes("edit"), true, "review sessions can edit followup drafts");
+		assert.equal(harness.getActiveTools().includes("workflow_update_plan"), true);
+		assert.equal(harness.getActiveTools().includes("bash"), false, "review shell writes cannot bypass draft guards");
 		harness.reviewRequests.length = 0;
 		await harness.run("workflow-review", "", reviewCtx);
 		assert.equal(harness.reviewRequests.length, 0, "an up-to-date review reruns no agents");
