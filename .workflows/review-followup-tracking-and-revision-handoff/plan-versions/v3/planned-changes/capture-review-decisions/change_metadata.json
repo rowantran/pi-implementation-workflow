@@ -1,0 +1,4 @@
+{
+  "title": "Edit review followups through the existing plan interface",
+  "dependsOn": ["combine-original-and-followup-scope"]
+}

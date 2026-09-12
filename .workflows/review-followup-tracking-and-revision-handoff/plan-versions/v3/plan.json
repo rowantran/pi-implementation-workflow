@@ -1,0 +1,12 @@
+{
+  "schemaVersion": 1,
+  "readingOrder": [
+    "store-review-followups",
+    "combine-original-and-followup-scope",
+    "capture-review-decisions",
+    "review-original-and-followup-changes",
+    "track-followup-implementation",
+    "continue-implementation-with-followups",
+    "show-followups-in-workflow"
+  ]
+}

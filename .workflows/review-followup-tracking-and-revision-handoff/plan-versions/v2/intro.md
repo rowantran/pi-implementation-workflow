@@ -1,0 +1,9 @@
+The current workflow already permits repeated `/workflow-implement` calls, but each call sends the same original-plan kickoff. It does not pass the latest review or decisions made while discussing it. `/workflow-revise` passes the saved report but requires a new written request. Review sessions cannot currently save followup changes.
+
+The FRED review session `01a08cfb-06a2-7089-aa89-86a925979e67` illustrates the gap. The user agreed to four changes, discussed another suggestion, and explicitly kept a helper unchanged, then copied a summary into revision session `01a08d3d-e3cd-7089-aa89-86ab8b9b6ba4`. Some agreed changes replaced original design choices rather than fixing failed review checks.
+
+Use one plan-editing interface: `workflow_update_plan` prepare, native file edits in `working-plan/`, and finalize. Reviewers add followup directories to that draft and publish new plan versions. The approved original snapshot remains the baseline; later snapshots contain its unchanged original files plus followups. Implementation evidence is recorded separately from requirements within those same snapshots, using the same file-editing interface. There is no dedicated followup tool or separate followup store.
+
+The user has decided to remove `/workflow-revise` entirely. `/workflow-implement` is the sole implementation entry point, including after review. The remaining recommendation awaiting confirmation is to distinguish proposed suggestions from accepted work: explicit user requests become accepted, while suggestions stay proposed until agreed. Saving the plan does not itself approve a suggestion.
+
+This change does not implement the FRED revisions, import old conversations automatically, change workflow-artifact retention, automate deployments, or convert every generated concern into a task. Existing isolated review agents, Git delivery checks, and initial plan approval remain. Publishing a plan version remains separate from making a Git commit.
