@@ -14,7 +14,7 @@ const {
 
 assert.equal(workflowPhaseStatusText("planning"), "/workflow-implement when the plan is ready");
 assert.equal(workflowPhaseStatusText("implementation"), "/workflow-review when ready");
-assert.equal(workflowPhaseStatusText("revision"), "/workflow-review when ready");
+assert.equal(workflowPhaseStatusText("revision"), undefined, "legacy phases are mapped to implementation before reaching the UI");
 const pullRequest = { number: 14283, url: "https://github.com/example/project/pull/14283" };
 assert.equal(
 	workflowPhaseStatusText("implementation", pullRequest),
@@ -26,11 +26,11 @@ assert.equal(
 );
 assert.equal(
 	workflowPhaseStatusText("review"),
-	"/workflow-revise to request changes · /workflow-cleanup to finish",
+	"/workflow-implement after finalizing followups · /workflow-cleanup to finish",
 );
 assert.equal(
 	workflowPhaseStatusText("review", pullRequest),
-	"PR #14283 · /workflow-revise to request changes · /workflow-cleanup to finish",
+	"PR #14283 · /workflow-implement after finalizing followups · /workflow-cleanup to finish",
 );
 assert.equal(workflowPhaseStatusText("cleanup"), undefined);
 assert.equal(workflowPhaseStatusText("complete"), undefined);
@@ -42,12 +42,12 @@ assert.equal(
 
 assert.equal(PHASE_REMINDER_ENTRY, "implementation-workflow-phase-reminder");
 assert.deepEqual(workflowReviewTranscriptCardContent("review"), {
-	title: "Review ready · Read-only session",
-	description: "The generated review is open in the workflow dashboard.",
-	guidance: "Ask me to explain a finding, inspect its cited code, or assess whether a concern is valid.",
+	title: "Review ready · Code-read-only session",
+	description: "The generated review is open in the workflow dashboard. Followup draft editing is allowed; code edits are not.",
+	guidance: "Ask me to explain a finding, inspect its cited code, or edit followups in the plan. Finalize followups before continuing implementation.",
 	actions: [
-		{ label: "Request changes", command: "/workflow-revise" },
-		{ label: "Accept and clean up", command: "/workflow-cleanup" },
+		{ label: "Implement after finalizing followups", command: "/workflow-implement" },
+		{ label: "Clean up", command: "/workflow-cleanup" },
 	],
 });
 for (const phase of ["planning", "implementation", "revision", "cleanup", "complete", undefined]) {
@@ -68,9 +68,13 @@ const cardTheme = {
 	fg: (_color, text) => text,
 };
 const rendered = renderer({ data: { phase: "review" } }, {}, cardTheme).render(100).join("\n");
-assert.match(rendered, /Review ready · Read-only session/);
+assert.match(rendered, /Review ready · Code-read-only session/);
 assert.match(rendered, /Ask me to explain a finding/);
-assert.match(rendered, /\/workflow-revise/);
+assert.match(rendered, /Followup draft editing is allowed/);
+assert.match(rendered, /code\s+edits are not/);
+assert.match(rendered, /Finalize\s+followups before continuing implementation/);
+assert.match(rendered, /\/workflow-implement/);
+assert.doesNotMatch(rendered, /\/workflow-revise|Request changes|Accept and clean up/);
 assert.match(rendered, /\/workflow-cleanup/);
 assert.deepEqual(renderer({ data: { phase: "planning" } }, {}, cardTheme).render(100), []);
 

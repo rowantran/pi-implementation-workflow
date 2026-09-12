@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
+import { lstat, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createJiti } from "jiti/static";
@@ -102,6 +102,7 @@ function createHarness(repositoryRoot, worktreePath, workflowBranch) {
 	const notifications = [];
 	const confirmations = [];
 	const selections = [];
+	const editors = [];
 	const statuses = new Map();
 	const widgets = new Map();
 	const switches = [];
@@ -275,7 +276,10 @@ function createHarness(repositoryRoot, worktreePath, workflowBranch) {
 					confirmations.push({ title, message });
 					return typeof confirmResult === "function" ? confirmResult(title) : confirmResult;
 				},
-				editor: async (_title, prefill) => (prefill === undefined || prefill === "" ? editorValue : prefill),
+				editor: async (title, prefill) => {
+					editors.push({ title, prefill });
+					return prefill === undefined || prefill === "" ? editorValue : prefill;
+				},
 				notify: (message, level) => notifications.push({ message, level }),
 				select: async (title, options) => {
 					selections.push({ title, options });
@@ -321,6 +325,7 @@ function createHarness(repositoryRoot, worktreePath, workflowBranch) {
 		notifications,
 		confirmations,
 		selections,
+		editors,
 		statuses,
 		widgets,
 		switches,
@@ -409,6 +414,31 @@ async function sessionPhase(sessionFile) {
 	return (await sessionEntries(sessionFile)).find(
 		(entry) => entry.type === "custom" && entry.customType === "implementation-workflow-phase",
 	);
+}
+
+function assertImplementationContext(message, files, {
+	currentVersion = 1,
+	remaining = ["complete-verbs"],
+	marked = [],
+	reviewNumber,
+	coverage,
+} = {}) {
+	const lines = message.split("\n");
+	for (const line of [
+		`Original approved baseline: ${join(files.versions, "v1")}`,
+		`Current finalized plan: ${join(files.versions, `v${currentVersion}`)}. Read this exact version, not latest-plan.`,
+		`Not marked implemented: ${remaining.join(", ") || "None"}.`,
+		`Marked implemented: ${marked.join(", ") || "None"}.`,
+	]) assert.ok(lines.includes(line), `missing exact implementation context: ${line}`);
+	assert.ok(message.includes(files.metadata));
+	assert.ok(message.includes(files.clarifications));
+	if (reviewNumber === undefined) {
+		assert.ok(lines.includes("Latest review: none saved. Implementation flags do not establish review or testing coverage."));
+	} else {
+		assert.ok(lines.includes(`Latest review: ${join(files.reviews, `${String(reviewNumber).padStart(4, "0")}.json`)}`));
+		assert.match(message, coverage);
+	}
+	assert.doesNotMatch(message, /Address the review findings\.|Tighten the error handling\.|Adjust the first workflow\./, "handoff does not invent a new user request");
 }
 
 const REVIEW_READY_WIDGET = "implementation-workflow-review-ready-notice";
@@ -509,7 +539,7 @@ try {
 		const harness = createHarness(repositoryRoot, worktreePath, workflowBranch);
 		assert.deepEqual(
 			[...harness.commands.keys()],
-			["workflow-plan", "workflow-implement", "workflow-brief", "workflow-review", "workflow-revise", "workflow-cleanup", "workflow-dashboard"],
+			["workflow-plan", "workflow-implement", "workflow-brief", "workflow-review", "workflow-cleanup", "workflow-dashboard"],
 		);
 		harness.setHeadCommit("base000");
 		const ctx = harness.context(worktreePath, [phaseEntry("planning", { identifier })]);
@@ -527,8 +557,9 @@ try {
 		assert.equal(metadata.worktreePath, worktreePath);
 		assert.equal(metadata.approvedPlanVersion, 1);
 		assert.ok(!harness.executions.some(({ args }) => args.includes("worktree") && args.includes("add")), "implementation does not create another worktree");
-		assert.match(harness.userMessages.at(-1), /Implement the plan/);
-		assert.ok(harness.userMessages.at(-1).includes(join(storage.workflowFiles(identifier).versions, "v1")));
+		assert.match(harness.userMessages.at(-1), /Continue implementation of the current finalized workflow scope/);
+		assertImplementationContext(harness.userMessages.at(-1), storage.workflowFiles(identifier));
+		assert.equal(harness.editors.length, 0, "approval needs no new request editor");
 		assert.deepEqual((await sessionPhase(harness.switches[0])).data, {
 			phase: "implementation",
 			identifier,
@@ -537,8 +568,14 @@ try {
 		// Re-entry: /workflow-implement from any session bound to the workflow starts a fresh implementation session.
 		const implementationCtx = harness.currentContext();
 		assert.notEqual(implementationCtx, ctx);
+		harness.setEditorResult("");
 		await harness.run("workflow-implement");
 		assert.equal(harness.switches.length, 2);
+		assert.notEqual(harness.currentContext(), implementationCtx);
+		assert.deepEqual((await sessionPhase(harness.switches[1])).data, { phase: "implementation", identifier });
+		assertImplementationContext(harness.userMessages.at(-1), storage.workflowFiles(identifier));
+		assert.equal(harness.userMessages.length, 2, "each implementation session receives just its kickoff");
+		assert.equal(harness.editors.length, 0, "re-entry never requests a new task");
 
 		// /workflow-plan refuses to run in a session bound to a workflow.
 		await harness.run("workflow-plan");
@@ -757,15 +794,22 @@ try {
 		assert.equal(harness.switches.length, 1, "an up-to-date review keeps the current review session");
 		assert.match(harness.notifications.at(-1).message, /already covers/i);
 
-		// Revise: a change request starts a revision session that references the saved review.
-		await harness.run("workflow-revise", "", reviewCtx);
+		// Repeat implementation: saved scope and review replace any new change request.
+		harness.setEditorResult("");
+		await harness.run("workflow-implement", "", reviewCtx);
 		assert.equal(harness.switches.length, 2);
 		assert.deepEqual((await sessionPhase(harness.switches[1])).data, {
-			phase: "revision",
+			phase: "implementation",
 			identifier: workflow.metadata.identifier,
 		});
-		assert.match(harness.userMessages.at(-1), /Address the review findings/);
-		assert.match(harness.userMessages.at(-1), new RegExp(workflow.files.review.replaceAll("/", "\\/")));
+		assertImplementationContext(harness.userMessages.at(-1), workflow.files, {
+			currentVersion: 2, remaining: [], marked: ["complete-verbs"], reviewNumber: 1,
+			coverage: /Review coverage: Covers the current committed content and requirement scope\. This does not verify delivery or mean the verdicts passed\./,
+		});
+		assert.match(harness.userMessages.at(-1), /If all items are true, report that no unmarked work remains/);
+		assert.equal(harness.editors.length, 0);
+		assert.equal(harness.confirmations.length, 0);
+		assert.equal(harness.reviewRequests.length, 0, "implementation uses the saved report without rerunning review");
 
 		// Incremental re-review after new commits.
 		harness.setHeadCommit("head222");
@@ -775,14 +819,14 @@ try {
 			baseRefName: "main",
 			headRefName: workflow.workflowBranch,
 		});
-		const revisionCtx = harness.currentContext();
-		assert.notEqual(revisionCtx, reviewCtx);
+		const continuedCtx = harness.currentContext();
+		assert.notEqual(continuedCtx, reviewCtx);
 		assert.equal(harness.getActiveTools().includes("edit"), true);
 		assert.equal(harness.getActiveTools().includes("workflow_questions"), true);
-		await harness.emit("agent_settled", revisionCtx);
-		assert.ok(harness.widgets.has(REVIEW_READY_WIDGET), "a revised head suggests re-review");
+		await harness.emit("agent_settled", continuedCtx);
+		assert.ok(harness.widgets.has(REVIEW_READY_WIDGET), "a new implementation head suggests re-review");
 		harness.reviewRequests.length = 0;
-		await harness.run("workflow-review", "", revisionCtx);
+		await harness.run("workflow-review", "", continuedCtx);
 		const incrementalRoles = harness.reviewRequests.map(({ role }) => role);
 		assert.ok(incrementalRoles.includes("incremental-scope"), "a re-review scopes incrementally");
 		assert.equal((await storage.readWorkflowReview(workflow.files)).headCommit, "head222");
@@ -803,11 +847,13 @@ try {
 		});
 		harness.setAncestorCheck((ancestor, descendant) => ancestor === "base000" || ancestor === descendant);
 		harness.reviewRequests.length = 0;
-		const secondRevisionCtx = harness.context(workflow.worktreePath, [
-			phaseEntry("revision", { identifier: workflow.metadata.identifier }),
-		]);
-		await harness.emit("session_start", secondRevisionCtx);
-		await harness.run("workflow-review", "", secondRevisionCtx);
+		await harness.run("workflow-implement");
+		assertImplementationContext(harness.userMessages.at(-1), workflow.files, {
+			currentVersion: 2, remaining: [], marked: ["complete-verbs"], reviewNumber: 2,
+			coverage: /Review coverage: Does not cover all current inputs: code, requirements, report format, or uncommitted work differs\. Use it as historical context\./,
+		});
+		assert.equal(harness.editors.length, 0);
+		await harness.run("workflow-review");
 		const fallbackRoles = harness.reviewRequests.map(({ role }) => role);
 		assert.ok(!fallbackRoles.includes("incremental-scope"), "an unrelated history falls back to a full review");
 		assert.ok(
@@ -816,21 +862,125 @@ try {
 		);
 		assert.equal((await storage.readWorkflowReview(workflow.files)).headCommit, "head333");
 		assert.equal(await storage.pathExists(join(workflow.files.reviews, "0003.json")), true);
+
+		// Every finalized followup enters scope without separate decisions or acceptance citations.
+		const beforeFollowups = await storage.readPlanVersion(workflow.files);
+		const baseline = (await storage.readPlanVersion(workflow.files, 1)).document;
+		const ask = (await readMetadata(workflow.metadata.identifier)).ask;
+		const clarifications = await readFile(workflow.files.clarifications, "utf8");
+		const origin = { reviewNumber: 3, sessionId: "review-session", entryId: "saved-finding" };
+		const followups = ["preserve-manual-edits", "preserve-stack-tip"].map((id) => ({
+			id, title: `Cover ${id}`, dependsOn: ["complete-verbs"], implemented: false,
+			content: `Cover ${id} when continuing implementation.`,
+			testing: `Verify ${id} survives repeated implementation.`,
+			followup: { origin, effect: { type: "addition" } },
+		}));
+		await storage.preparePlanDraft(workflow.files);
+		await writePlanFixture(workflow.files.workingPlan, {
+			...beforeFollowups.document,
+			readingOrder: [...beforeFollowups.document.readingOrder, ...followups.map(({ id }) => id)],
+			changes: [...beforeFollowups.document.changes, ...followups],
+		});
+		await storage.finalizePlanDraft(workflow.files, "Preserve existing implementation work", 2, {
+			phase: "review", reviewOrigin: { reviewNumber: 3, sessionId: origin.sessionId, entryIds: [origin.entryId] },
+		});
+		const finalized = await storage.readPlanVersion(workflow.files);
+		assert.equal(finalized.number, 3);
+		assert.deepEqual(finalized.document.changes.slice(1), followups);
+		assert.match(harness.statuses.get("implementation-workflow-phase"), /\/workflow-implement/);
+		assert.doesNotMatch(harness.statuses.get("implementation-workflow-phase"), /workflow-revise/);
+		harness.reviewRequests.length = 0;
+		const messagesBeforeFollowups = harness.userMessages.length;
+		const switchesBeforeFollowups = harness.switches.length;
+		await harness.run("workflow-implement");
+		assert.equal(harness.switches.length, switchesBeforeFollowups + 1);
+		assert.deepEqual((await sessionPhase(harness.switches.at(-1))).data, {
+			phase: "implementation", identifier: workflow.metadata.identifier,
+		});
+		const followupContext = {
+			currentVersion: 3, remaining: followups.map(({ id }) => id), marked: ["complete-verbs"], reviewNumber: 3,
+			coverage: /Review coverage: Does not cover all current inputs: code, requirements, report format, or uncommitted work differs\. Use it as historical context\./,
+		};
+		assertImplementationContext(harness.userMessages.at(-1), workflow.files, followupContext);
+		assert.match(harness.userMessages.at(-1), /Every finalized followup is included/);
+		assert.match(harness.userMessages.at(-1), /There are no per-followup decision states/);
+		const restored = await harness.emit("before_agent_start", harness.currentContext(), { systemPrompt: "Base" });
+		assertImplementationContext(restored.systemPrompt, workflow.files, followupContext);
+		assert.equal(harness.editors.length, 0);
+		assert.equal(harness.confirmations.length, 0, "advancing accepts every saved followup without per-item approval");
+		assert.equal(harness.selections.length, 0);
+		assert.equal(harness.userMessages.length, messagesBeforeFollowups + 1, "only a kickoff is sent, not a new request or acceptance citation");
+		assert.equal(harness.reviewRequests.length, 0);
+		assert.deepEqual((await storage.readPlanVersion(workflow.files)).document, finalized.document, "handoff does not reset or mark flags");
+		assert.deepEqual((await storage.readPlanVersion(workflow.files, 1)).document, baseline);
+		assert.equal((await readMetadata(workflow.metadata.identifier)).approvedPlanVersion, 1);
+		assert.equal((await readMetadata(workflow.metadata.identifier)).ask, ask);
+		assert.equal(await readFile(workflow.files.clarifications, "utf8"), clarifications);
 	}
 
-	// /workflow-revise works straight after implementation, without any review.
+	// Repeat implementation works without any saved review or a new request.
 	{
-		const workflow = await writeCompletedWorkflow("revise-before-review");
+		const workflow = await writeCompletedWorkflow("implement-before-review");
 		const harness = createHarness(workflow.repositoryRoot, workflow.worktreePath, workflow.workflowBranch);
 		const ctx = harness.context(workflow.worktreePath, [
 			phaseEntry("implementation", { identifier: workflow.metadata.identifier }),
 		]);
 		await harness.emit("session_start", ctx);
 		harness.setEditorResult("Tighten the error handling.");
-		await harness.run("workflow-revise", "", ctx);
+		const ask = (await readMetadata(workflow.metadata.identifier)).ask;
+		await harness.run("workflow-implement", "", ctx);
 		assert.equal(harness.switches.length, 1);
-		assert.match(harness.userMessages.at(-1), /Tighten the error handling/);
-		assert.doesNotMatch(harness.userMessages.at(-1), /review/i, "without a saved review the prompt omits it");
+		assert.deepEqual((await sessionPhase(harness.switches[0])).data, {
+			phase: "implementation", identifier: workflow.metadata.identifier,
+		});
+		assertImplementationContext(harness.userMessages.at(-1), workflow.files);
+		assert.equal(harness.editors.length, 0, "the editor's content is never requested");
+		assert.equal(harness.userMessages.length, 1);
+		assert.equal((await readMetadata(workflow.metadata.identifier)).ask, ask);
+		assert.equal(await storage.pathExists(workflow.files.review), false, "handoff does not fabricate a review");
+	}
+
+	// Legacy serialized revision sessions resume as implementation, without rewriting history.
+	{
+		const workflow = await writeCompletedWorkflow("legacy-revision-resume");
+		const configPath = join(process.env.PI_CODING_AGENT_DIR, "implementation-workflow", "config.toml");
+		await mkdir(join(process.env.PI_CODING_AGENT_DIR, "implementation-workflow"), { recursive: true });
+		await writeFile(configPath, '[models.implementing]\nprovider = "test-provider"\nmodel = "implementation-model"\nthinking_level = "high"\n');
+		try {
+			const harness = createHarness(workflow.repositoryRoot, workflow.worktreePath, workflow.workflowBranch);
+			const savedPhase = phaseEntry("revision", { identifier: workflow.metadata.identifier });
+			const ctx = harness.context(workflow.worktreePath, [savedPhase]);
+			const model = { provider: "test-provider", id: "implementation-model" };
+			const modelLookups = [];
+			ctx.modelRegistry.find = (provider, id) => {
+				modelLookups.push({ provider, id });
+				return provider === model.provider && id === model.id ? model : undefined;
+			};
+			await harness.emit("session_start", ctx, { reason: "resume" });
+			assert.deepEqual(harness.sessionNames, [`Implement: ${workflow.metadata.identifier} · ${workflow.metadata.description}`]);
+			assert.deepEqual(modelLookups, [model], "legacy sessions select models.implementing");
+			assert.deepEqual(harness.modelChanges, [model]);
+			assert.deepEqual(harness.thinkingChanges, ["high"]);
+			assert.equal(harness.currentContext(), ctx);
+			assert.equal(harness.switches.length, 0, "resume needs no replacement session");
+			assert.equal(harness.userMessages.length, 0, "resume does not invent a kickoff or change request");
+			assert.equal(harness.editors.length, 0);
+			for (const tool of ["read", "bash", "edit", "write", "workflow_questions", "workflow_update_plan"]) {
+				assert.ok(harness.getActiveTools().includes(tool), `legacy resume restores implementation tool ${tool}`);
+			}
+			assert.equal(savedPhase.data.phase, "revision", "the historical entry remains untouched");
+			assert.ok(!harness.entries.some(({ customType }) => customType === "implementation-workflow-phase"));
+			const restored = await harness.emit("before_agent_start", ctx, { systemPrompt: "Base" });
+			assertImplementationContext(restored.systemPrompt, workflow.files);
+			assert.doesNotMatch(restored.systemPrompt, /workflow-revise|revision session/);
+			await harness.emit("agent_settled", ctx);
+			assert.ok(harness.widgets.has(REVIEW_READY_WIDGET));
+			const reminder = harness.entries.find(({ customType }) => customType === "implementation-workflow-phase-reminder");
+			assert.equal(reminder?.data.phase, "implementation", "new reminders use the normalized phase");
+			assert.match(harness.statuses.get("implementation-workflow-phase"), /\/workflow-review/);
+		} finally {
+			await rm(configPath);
+		}
 	}
 
 	// /workflow-cleanup removes the worktree directly when the session is outside it.
@@ -974,25 +1124,40 @@ try {
 		const ctx = harness.context(repositoryRoot, []);
 		await harness.emit("session_start", ctx);
 
-		// An ambiguous verb offers a picker sorted by recency.
+		// An ambiguous verb offers a picker sorted by recency, then starts without an editor.
 		harness.setEditorResult("");
-		await harness.run("workflow-revise", "", ctx);
+		await harness.run("workflow-implement", "", ctx);
 		assert.equal(harness.selections.length, 1);
 		assert.deepEqual(harness.selections[0].options, [
 			"shared-second — Untangle shared-second",
 			"shared-first — Untangle shared-first",
 		]);
-		assert.match(harness.notifications.at(-1).message, /no change request/i);
-
-		// An explicit identifier argument skips the picker.
-		harness.setEditorResult("Adjust the first workflow.");
-		await harness.run("workflow-revise", "shared-first", ctx);
-		assert.equal(harness.selections.length, 1, "an explicit argument skips the picker");
-		assert.equal(harness.switches.length, 1);
+		assert.equal(harness.switches.length, 1, "an empty editor value cannot cancel implementation");
 		assert.deepEqual((await sessionPhase(harness.switches[0])).data, {
-			phase: "revision",
+			phase: "implementation", identifier: "shared-second",
+		});
+		assertImplementationContext(harness.userMessages.at(-1), second.files);
+		assert.equal(harness.editors.length, 0);
+		const selectedCtx = harness.currentContext();
+		assert.notEqual(selectedCtx, ctx);
+
+		// Return to the repository root: a sibling worktree is not a valid launch root for the first workflow.
+		const launchCtx = harness.context(repositoryRoot, []);
+		await harness.emit("session_start", launchCtx);
+		assert.notEqual(harness.currentContext(), selectedCtx);
+
+		// An explicit identifier argument skips the picker from the new current context.
+		harness.setEditorResult("Adjust the first workflow.");
+		await harness.run("workflow-implement", "shared-first", launchCtx);
+		assert.equal(harness.selections.length, 1, "an explicit argument skips the picker");
+		assert.equal(harness.switches.length, 2);
+		assert.deepEqual((await sessionPhase(harness.switches[1])).data, {
+			phase: "implementation",
 			identifier: "shared-first",
 		});
+		assertImplementationContext(harness.userMessages.at(-1), first.files);
+		assert.equal(harness.editors.length, 0);
+		assert.notEqual(harness.currentContext(), launchCtx);
 
 		// Argument completions list known workflows.
 		const completions = await harness.commands.get("workflow-review").getArgumentCompletions("shared-");
@@ -1008,4 +1173,4 @@ try {
 	await rm(temporaryRoot, { recursive: true, force: true });
 }
 
-console.log("Verbs test passed: briefing preserves sessions; plan, implement, review, revise, and cleanup use live workflow state.");
+console.log("Verbs test passed: briefing preserves sessions; repeated implementation, legacy revision resume, review, and cleanup use live workflow state.");

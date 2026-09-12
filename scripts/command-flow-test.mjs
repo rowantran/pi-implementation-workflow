@@ -39,7 +39,7 @@ async function unusedPort() {
 	return address.port;
 }
 
-async function scenario({ args = "", editorResult, planningModel, planningThinkingLevel, expectedIdentifier = "command-workflow", beforeStart, duringApproval, afterFirstStart } = {}) {
+async function scenario({ args = "", editorResult, planningModel, planningThinkingLevel, expectedIdentifier = "command-workflow", beforeStart, duringApproval, afterFirstStart, reviewAgentRunner } = {}) {
 	const root = await realpath(await mkdtemp(join(tmpdir(), "pi-workflow-command-")));
 	const agentDir = join(root, "agent");
 	const repositoryRoot = join(root, "repository");
@@ -91,6 +91,8 @@ async function scenario({ args = "", editorResult, planningModel, planningThinki
 	let current;
 	let generation = 0;
 	let kickoffAssertion;
+	let pullRequests = [];
+	let duringGitHubLookup;
 	function install(cwd, branch = [], sessionId = "command-session") {
 		const ownGeneration = ++generation;
 		const assertCurrent = () => assert.equal(ownGeneration, generation, "retired extension API must not be used after replacement");
@@ -108,7 +110,19 @@ async function scenario({ args = "", editorResult, planningModel, planningThinki
 				executions.push({ command, args });
 				const gitCommand = args[2] === "-c" ? args[4] : args[2];
 				if (command === "git") assert.ok(gitCommand !== "add" && gitCommand !== "commit", "workflow commands never stage or commit local records");
-				if (command === "gh") return { code: 0, stdout: "[]", stderr: "" };
+				if (command === "gh") {
+					if (args[0] === "pr" && args[1] === "list") {
+						const mutate = duringGitHubLookup;
+						duringGitHubLookup = undefined;
+						await mutate?.();
+						return { code: 0, stdout: JSON.stringify(pullRequests), stderr: "" };
+					}
+					if (args[0] === "api") {
+						const pr = pullRequests.find(({ number }) => number === Number(args[1].split("/").at(-1)));
+						return pr ? { code: 0, stdout: `${pr.headRefOid}\n`, stderr: "" } : { code: 1, stdout: "", stderr: "Unknown fixture pull request" };
+					}
+					throw new Error(`Unexpected GitHub call: ${args.join(" ")}`);
+				}
 				assert.equal(command, "git");
 				assert.equal(args[0], "-C");
 				return git(args[1], ...args.slice(2));
@@ -171,7 +185,7 @@ async function scenario({ args = "", editorResult, planningModel, planningThinki
 				return { cancelled: false };
 			},
 		};
-		implementationWorkflow(pi);
+		implementationWorkflow(pi, { reviewAgentRunner });
 		current = { pi, ctx, commands, events, tools };
 	}
 	async function emit(name, event = {}) {
@@ -221,6 +235,8 @@ async function scenario({ args = "", editorResult, planningModel, planningThinki
 				run, emit, git, switches, slugRequests, executions, baseCommit, repositoryRoot, worktreePath,
 				identifier, workflowRoot, agentDir, editorCalls, notifications, phaseEntries, sentMessages,
 				setEditorResult(value) { editorValue = value; },
+				setPullRequests(value) { pullRequests = value; },
+				setDuringGitHubLookup(action) { duringGitHubLookup = action; },
 			});
 		}
 		return {
@@ -475,7 +491,7 @@ await scenario({
 		assert.equal((await git(worktreePath, "status", "--porcelain")).stdout.trim(), "");
 		const indexBefore = (await git(worktreePath, "ls-files", "--stage", "-z")).stdout;
 		for (const phase of ["implementation", "revision"]) {
-			if (phase === "revision") await run("workflow-revise");
+			if (phase === "revision") await test.resumePhase("revision");
 			const question = { id: phase, label: "Storage", question: "Where should records stay?", options: [{ label: "Local" }, { label: "Elsewhere" }], allowOther: true };
 			const answer = { id: phase, answer: "Local", index: 1, custom: false };
 			const result = await test.tools.get("workflow_questions").execute("clarify", { questions: [question] }, undefined, undefined, {
@@ -589,7 +605,191 @@ await scenario({
 		await writeFile(followupPath, JSON.stringify({ title: followup.title, dependsOn: followup.dependsOn, implemented: false, followup: followup.followup }));
 		await callPlan({ action: "finalize", expectedBaseVersion: 5, description: "Save review followups" });
 		assert.equal((await readWorkflowScope(files, await storage.readCompletedWorkflowMetadata(identifier))).changes[1].implemented, false);
+
+		// A real review -> implement handoff carries saved followups, not the old conversation.
+		assert.equal((await git(worktreePath, "switch", "-c", "workflow/stack-tip")).code, 0);
+		await writeFile(join(worktreePath, "README.md"), "Manual staged integration edits\n");
+		await git(worktreePath, "add", "README.md");
+		await writeFile(join(worktreePath, "manual.txt"), "Manual untracked work\n");
+		const stagedBeforeHandoff = (await git(worktreePath, "diff", "--cached", "--", "README.md")).stdout;
+		const switchesBeforeHandoff = harness.switches.length;
+		const headBeforeHandoff = (await git(worktreePath, "rev-parse", "HEAD")).stdout;
+		await git(worktreePath, "config", "commit.gpgsign", "true");
+		await git(worktreePath, "config", "gpg.program", "/missing-followup-signing-program");
+		const editorCount = harness.editorCalls.length;
+		await run("workflow-implement");
+		assert.equal(harness.switches.length, switchesBeforeHandoff + 1, "local handoff does not require Git signing");
+		assert.equal((await storage.readPlanVersion(files)).number, 6, "handoff retains saved local history");
+		assert.equal((await git(worktreePath, "rev-parse", "HEAD")).stdout, headBeforeHandoff, "handoff creates no artifact commit");
+		assert.equal((await git(worktreePath, "ls-files", ".workflows")).stdout, "");
+		assert.equal(harness.ctx.cwd, worktreePath);
+		assert.equal(harness.editorCalls.length, editorCount, "continuation opens no request editor");
+		assert.equal((await git(worktreePath, "branch", "--show-current")).stdout.trim(), "workflow/stack-tip");
+		assert.equal((await git(worktreePath, "diff", "--cached", "--", "README.md")).stdout, stagedBeforeHandoff);
+		assert.equal(await readFile(join(worktreePath, "manual.txt"), "utf8"), "Manual untracked work\n");
+		let kickoff = harness.sentMessages.at(-1);
+		for (const text of [join(files.versions, "v1"), join(files.versions, "v6"), files.clarifications, join(files.reviews, "0001.json"), `Not marked implemented: ${followup.id}`, `Marked implemented: ${originalId}`, "Does not cover all current inputs"]) assert.ok(kickoff.includes(text), `missing kickoff context: ${text}`);
+		await callPlan({ action: "prepare" });
+		await writeFile(followupPath, JSON.stringify({ title: followup.title, dependsOn: followup.dependsOn, implemented: true, followup: followup.followup }));
+		await callPlan({ action: "finalize", expectedBaseVersion: 6, description: "Save review followups" });
+		await run("workflow-implement");
+		kickoff = harness.sentMessages.at(-1);
+		assert.match(kickoff, /Not marked implemented: None/);
+		const allMarkedHead = (await git(worktreePath, "rev-parse", "HEAD")).stdout;
+		await run("workflow-implement");
+		assert.equal((await git(worktreePath, "rev-parse", "HEAD")).stdout, allMarkedHead, "unchanged all-marked handoff makes no artificial commit");
+		assert.equal((await storage.readPlanVersion(files)).number, 7);
+		await harness.resumePhase("revision");
+		assert.ok(harness.activeTools.includes("workflow_update_plan"), "legacy revision sessions resume with implementation tools");
+		const resumedPrompt = await emit("before_agent_start", { systemPrompt: "Base" });
+		assert.match(resumedPrompt.systemPrompt, /Not marked implemented: None/);
+		assert.doesNotMatch(resumedPrompt.systemPrompt, /workflow-revise/);
+		await writeFile(files.review, "unreadable latest review");
+		await run("workflow-implement");
+		assert.ok(harness.notifications.some(({ message }) => /Latest review is unreadable/.test(message)));
+		assert.match((await emit("before_agent_start", { systemPrompt: "Base" })).systemPrompt, /Current finalized plan:/, "an optional unreadable report must not remove implementation context");
+		const savedMetadata = await readFile(files.metadata, "utf8");
+		for (const missing of [false, true]) {
+			if (missing) await rm(files.metadata); else await writeFile(files.metadata, "corrupt metadata");
+			await harness.resumePhase("review");
+			assert.ok(!harness.activeTools.some((name) => ["edit", "write", "bash", "workflow_update_plan"].includes(name)), "failed review restoration exposes only read tools");
+			for (const toolName of ["edit", "write", "bash", "background_start", "workflow_update_plan"]) {
+				assert.equal((await emit("tool_call", { toolName, input: { path: join(worktreePath, "README.md") } })).block, true, `${toolName} fails closed when workflow restoration fails`);
+			}
+			await writeFile(files.metadata, savedMetadata);
+			await harness.resumePhase("review");
+		}
 	},
 });
 
-console.log("Command-flow test passed: local approval, immutable asks, followup drafts, flags, and cleanup without artifact commits.");
+// Real persistence and Git, with only Pi/model/GitHub responses controlled.
+let duringReview;
+let failSynthesis = false;
+const reviewRequests = [];
+const yes = { status: "yes", explanation: "Covered by the controlled result." };
+async function controlledReviewRunner(request) {
+	reviewRequests.push(request);
+	const mutate = duringReview;
+	duringReview = undefined;
+	await mutate?.();
+	if (request.role === "planned-change") {
+		const identity = /Planned change identity: ([a-z0-9-]+): (.+)/.exec(request.prompt);
+		assert.ok(identity);
+		return { id: identity[1], title: identity[2], walkthrough: "Inspect the delivery in README.md.", necessary: yes, sufficient: { status: "no", explanation: "A correction is still needed, regardless of the flag." }, concerns: [] };
+	}
+	if (request.role === "testing-criteria") return { summary: "All groups are represented.", satisfied: yes, concerns: [], criteria: [...request.prompt.matchAll(/Testing source ID: ([^\n]+)/g)].map((match) => ({ sourceId: match[1], criterion: "Exercise this group's observable behavior.", status: "yes", explanation: "Controlled evidence for orchestration.", evidence: [{ location: "README.md:1", description: "The real temporary repository's delivery source." }] })) };
+	if (request.role === "holistic-review") return { summary: "Review all scoped requirements.", necessary: yes, sufficient: yes, concerns: [] };
+	if (request.role === "incremental-scope") return { summary: "All source is affected.", relevantPlannedChanges: [{ id: "store-workflow-records", explanation: "The source changed." }] };
+	if (failSynthesis) throw new Error("Synthesis fixture failed after focused outputs were saved");
+	return { overallResult: { summary: "Review complete, corrections remain.", necessary: yes, sufficient: yes }, overallConcerns: [] };
+}
+await scenario({
+	editorResult: "Review the complete saved scope without mixed inputs", reviewAgentRunner: controlledReviewRunner,
+	afterFirstStart: async (harness) => {
+		const { worktreePath, identifier, run, git } = harness;
+		const files = storage.workflowFiles(identifier, worktreePath);
+		const callPlan = (params) => harness.tools.get("workflow_update_plan").execute("update", params, undefined, undefined, harness.ctx);
+		await writePlanFixture(files.workingPlan, approvedPlan);
+		await callPlan({ action: "finalize", expectedBaseVersion: 0, description: "Review complete saved scope" });
+		await run("workflow-implement");
+		await writeFile(join(worktreePath, "README.md"), "Initial implementation\n");
+		await git(worktreePath, "commit", "-am", "Implement the initial request");
+		async function publishRemoteHead() {
+			harness.setPullRequests([{ number: 1, url: "https://example.test/pull/1", baseRefName: "main", headRefName: `workflow/${identifier}`, headRefOid: (await git(worktreePath, "rev-parse", "HEAD")).stdout.trim() }]);
+		}
+		await publishRemoteHead();
+		duringReview = async () => {
+			await writeFile(join(worktreePath, "README.md"), "Changed during review\n");
+			await git(worktreePath, "commit", "-am", "Concurrent implementation change");
+		};
+		await run("workflow-review");
+		assert.match(harness.notifications.at(-1).message, /changed during review/);
+		assert.equal(await storage.readWorkflowReview(files), undefined, "a code change during agents must not publish mixed-input evidence");
+		await publishRemoteHead();
+		await run("workflow-review");
+		let report = await storage.readWorkflowReview(files);
+		assert.equal(report.version, 4);
+		assert.equal((await storage.listSavedReviews(files)).length, 1);
+		await run("workflow-implement");
+		await callPlan({ action: "prepare" });
+		const metadataPath = join(files.workingPlan, "planned-changes", approvedPlan.readingOrder[0], "change_metadata.json");
+		const original = JSON.parse(await readFile(metadataPath, "utf8"));
+		await writeFile(metadataPath, JSON.stringify({ ...original, implemented: true }));
+		await callPlan({ action: "finalize", expectedBaseVersion: 1, description: "Review complete saved scope" });
+		reviewRequests.length = 0;
+		await run("workflow-review");
+		assert.equal(reviewRequests.length, 0, "a flag-only snapshot reuses the current report at the same content HEAD");
+		assert.equal((await storage.listSavedReviews(files)).length, 1);
+		const metadata = await storage.readCompletedWorkflowMetadata(identifier);
+		async function addFollowup(id) {
+			await storage.preparePlanDraft(files);
+			const current = await storage.readPlanVersion(files);
+			const origin = { reviewNumber: (await storage.listSavedReviews(files)).length, sessionId: "review-session", entryId: "followup-entry" };
+			const change = { id, title: `Correct ${id}`, dependsOn: [approvedPlan.readingOrder[0]], implemented: false, content: `Correct the ${id} behavior.`, testing: `Execute the ${id} regression test.`, followup: { origin, effect: { type: "addition" } } };
+			await writePlanFixture(files.workingPlan, { ...current.document, readingOrder: [...current.document.readingOrder, id], changes: [...current.document.changes, change] });
+			await storage.finalizePlanDraft(files, "Review complete saved scope", current.number, { phase: "review", reviewOrigin: { reviewNumber: origin.reviewNumber, sessionId: origin.sessionId, entryIds: [origin.entryId] } });
+		}
+		await addFollowup("failure-case");
+		reviewRequests.length = 0;
+		duringReview = () => addFollowup("concurrent-requirement");
+		await run("workflow-review");
+		assert.match(harness.notifications.at(-1).message, /changed during review/);
+		assert.equal((await storage.listSavedReviews(files)).length, 1, "changed requirements leave old reports immutable and publish no mixed scope");
+		reviewRequests.length = 0;
+		duringReview = async () => {
+			await git(worktreePath, "config", "commit.gpgsign", "true");
+			await git(worktreePath, "config", "gpg.program", "/missing-review-signing-program");
+		};
+		const headBeforeLocalReview = (await git(worktreePath, "rev-parse", "HEAD")).stdout;
+		await run("workflow-review");
+		assert.match(harness.notifications.at(-1).message, /review is ready/);
+		assert.equal((await git(worktreePath, "rev-parse", "HEAD")).stdout, headBeforeLocalReview, "review saves locally without Git signing or commits");
+		assert.equal((await git(worktreePath, "ls-files", ".workflows")).stdout, "");
+		report = await storage.readWorkflowReview(files);
+		assert.equal(report.plannedChanges.length, 3);
+		assert.equal(reviewRequests.filter(({ role }) => role === "planned-change").length, 3, "same-HEAD expanded scope requires a full review including marked originals");
+		assert.ok(!reviewRequests.some(({ role }) => role === "incremental-scope"));
+		assert.equal(report.plannedChanges[0].review.sufficient.status, "no");
+		assert.equal((await readWorkflowScope(files, metadata)).changes[0].implemented, true, "a current-format failed review does not reset a marked original");
+		await git(worktreePath, "config", "commit.gpgsign", "false");
+		reviewRequests.length = 0;
+		await run("workflow-review");
+		assert.equal(reviewRequests.length, 0, "the locally saved review is reused without duplicate agents");
+		assert.equal((await storage.listSavedReviews(files)).length, 2);
+
+		// Reuse must recheck scope and draft state after slow delivery/network checks.
+		harness.setDuringGitHubLookup(() => addFollowup("late-network-followup"));
+		reviewRequests.length = 0;
+		await run("workflow-review");
+		assert.match(harness.notifications.at(-1).message, /changed during review/);
+		assert.equal(reviewRequests.length, 0);
+		assert.equal((await storage.listSavedReviews(files)).length, 2, "network-time scope publication cannot return the old report as current");
+		await run("workflow-review");
+		assert.equal((await storage.listSavedReviews(files)).length, 3);
+		harness.setDuringGitHubLookup(async () => {
+			await storage.preparePlanDraft(files);
+			await writeFile(join(files.workingPlan, "planned-changes", "late-network-followup", "change.md"), "Unfinished network-time edit.");
+		});
+		await run("workflow-review");
+		assert.match(harness.notifications.at(-1).message, /working plan has unsaved changes/);
+		assert.equal((await storage.listSavedReviews(files)).length, 3);
+		await rm(files.workingPlan, { recursive: true });
+
+		// Failed synthesis may leave focused results. Dirty-input outputs cannot survive a retry.
+		await addFollowup("failed-agent-case");
+		const committedReadme = await readFile(join(worktreePath, "README.md"), "utf8");
+		duringReview = async () => { await writeFile(join(worktreePath, "README.md"), "Transient dirty code inspected by an agent\n"); };
+		failSynthesis = true;
+		await run("workflow-review");
+		assert.match(harness.notifications.at(-1).message, /Cached evidence was discarded/);
+		assert.equal((await storage.listSavedReviews(files)).length, 3);
+		await writeFile(join(worktreePath, "README.md"), committedReadme);
+		failSynthesis = false;
+		reviewRequests.length = 0;
+		await run("workflow-review");
+		assert.equal(reviewRequests.filter(({ role }) => role === "planned-change").length, 5, "retry at the same HEAD reruns every focused result after unsafe failed inputs");
+		assert.equal((await storage.listSavedReviews(files)).length, 4);
+	},
+});
+
+console.log("Command-flow test passed: Git-backed handoff, local followup drafts and flags, complete-scope review, source-race rejection, and safe retries.");
