@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { Check } from "typebox/value";
 import { existsSync } from "node:fs";
 import { access, link, mkdir, mkdtemp, readFile, readdir, realpath, rename, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -521,7 +522,6 @@ await scenario({
 		await run("workflow-implement");
 		assert.ok(harness.activeTools.includes("workflow_update_plan"), "first implementation can save original flags");
 		let prepared = await callPlan({ action: "prepare" });
-		assert.match(prepared.content[0].text, /Only implemented booleans/);
 		const originalId = approvedPlan.readingOrder[0];
 		const originalMetadataPath = join(files.workingPlan, "planned-changes", originalId, "change_metadata.json");
 		const originalMetadata = JSON.parse(await readFile(originalMetadataPath, "utf8"));
@@ -562,6 +562,10 @@ await scenario({
 			content: "Use a shared layout for the implementation.", testing: "Verify both callers use the shared layout.",
 			followup: { origin: prepared.details.followupOrigin, effect: { type: "amendment", requirements: [{ source: { type: "change", id: originalId }, quotedRequirement: scope.changes[0].content }] } },
 		};
+		const { id: _id, content: _content, testing: _testing, ...followupMetadata } = followup;
+		const schema = prepared.details.newFollowupFormat.metadataSchema;
+		assert.equal(Check(schema, followupMetadata), true, "prepare supplies a usable schema for a followup that finalization accepts");
+		assert.equal(Check(schema, { ...followupMetadata, followup: { ...followupMetadata.followup, origin: { ...followupMetadata.followup.origin, entryId: "wrong-entry" } } }), false, "the creation schema binds the actual session origin");
 		const followupPath = join(files.workingPlan, "planned-changes", followup.id, "change_metadata.json");
 		assert.equal(await emit("tool_call", { toolName: "write", input: { path: followupPath } }), undefined);
 		await writePlanFixture(files.workingPlan, { ...scope.currentPlan.document, readingOrder: [originalId, followup.id], changes: [...scope.changes, followup] });

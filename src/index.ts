@@ -39,7 +39,7 @@ import {
 	type ExecFn,
 } from "./git.ts";
 import { planningCompletionError } from "./planning.ts";
-import { readWorkflowScope, selectImplementationWork, type WorkflowScope } from "./workflow-scope.ts";
+import { readWorkflowScope } from "./workflow-scope.ts";
 import type { PlanPublicationPolicy } from "./plan-storage.ts";
 import {
 	formatPullRequestStack,
@@ -193,9 +193,9 @@ export default function implementationWorkflow(
 				const draft = await preparePlanDraft(files);
 				return {
 					action: "prepare", draftPath: draft.path, baseVersion: draft.baseVersion,
-					allowedEdits: phase === "planning" ? "Plan JSON and Markdown; all implemented fields must be false."
-						: phase === "implementation" ? "Only implemented booleans in existing change_metadata.json files. Requirements and readingOrder are read-only."
-						: "Followup change_metadata.json, change.md, testing.md, and the followup portion of readingOrder. New or revised followups must be false; preserve every other flag. Original files are read-only.",
+					allowedEdits: phase === "planning" ? "Plan JSON and Markdown."
+						: phase === "implementation" ? "Only implemented booleans in existing change_metadata.json files."
+						: "Followup files and their readingOrder only; retain published IDs and origins. New or revised followups: implemented=false; preserve other flags.",
 					...(metadata.approvedPlanVersion === undefined ? {} : { baselinePath: planPathForWorkflow(files, metadata) }),
 					...reviewContext,
 				};
@@ -643,12 +643,14 @@ export default function implementationWorkflow(
 		workflow: CompletedWorkflowMetadata,
 	): Promise<void> {
 		const files = workflowFiles(workflow.identifier);
+		let currentPlanPath: string;
 		// Handoff selects validated local scope under the publication lock.
 		try {
-			await withPlanLock(files, async () => {
+			currentPlanPath = await withPlanLock(files, async () => {
 				await requireFinalizedDraft(files);
-				await readWorkflowScope(files, workflow);
+				const scope = await readWorkflowScope(files, workflow);
 				await requireFinalizedDraft(files);
+				return scope.currentPlan.path;
 			});
 		} catch (error) {
 			ctx.ui.notify(`Cannot start implementation before saving its plan: ${errorMessage(error)}`, "error");
@@ -663,7 +665,7 @@ export default function implementationWorkflow(
 				await replacementCtx.sendUserMessage(
 					implementationUserMessage({
 						metadataPath: files.metadata,
-						planPath: planPathForWorkflow(files, workflow),
+						planPath: currentPlanPath,
 						clarificationsPath: files.clarifications,
 						baseBranch: workflow.baseBranch,
 					}),
@@ -1200,13 +1202,12 @@ export default function implementationWorkflow(
 			instructions = implementationSystemPrompt({
 				identifier,
 				metadataPath: activeFiles.metadata,
-				planPath: planPathForWorkflow(activeFiles, metadata),
+				planPath: currentScope?.currentPlan.path ?? planPathForWorkflow(activeFiles, metadata),
 				clarificationsPath: activeFiles.clarifications,
 				questionTool: WORKFLOW_QUESTION_TOOL,
 				worktreePath: metadata.worktreePath,
 				workflowBranch: metadata.workflowBranch,
 				baseBranch: metadata.baseBranch,
-				scopeContext: currentScope ? scopePromptContext(currentScope, activeFiles) : undefined,
 			});
 		}
 		if (phase === "revision" && metadata) {
@@ -1230,11 +1231,10 @@ export default function implementationWorkflow(
 					? formatPullRequestStack(metadata.pullRequests)
 					: undefined,
 				metadataPath: activeFiles.metadata,
-				planPath: planPathForWorkflow(activeFiles, metadata),
+				planPath: currentScope?.currentPlan.path ?? planPathForWorkflow(activeFiles, metadata),
 				clarificationsPath: activeFiles.clarifications,
 				reviewPath: activeFiles.review,
 				reviewMarkdownPath: activeFiles.reviewMarkdown,
-				scopeContext: currentScope ? scopePromptContext(currentScope, activeFiles) : undefined,
 			});
 		}
 		if (!instructions) return;
@@ -1390,19 +1390,6 @@ function resolveExistingPath(path: string): string {
 
 async function requireFinalizedDraft(files: WorkflowFiles): Promise<void> {
 	if (await hasUnsavedPlanDraft(files)) throw new Error(`The working plan has unsaved changes. Finalize or discard/reconcile ${files.workingPlan} before handoff; saved followups and flag edits must not be omitted.`);
-}
-
-function scopePromptContext(scope: WorkflowScope, files: WorkflowFiles): string {
-	const work = selectImplementationWork(scope);
-	return [
-		`Original approved baseline: ${scope.approvedPlan.path}`,
-		`Current finalized plan: ${scope.currentPlan.path}. Read this exact version, not latest-plan.`,
-		`Working draft, if present: ${files.workingPlan}. Draft edits are not active requirements until finalized.`,
-		`Not marked implemented: ${work.remaining.map(({ id }) => id).join(", ") || "None"}.`,
-		`Marked implemented: ${work.reportedImplemented.map(({ id }) => id).join(", ") || "None"}.`,
-		`Followup amendments: ${scope.amendments.map(({ id }) => id).join(", ") || "None"}. Read their cited requirements and testing criteria.`,
-		"Every finalized followup is included when the user advances to the next phase. There are no per-followup decision states. Flags are the implementer's assessment, not independent verification.",
-	].join("\n");
 }
 
 function planPathForWorkflow(files: WorkflowFiles, workflow: CompletedWorkflowMetadata): string {

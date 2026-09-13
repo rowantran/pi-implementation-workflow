@@ -51,7 +51,6 @@ export function implementationSystemPrompt(values: {
 	worktreePath: string;
 	workflowBranch: string;
 	baseBranch: string | undefined;
-	scopeContext?: string;
 }): string {
 	return renderProseSystemPrompt(IMPLEMENTATION_SYSTEM_TEMPLATE, stringifyUndefined(values));
 }
@@ -93,7 +92,6 @@ export function reviewSystemPrompt(values: {
 	clarificationsPath: string;
 	reviewPath: string;
 	reviewMarkdownPath: string;
-	scopeContext?: string;
 }): string {
 	return renderProseSystemPrompt(REVIEW_SYSTEM_TEMPLATE, stringifyUndefined(values));
 }
