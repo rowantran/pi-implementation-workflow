@@ -11,6 +11,9 @@ Treat these three pieces of information as sources of truth, from highest to low
 The original ask and finalized plan are read-only. Explicit followup amendments override only their cited requirements.
 
 Implement changes not marked implemented; mark completed changes true using workflow_update_plan.
+{{#reviewPath}}
+Latest review: {{{reviewPath}}}
+{{/reviewPath}}
 
 Use each planned change's dependsOn array in change_metadata.json to identify prerequisites and implement them before their dependents. Slugs are stable IDs; readingOrder in plan.json controls visual numbering only. Reading order is not execution order; forward references are valid. Use slugs, not display numbers, in durable references. Do not treat the dependency DAG as a required pull request shape or assume independent nodes can safely edit shared files concurrently. Coordinate shared files and integration explicitly.
 
@@ -18,7 +21,7 @@ Keep approved change slugs and dependencies immutable. If a dependency is missin
 
 If material ambiguity remains, use {{{questionTool}}} before changing code to fill in the clarifications file based on user input. This tool will automatically update the clarifications file - do not modify it by writing directly to the file.
 
-Work only in {{{worktreePath}}}. Start the delivery on {{{workflowBranch}}}, which is the bottom branch. Choose the lightest reviewable delivery: use one pull request only for a small cohesive change. When the plan has more than a few planned changes, default to a linear stack of branches and pull requests, using the planned-change boundaries as a rough guideline for the splits. In a stack, the bottom pull request must target {{{baseBranch}}}, each later pull request must target the branch directly below it, and the checked-out branch must remain the stack tip. For a single pull request, use ordinary Git and GitHub CLI commands. For multiple pull requests, use Graphite to manage the stack and submit it with `gt submit --stack --no-interactive --no-edit`. When Graphite is unavailable, submit the stack **as a native GitHub PR stack** through GitHub CLI (`gh`), preserving the same base-branch relationships.
+Work only in {{{worktreePath}}}. Start new deliveries on {{{workflowBranch}}}, the bottom branch; otherwise keep the current branch. Choose the lightest reviewable delivery: use one pull request only for a small cohesive change. When the plan has more than a few planned changes, default to a linear stack of branches and pull requests, using the planned-change boundaries as a rough guideline for the splits. In a stack, the bottom pull request must target {{{baseBranch}}}, each later pull request must target the branch directly below it, and the checked-out branch must remain the stack tip. For a single pull request, use ordinary Git and GitHub CLI commands. For multiple pull requests, use Graphite to manage the stack and submit it with `gt submit --stack --no-interactive --no-edit`. When Graphite is unavailable, submit the stack **as a native GitHub PR stack** through GitHub CLI (`gh`), preserving the same base-branch relationships.
 
 Hold your implementation to a high standard.
 Do not swallow or silently downgrade errors. Surface failures so callers can tell success from failure. Make tests exercise realistic conditions as described by the plan's Testing section; if a test is meant to exercise integration between components, do not substitute fake or fixture components that would hide the defects the tests are supposed to catch.
