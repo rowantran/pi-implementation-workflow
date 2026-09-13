@@ -6,6 +6,7 @@ import {
 	atomicWrite,
 	listPlanVersions,
 	readClarifications,
+	readPlanVersion,
 	readWorkflowMetadata,
 	readWorkflowReview,
 	type PlanVersion,
@@ -14,7 +15,7 @@ import {
 } from "./storage.ts";
 import { REVIEW_REPORT_VERSION, type WorkflowReviewReport } from "./review-report.ts";
 import { getPlanDependencyGraph } from "./planned-changes.ts";
-import { readReviewSourceFingerprint } from "./review-selection.ts";
+import { readWorkflowScope, requirementFingerprint } from "./workflow-scope.ts";
 
 const DASHBOARD_TEMPLATE = readFileSync(new URL("./dashboard.html", import.meta.url), "utf8");
 
@@ -32,12 +33,21 @@ export interface WorkflowDashboardData {
 }
 
 export async function writeWorkflowDashboard(files: WorkflowFiles, currentHeadCommit?: string): Promise<void> {
-	const [versions, clarifications, metadata, review] = await Promise.all([
-		listPlanVersions(files),
-		readClarifications(files),
-		readWorkflowMetadata(files),
-		readWorkflowReview(files),
-	]);
+	const [metadata, review] = await Promise.all([readWorkflowMetadata(files), readWorkflowReview(files)]);
+	// Resolve scope once, even without a report. Exact history reads keep the
+	// visible definitions, flags, clarifications, and freshness on that snapshot
+	// if another session publishes a new latest-plan during rendering.
+	const scope = "approvedPlanVersion" in metadata && metadata.approvedPlanVersion !== undefined
+		? await readWorkflowScope(files, metadata) : undefined;
+	const [versions, clarifications] = scope ? [
+		await Promise.all(Array.from({ length: scope.currentPlan.number }, async (_, index) => {
+			const version = await readPlanVersion(files, index + 1);
+			if (!version) throw new Error(`Plan version v${index + 1} is missing.`);
+			return version;
+		})),
+		scope.clarifications,
+	] as const : await Promise.all([listPlanVersions(files), readClarifications(files)]);
+	const fingerprint = scope?.fingerprint ?? requirementFingerprint(metadata.ask, versions.at(-1)?.document, clarifications);
 	const data: WorkflowDashboardData = {
 		slug: basename(dirname(files.root)) === ".drafts" ? undefined : basename(files.root),
 		description: metadata.description?.trim() || undefined,
@@ -50,7 +60,7 @@ export async function writeWorkflowDashboard(files: WorkflowFiles, currentHeadCo
 		reviewStale: Boolean(review && (
 			review.version !== REVIEW_REPORT_VERSION ||
 			(currentHeadCommit && review.headCommit !== currentHeadCommit) ||
-			review.sourceFingerprint !== await readReviewSourceFingerprint(files, metadata.ask)
+			review.sourceFingerprint !== fingerprint
 		)),
 	};
 	await atomicWrite(files.dashboard, renderWorkflowDashboard(data));
@@ -71,6 +81,10 @@ export function renderWorkflowDashboard(data: WorkflowDashboardData): string {
 		...data,
 		versions: data.versions.map((version) => ({
 			...version,
+			document: version.document ? {
+				...version.document,
+				changes: version.document.changes.map((change) => ({ ...change, implemented: change.implemented ?? false })),
+			} : version.document,
 			dependencyGraph: getPlanDependencyGraph(version.document),
 		})),
 	};
