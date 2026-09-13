@@ -1,0 +1,1 @@
+Save changes agreed during review as distinct followup planned changes. Pass unfinished followups directly to a fresh implementation session, preserve decisions made in the review conversation, and review the original scope and accepted followups together after implementation.

@@ -1,0 +1,4 @@
+{
+  "title": "Review the original plan and every accepted followup",
+  "dependsOn": ["combine-original-and-followup-scope"]
+}

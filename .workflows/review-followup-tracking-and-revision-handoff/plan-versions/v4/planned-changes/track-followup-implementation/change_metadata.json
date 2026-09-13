@@ -1,0 +1,4 @@
+{
+  "title": "Record the implementer's assessment with one flag",
+  "dependsOn": ["capture-review-decisions"]
+}

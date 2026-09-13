@@ -50,7 +50,9 @@ for (const id of ["../escape", "a/b", "a\\b", ".", "..", "-bad", "bad-", "bad--i
 }
 invalid({ ...plan, changes: [{ ...plan.changes[0], id: { toString: null } }] }, /invalid change ID/);
 for (const field of ["goal", "testing", "intro"]) invalid({ ...plan, [field]: " \n " }, /nonempty prose/);
-invalid({ ...plan, schemaVersion: 2 }, /schemaVersion must be 1/);
+invalid({ ...plan, schemaVersion: 3 }, /schemaVersion must be 1 or 2/);
+invalid({ ...plan, schemaVersion: 2 }, /implemented must be boolean/);
+assert.ok(validatePlanDocument(plan).changes.every((change) => change.implemented === false), "legacy flags normalize to false");
 invalid({ ...plan, extra: true }, /unknown field "extra"/);
 invalid({ ...plan, readingOrder: "store-report" }, /readingOrder must be an array/);
 invalid({ ...plan, readingOrder: ["store-report", "store-report", "absent"] }, /readingOrder repeats store-report/);

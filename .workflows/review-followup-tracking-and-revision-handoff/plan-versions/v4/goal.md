@@ -1,0 +1,1 @@
+Save review followups and a simple implemented flag for every planned change through the existing file-editing and versioning flow. Use `/workflow-implement` to continue work not yet marked implemented, remove `/workflow-revise`, and independently review the complete agreed scope regardless of those flags.

@@ -18,6 +18,7 @@ const dashboardServer = await jiti.import(new URL("../src/dashboard-server.ts", 
 const { readReviewSourceFingerprint } = await jiti.import(new URL("../src/review-selection.ts", import.meta.url).pathname);
 
 const validPlan = planFixture({
+	schemaVersion: 1, // Keep the shared fixture legacy-shaped; current scopes normalize its flags.
 	readingOrder: ["complete-verbs"],
 	goal: "Complete the workflow verbs.",
 	testing: "Verify each verb.",
@@ -627,7 +628,7 @@ try {
 		const files = storage.workflowFiles(identifier);
 		assert.equal(await storage.readPlanVersion(files), undefined, "planning starts without a finalized placeholder");
 		assert.equal(await storage.pathExists(files.latestPlan), false);
-		assert.deepEqual(JSON.parse(await readFile(join(files.workingPlan, "plan.json"), "utf8")), { schemaVersion: 1, readingOrder: [] });
+		assert.deepEqual(JSON.parse(await readFile(join(files.workingPlan, "plan.json"), "utf8")), { schemaVersion: 2, readingOrder: [] });
 		assert.equal(await readFile(join(files.workingPlan, "goal.md"), "utf8"), "");
 		assert.equal((await readMetadata(identifier)).approvedPlanVersion, undefined);
 		assert.equal((await readMetadata(identifier)).ask, ask);

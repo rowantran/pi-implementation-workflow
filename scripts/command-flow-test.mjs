@@ -348,7 +348,7 @@ const started = await scenario({ args: "inline prefill", editorResult: submitted
 assert.equal(started.editorCalls[0].prefill, "inline prefill");
 assert.equal(started.metadata.ask, submittedAsk);
 assert.equal(started.plan, undefined, "initialization publishes no incomplete version");
-assert.deepEqual(JSON.parse(started.workingPlan), { schemaVersion: 1, readingOrder: [] });
+assert.deepEqual(JSON.parse(started.workingPlan), { schemaVersion: 2, readingOrder: [] });
 assert.ok(started.activeTools.includes("edit"));
 assert.ok(started.activeTools.includes("write"));
 assert.ok(!started.workingPlan.includes(submittedAsk));

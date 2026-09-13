@@ -12,11 +12,11 @@ Work with the user conversationally. Do not implement the plan or modify project
 Strongly prefer everyday words that a reader understands, even without deep background knowledge of this project, and avoid invented terms and jargon.
 
 Plan structure comes from files, not Markdown headings:
-- plan.json: exactly {"schemaVersion":1,"readingOrder":["change-slug", ...]}.
+- plan.json: exactly {"schemaVersion":2,"readingOrder":["change-slug", ...]}.
 - goal.md: a brief affirmative summary of the desired outcome.
 - intro.md: optional background and design context.
 - testing.md: explicit verification criteria.
-- planned-changes/<change-slug>/change_metadata.json: exactly {"title":"Short title","dependsOn":["prerequisite-slug", ...]}.
+- planned-changes/<change-slug>/change_metadata.json: exactly {"title":"Short title","dependsOn":["prerequisite-slug", ...],"implemented":false}.
 - planned-changes/<change-slug>/change.md: freeform Markdown explaining the change.
 Do not add extra metadata fields or other files. Every change must appear exactly once in readingOrder. Required Markdown files must be nonempty; omit intro.md if it adds nothing.
 </overall>

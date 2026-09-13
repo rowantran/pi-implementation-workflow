@@ -377,6 +377,43 @@ try {
 	assert.equal(await workflowContentHead(exec, unusualWorkflow), alternateBase, "an out-of-base candidate falls back to the base");
 	assert.match((await checkDelivery(withPullRequests([pr(1, "workflow/current", "main", alternateBase)]), unusualWorkflow)).message, /content differs/);
 
+	// Followups and assessments remain local, even with unrelated staged code.
+	const progress = await fixture("followup-progress");
+	const progressFiles = workflowFiles(progress.workflow.identifier, progress.cwd);
+	await createWorkflow(progressFiles, progress.workflow);
+	const original = makePlanDocument();
+	await writePlanDocument(progressFiles.workingPlan, original);
+	await finalizePlanDraft(progressFiles, "Track original work and followups", 0);
+	const portable = JSON.parse(await readFile(progressFiles.metadata, "utf8"));
+	await writeFile(progressFiles.metadata, JSON.stringify({ ...portable, approvedPlanVersion: 1 }));
+	progress.workflow.approvedPlanVersion = 1;
+	const originalSnapshot = await readPlanVersion(progressFiles, 1);
+	const approvedHead = await git(progress.cwd, "rev-parse", "HEAD");
+	await save(progress.cwd, "code.txt", "Unrelated staged implementation\n");
+	await git(progress.cwd, "add", "code.txt");
+	await git(progress.cwd, "config", "commit.gpgsign", "true");
+	await git(progress.cwd, "config", "gpg.program", "/missing-signing-program");
+	await storageOnly(progress.cwd, async () => {
+		await preparePlanDraft(progressFiles);
+		await writePlanDocument(progressFiles.workingPlan, { ...original, changes: original.changes.map((change) => ({ ...change, implemented: true })) });
+		await finalizePlanDraft(progressFiles, "Track original work and followups", 1, { phase: "implementation" });
+	}, "implementation assessment with staged code and unavailable signing");
+	assert.equal((await readPlanVersion(progressFiles)).document.changes[0].implemented, true);
+	await storageOnly(progress.cwd, async () => {
+		await preparePlanDraft(progressFiles);
+		const followup = {
+			id: "cover-failure", title: "Cover the failure", dependsOn: [original.changes[0].id], implemented: false,
+			content: "Cover the newly found failure without replacing the original behavior.", testing: "Run the failure regression test.",
+			followup: { origin: { reviewNumber: 1, sessionId: "review-session", entryId: "followup-entry" }, effect: { type: "addition" } },
+		};
+		const latest = (await readPlanVersion(progressFiles)).document;
+		await writePlanDocument(progressFiles.workingPlan, { ...latest, readingOrder: [...latest.readingOrder, followup.id], changes: [...latest.changes, followup] });
+		await finalizePlanDraft(progressFiles, "Track original work and followups", 2, { phase: "review", reviewOrigin: { reviewNumber: 1, sessionId: "review-session", entryIds: ["followup-entry"] } });
+	}, "followup publication with staged code and unavailable signing");
+	assert.deepEqual(await readPlanVersion(progressFiles, 1), originalSnapshot, "progress preserves the original immutable snapshot");
+	assert.equal((await readPlanVersion(progressFiles)).number, 3);
+	assert.equal(await git(progress.cwd, "ls-files", ".workflows"), "", "neither flags nor followups enter Git");
+	assert.equal((await checkDelivery(withPullRequests([pr(1, "workflow/current", "main", approvedHead)]), progress.workflow)).stage, "worktree", "marked flags cannot make dirty delivery reviewable");
 	assert.ok(!calls.some(([command, ...args]) => command === "git" && args.includes("push")));
 	console.log("Artifact Git tests passed (ignored local storage, unchanged Git state, legacy content heads, and PR delivery).");
 } finally {

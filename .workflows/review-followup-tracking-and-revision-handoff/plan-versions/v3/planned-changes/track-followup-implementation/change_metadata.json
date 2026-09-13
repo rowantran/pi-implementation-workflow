@@ -1,0 +1,4 @@
+{
+  "title": "Track progress for every planned change",
+  "dependsOn": ["capture-review-decisions", "review-original-and-followup-changes"]
+}

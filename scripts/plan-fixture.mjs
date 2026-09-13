@@ -1,8 +1,8 @@
 export { writePlanDocument as writePlanFixture } from "./fixtures/plan-document.mjs";
 
 export function planFixture(overrides = {}) {
-	return {
-		schemaVersion: 1,
+	const document = {
+		schemaVersion: 2,
 		readingOrder: ["store-workflow-records"],
 		goal: "Keep workflow records with the delivery.\n",
 		testing: "- Verify records survive cleanup in Git.\n",
@@ -12,4 +12,6 @@ export function planFixture(overrides = {}) {
 		}],
 		...overrides,
 	};
+	if (document.schemaVersion === 2) document.changes = document.changes.map((change) => ({ implemented: false, ...change }));
+	return document;
 }

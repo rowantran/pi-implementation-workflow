@@ -109,7 +109,7 @@ try {
 	assert.equal(await exists(activeWorkflowMarkerPath(metadata.worktreePath)), false);
 	assert.equal(await exists(files.plan), false);
 	assert.equal((await stat(files.workingPlan)).isDirectory(), true);
-	assert.deepEqual(await json(join(files.workingPlan, "plan.json")), { schemaVersion: 1, readingOrder: [] });
+	assert.deepEqual(await json(join(files.workingPlan, "plan.json")), { schemaVersion: 2, readingOrder: [] });
 	assert.deepEqual(await listPlanVersions(files), []);
 	assert.deepEqual(await json(files.clarifications), { version: 1, entries: [] });
 	await assert.rejects(createWorkflow(files, metadata), /already exists/);

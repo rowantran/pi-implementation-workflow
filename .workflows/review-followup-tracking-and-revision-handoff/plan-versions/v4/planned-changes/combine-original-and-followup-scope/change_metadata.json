@@ -1,0 +1,4 @@
+{
+  "title": "Combine original requirements with accepted followups",
+  "dependsOn": ["store-review-followups"]
+}

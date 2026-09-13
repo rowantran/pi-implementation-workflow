@@ -1,0 +1,4 @@
+{
+  "title": "Let the review assistant record followups",
+  "dependsOn": ["combine-original-and-followup-scope"]
+}

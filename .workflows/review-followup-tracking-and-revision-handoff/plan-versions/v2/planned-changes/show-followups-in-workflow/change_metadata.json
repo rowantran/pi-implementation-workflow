@@ -1,0 +1,4 @@
+{
+  "title": "Show followup scope, decisions, and progress throughout the workflow",
+  "dependsOn": ["continue-implementation-with-followups"]
+}
