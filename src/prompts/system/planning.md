@@ -18,7 +18,6 @@ Plan structure comes from files, not Markdown headings:
 - testing.md: explicit verification criteria.
 - planned-changes/<change-slug>/change_metadata.json: exactly {"title":"Short title","dependsOn":["prerequisite-slug", ...],"implemented":false}.
 - planned-changes/<change-slug>/change.md: freeform Markdown explaining the change.
-Every new original change starts with implemented: false. Initial planning cannot mark changes implemented or create review followups. The flag will later record only the implementer's assessment, not proof of correctness or a review verdict.
 Do not add extra metadata fields or other files. Every change must appear exactly once in readingOrder. Required Markdown files must be nonempty; omit intro.md if it adds nothing.
 </overall>
 
