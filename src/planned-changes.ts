@@ -1,6 +1,23 @@
+import { Type } from "typebox";
+
 export const PLAN_SCHEMA_VERSION = 2;
 /** Stable, path-safe names, independent of display order. Numeric prefixes are not IDs. */
 export const PLANNED_CHANGE_ID_PATTERN = /^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/;
+
+export const FollowupEffectSchema = Type.Union([
+	Type.Object({ type: Type.Literal("addition") }, { additionalProperties: false }),
+	Type.Object({
+		type: Type.Literal("amendment"),
+		requirements: Type.Array(Type.Object({
+			source: Type.Union([
+				Type.Object({ type: Type.Literal("original-ask") }, { additionalProperties: false }),
+				Type.Object({ type: Type.Literal("plan-section"), name: Type.Union([Type.Literal("goal"), Type.Literal("intro"), Type.Literal("testing")]) }, { additionalProperties: false }),
+				Type.Object({ type: Type.Literal("change"), id: Type.String({ pattern: PLANNED_CHANGE_ID_PATTERN.source, maxLength: 80 }) }, { additionalProperties: false }),
+			]),
+			quotedRequirement: Type.String({ minLength: 1, pattern: "\\S", description: "Verbatim text from the source." }),
+		}, { additionalProperties: false }), { minItems: 1, uniqueItems: true }),
+	}, { additionalProperties: false }),
+]);
 
 export interface FollowupOrigin {
 	reviewNumber: number;

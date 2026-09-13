@@ -1,4 +1,5 @@
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { FollowupEffectSchema, PLANNED_CHANGE_ID_PATTERN, type FollowupOrigin } from "./planned-changes.ts";
 import { StringEnum } from "@earendil-works/pi-ai";
 import { getCapabilities, hyperlink, Text } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
@@ -11,7 +12,7 @@ export type UpdatePlanInput =
 	| { action: "finalize"; description: string; expectedBaseVersion: number };
 
 export type UpdatePlanResult =
-	| { action: "prepare"; draftPath: string; baseVersion: number }
+	| { action: "prepare"; draftPath: string; baseVersion: number; allowedEdits?: string; baselinePath?: string; reviewPath?: string; followupOrigin?: FollowupOrigin; newFollowupFormat?: ReturnType<typeof newFollowupFormat> }
 	| { action: "finalize"; version: number; dashboardUrl?: string; dashboardError?: string };
 
 const Parameters = Type.Object({
@@ -30,7 +31,7 @@ const Parameters = Type.Object({
 
 export function registerWorkflowPlanTool(
 	pi: ExtensionAPI,
-	onUpdate: (input: UpdatePlanInput) => Promise<UpdatePlanResult>,
+	onUpdate: (input: UpdatePlanInput, ctx: ExtensionContext) => Promise<UpdatePlanResult>,
 ): void {
 	pi.registerTool({
 		name: WORKFLOW_UPDATE_PLAN_TOOL,
@@ -41,7 +42,7 @@ export function registerWorkflowPlanTool(
 		parameters: Parameters,
 		executionMode: "sequential",
 
-		async execute(_toolCallId, params) {
+		async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
 			let input: UpdatePlanInput;
 			if (params.action === "prepare") {
 				if (params.description !== undefined || params.expectedBaseVersion !== undefined) {
@@ -54,7 +55,8 @@ export function registerWorkflowPlanTool(
 				}
 				input = { action: "finalize", description: params.description, expectedBaseVersion: params.expectedBaseVersion! };
 			}
-			const result = await onUpdate(input);
+			const result = await onUpdate(input, ctx);
+			if (result.action === "prepare" && result.followupOrigin) result.newFollowupFormat = newFollowupFormat(result.followupOrigin);
 			return { content: [{ type: "text", text: resultText(result) }], details: result };
 		},
 
@@ -70,9 +72,27 @@ export function registerWorkflowPlanTool(
 	});
 }
 
+function newFollowupFormat(origin: FollowupOrigin) {
+	return {
+		directory: "planned-changes/<slug>",
+		requiredFiles: ["change_metadata.json", "change.md", "testing.md"],
+		metadataSchema: Type.Object({
+			title: Type.String({ minLength: 1, pattern: "\\S" }),
+			dependsOn: Type.Array(Type.String({ pattern: PLANNED_CHANGE_ID_PATTERN.source, maxLength: 80 }), { uniqueItems: true }),
+			implemented: Type.Literal(false),
+			followup: Type.Object({
+				origin: Type.Object({ reviewNumber: Type.Literal(origin.reviewNumber), sessionId: Type.Literal(origin.sessionId), entryId: Type.Literal(origin.entryId) }, { additionalProperties: false }),
+				effect: FollowupEffectSchema,
+			}, { additionalProperties: false }),
+		}, { additionalProperties: false }),
+	};
+}
+
 function resultText(result: UpdatePlanResult, terminal = false): string {
 	if (result.action === "prepare") {
-		return `Editable plan directory: ${result.draftPath}\nBase version: ${result.baseVersion}\nEdit the draft files, then call workflow_update_plan with action=finalize, expectedBaseVersion=${result.baseVersion}, and a description of the entire plan. Existing unsaved edits are preserved.`;
+		return `Editable plan directory: ${result.draftPath}\nBase version: ${result.baseVersion}\nEdit the draft files, then call workflow_update_plan with action=finalize, expectedBaseVersion=${result.baseVersion}, and a description of the entire plan. Existing unsaved edits are preserved.` +
+			(result.allowedEdits ? `\nAllowed edits: ${result.allowedEdits}` : "") +
+			(result.newFollowupFormat ? `\nNew followup format: ${JSON.stringify(result.newFollowupFormat)}` : "");
 	}
 	const url = result.dashboardUrl;
 	const dashboard = url

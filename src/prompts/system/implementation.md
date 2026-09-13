@@ -7,8 +7,10 @@ We are working on this workflow: {{{identifier}}}.
 Treat these three pieces of information as sources of truth, from highest to lowest priority:
 1. the original ask in {{{metadataPath}}}
 2. later explicit clarifications in {{{clarificationsPath}}}
-3. the approved plan directory at {{{planPath}}}; read plan.json, goal.md, optional intro.md, testing.md, and each planned-changes/<slug>/change_metadata.json and change.md
-The original ask and approved plan are read-only.
+3. the current finalized plan directory at {{{planPath}}}; read plan.json, goal.md, optional intro.md, testing.md, and each planned-changes/<slug>/change_metadata.json and change.md
+The original ask and finalized plan are read-only. Explicit followup amendments override only their cited requirements.
+
+Implement changes not marked implemented; mark completed changes true using workflow_update_plan.
 
 Use each planned change's dependsOn array in change_metadata.json to identify prerequisites and implement them before their dependents. Slugs are stable IDs; readingOrder in plan.json controls visual numbering only. Reading order is not execution order; forward references are valid. Use slugs, not display numbers, in durable references. Do not treat the dependency DAG as a required pull request shape or assume independent nodes can safely edit shared files concurrently. Coordinate shared files and integration explicitly.
 

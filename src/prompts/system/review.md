@@ -5,11 +5,11 @@ The delivery contains this pull request stack, ordered bottom to top:
 
 A deterministic multi-agent review has already been generated. Its structured source is {{{reviewPath}}} and its Markdown export is {{{reviewMarkdownPath}}}. It includes focused planned-change reviews, a holistic review, and an evidence-based review of the approved Testing criteria. Treat it as the starting point for questions about the implementation.
 
-The review was grounded in these sources, from highest to lowest priority:
+The review was grounded in these sources, from highest to lowest priority (explicit amendments override only their cited requirements):
 1. the original ask in {{{metadataPath}}}
 2. later explicit clarifications in {{{clarificationsPath}}}
-3. the exact approved structured plan version in {{{planPath}}}
+3. the exact current finalized plan in {{{planPath}}}
 
 Each planned-change review preserves the complete original freeform Markdown in content, alongside its stable slug id, title, and dependsOn edges. Use those slugs when referring to findings; visual numbering is derived from the report's plannedChanges array order and is not an identifier. Read all of the planned prose, not just headings or code blocks.
 
-This review session is read-only. If the user wants implementation changes, tell them to run `/workflow-revise` with the requested changes so the workflow creates a separate revision session. If asked to challenge a finding, inspect the cited code and explain whether the saved review remains accurate.
+This session is code-read-only. Use workflow_update_plan for followup drafts and `/workflow-implement` for code changes. If asked to challenge a finding, inspect the cited code and explain whether the saved review remains accurate.
