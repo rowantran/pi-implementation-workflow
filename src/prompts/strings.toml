@@ -1,0 +1,46 @@
+# Every short string that reaches the model outside a phase prompt: tool metadata,
+# tool parameter descriptions, tool results and errors, blocked-tool reasons, and
+# the slug request. Values are Mustache templates; {{{x}}} inserts x unescaped.
+
+[tools.workflow_plan_save]
+description = "Validate the workflow plan directory after editing its files and refresh the dashboard. Reports every structural problem (plan.json fields, slugs, reading order, dependency cycles, missing or empty Markdown, missing Testing sections)."
+snippet = "Validate the edited plan directory and refresh the dashboard"
+guideline = "Call workflow_plan_save after editing files under the workflow plan directory; fix every reported problem and call it again."
+invalid = "The plan is not valid yet:\n{{{errors}}}"
+saved = "Saved plan \"{{{title}}}\" with {{{changes}}} changes ({{{implemented}}} marked implemented).{{#url}}\nDashboard: {{{url}}}{{/url}}"
+
+[tools.workflow_review_save]
+description = "Validate the workflow review directory (review.json verdicts, summary.md, and one changes/<slug>.md per reviewed change), stamp the reviewed commit range, and refresh the dashboard."
+snippet = "Validate the written review directory and refresh the dashboard"
+guideline = "Call workflow_review_save once review.json, summary.md, and every changes/<slug>.md are written; fix every reported problem and call it again."
+wrong_phase = "Reviews can only be saved from a review session."
+plan_invalid = "The plan is not valid, so the review cannot be checked against it:\n{{{errors}}}"
+invalid = "The review is not complete yet:\n{{{errors}}}"
+missing = "No review directory exists at {{{path}}}."
+saved = "Saved review of {{{changes}}} changes. Overall: necessary {{{necessary}}}, sufficient {{{sufficient}}}, testing {{{testing}}}.{{#url}}\nDashboard: {{{url}}}{{/url}}"
+
+[tools.workflow_questions]
+description = "Ask the user one or more multiple-choice questions and record the exact answers as workflow clarifications. Use it for decisions that change the plan or implementation; do not use it for questions you can answer by reading the repository."
+snippet = "Ask the user structured clarification questions and record the answers"
+guideline = "Use workflow_questions for material ambiguity before finalizing the plan or changing code; batch every open question into one call."
+no_ui = "Clarification questions need an interactive session."
+answered = "{{#entries}}Q: {{{question}}}\nA: {{{answer}}}\n\n{{/entries}}"
+stopped_early = "The user stopped early. Recorded answers:\n{{#entries}}Q: {{{question}}}\nA: {{{answer}}}\n\n{{/entries}}"
+cancelled = "The user cancelled without answering. Continue the conversation instead of asking again immediately."
+
+[tools.workflow_questions.parameters]
+questions = "Every open question, in one batch"
+question = "One concrete question, phrased so the options answer it directly"
+options = "Mutually exclusive answers; put the recommended one first"
+label = "Short answer"
+option_description = "Trade-off or consequence, one sentence"
+allow_other = "Offer a free-text answer as well; default true"
+
+[messages]
+unbound = "This session is not bound to a workflow. Run /workflow-plan, /workflow-implement, or /workflow-review first."
+blocked_managed_file = "{{{file}}} is managed by the workflow and read-only."
+blocked_planning = "Planning sessions may only edit files under {{{plan}}}. Code changes happen in /workflow-implement."
+blocked_review = "Review sessions may only edit files under {{{plan}}} (followups) and {{{review}}}. Code changes happen in /workflow-implement."
+invalid_workflow_file = "Invalid workflow file: {{{path}}}"
+invalid_clarifications_file = "Invalid clarifications file: {{{path}}}"
+slug_request = "Generate a stable workflow identifier from this request:\n\n{{{ask}}}"

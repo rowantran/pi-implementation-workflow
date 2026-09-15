@@ -1,105 +1,62 @@
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
-import { basename, dirname } from "node:path";
-import Mustache from "mustache";
-import {
-	atomicWrite,
-	listPlanVersions,
-	readClarifications,
-	readPlanVersion,
-	readWorkflowMetadata,
-	readWorkflowReview,
-	type PlanVersion,
-	type WorkflowClarification,
-	type WorkflowFiles,
-} from "./storage.ts";
-import { REVIEW_REPORT_VERSION, type WorkflowReviewReport } from "./review-report.ts";
-import { getPlanDependencyGraph } from "./planned-changes.ts";
-import { readWorkflowScope, requirementFingerprint } from "./workflow-scope.ts";
+import { writeFile } from "node:fs/promises";
+import { loadPlan, type Plan } from "./plan.ts";
+import { loadReview, type Review } from "./review.ts";
+import { readClarifications, readWorkflow, type Clarification, type WorkflowLocation } from "./workflow.ts";
 
-const DASHBOARD_TEMPLATE = readFileSync(new URL("./dashboard.html", import.meta.url), "utf8");
+const TEMPLATE = readFileSync(new URL("./dashboard.html", import.meta.url), "utf8");
 
-export interface WorkflowDashboardData {
-	slug?: string;
-	description?: string;
-	ask?: string;
+export interface DashboardData {
+	id: string;
+	ask: string;
+	clarifications: Clarification[];
+	/** Absent while the plan is still invalid; `planErrors` explains why. */
+	plan?: Plan;
+	planErrors: string[];
+	review?: Review;
+	reviewErrors: string[];
 	generatedAt: string;
-	versions: Array<Pick<PlanVersion, "number" | "createdAt" | "content" | "document" | "description">>;
-	/** Exact saved snapshot approved for implementation, never the latest draft. */
-	approvedPlanVersion?: number;
-	clarifications: WorkflowClarification[];
-	review?: WorkflowReviewReport;
-	reviewStale?: boolean;
 }
 
-export async function writeWorkflowDashboard(files: WorkflowFiles, currentHeadCommit?: string): Promise<void> {
-	const [metadata, review] = await Promise.all([readWorkflowMetadata(files), readWorkflowReview(files)]);
-	// Resolve scope once, even without a report. Exact history reads keep the
-	// visible definitions, flags, clarifications, and freshness on that snapshot
-	// if another session publishes a new latest-plan during rendering.
-	const scope = "approvedPlanVersion" in metadata && metadata.approvedPlanVersion !== undefined
-		? await readWorkflowScope(files, metadata) : undefined;
-	const [versions, clarifications] = scope ? [
-		await Promise.all(Array.from({ length: scope.currentPlan.number }, async (_, index) => {
-			const version = await readPlanVersion(files, index + 1);
-			if (!version) throw new Error(`Plan version v${index + 1} is missing.`);
-			return version;
-		})),
-		scope.clarifications,
-	] as const : await Promise.all([listPlanVersions(files), readClarifications(files)]);
-	const fingerprint = scope?.fingerprint ?? requirementFingerprint(metadata.ask, versions.at(-1)?.document, clarifications);
-	const data: WorkflowDashboardData = {
-		slug: basename(dirname(files.root)) === ".drafts" ? undefined : basename(files.root),
-		description: metadata.description?.trim() || undefined,
-		ask: metadata.ask ?? undefined,
+export async function collectDashboardData(location: WorkflowLocation): Promise<DashboardData> {
+	const [workflow, clarifications, planResult] = await Promise.all([
+		readWorkflow(location),
+		readClarifications(location),
+		loadPlan(location.plan),
+	]);
+	const data: DashboardData = {
+		id: workflow.id,
+		ask: workflow.ask,
+		clarifications,
+		planErrors: planResult.ok ? [] : planResult.errors,
+		reviewErrors: [],
 		generatedAt: new Date().toISOString(),
-		versions: versions.map(({ number, createdAt, content, document, description }) => ({ number, createdAt, content, document, description })),
-		approvedPlanVersion: "approvedPlanVersion" in metadata ? metadata.approvedPlanVersion : undefined,
-		clarifications: clarifications.entries,
-		review,
-		reviewStale: Boolean(review && (
-			review.version !== REVIEW_REPORT_VERSION ||
-			(currentHeadCommit && review.headCommit !== currentHeadCommit) ||
-			review.sourceFingerprint !== fingerprint
-		)),
 	};
-	await atomicWrite(files.dashboard, renderWorkflowDashboard(data));
+	if (planResult.ok) {
+		data.plan = planResult.value;
+		const reviewResult = await loadReview(location.review, planResult.value);
+		if (reviewResult.ok) data.review = reviewResult.value;
+		else data.reviewErrors = reviewResult.errors;
+	}
+	return data;
 }
 
-export async function writeWorkflowDashboardRedirect(from: string, destinationUrl: string): Promise<void> {
-	const serializedUrl = JSON.stringify(destinationUrl).replaceAll("<", "\\u003c");
-	await atomicWrite(
-		from,
-		`<!doctype html>\n<html lang="en">\n<head>\n<meta charset="utf-8">\n<meta http-equiv="refresh" content="0;url=${escapeHtml(destinationUrl)}">\n<title>Implementation plan moved</title>\n</head>\n<body>\n<p>This implementation plan moved to <a href="${escapeHtml(destinationUrl)}">its completed workflow dashboard</a>.</p>\n<script>location.replace(${serializedUrl});</script>\n</body>\n</html>\n`,
-	);
+export function renderDashboard(data: DashboardData): string {
+	const { generatedAt: _generatedAt, ...visible } = data;
+	const revision = createHash("sha256").update(TEMPLATE).update("\0").update(JSON.stringify(visible)).digest("hex").slice(0, 16);
+	const json = JSON.stringify(data).replaceAll("<", "\\u003c").replaceAll("\u2028", "\\u2028").replaceAll("\u2029", "\\u2029");
+	return TEMPLATE
+		.replaceAll("__REVISION__", revision)
+		.replace("__TITLE__", escapeHtml(data.plan?.title || data.id))
+		.replace("__DATA__", json);
 }
 
-export function renderWorkflowDashboard(data: WorkflowDashboardData): string {
-	// Structural fields come only from the saved document, never its generated Markdown.
-	// Normalize here too for callers that render without writing to disk.
-	const normalizedData = {
-		...data,
-		versions: data.versions.map((version) => ({
-			...version,
-			document: version.document ? {
-				...version.document,
-				changes: version.document.changes.map((change) => ({ ...change, implemented: change.implemented ?? false })),
-			} : version.document,
-			dependencyGraph: getPlanDependencyGraph(version.document),
-		})),
-	};
-	const dashboardData = JSON.stringify(normalizedData);
-	const { generatedAt: _generatedAt, ...visibleData } = normalizedData;
-	const dashboardRevision = createHash("sha256")
-		.update(DASHBOARD_TEMPLATE)
-		.update("\0")
-		.update(JSON.stringify(visibleData))
-		.digest("hex");
-	return Mustache.render(DASHBOARD_TEMPLATE, {
-		dashboardData,
-		dashboardRevision,
-		slug: data.slug,
-	});
+/** Renders the dashboard file. Never throws for an invalid plan or review; those are shown on the page. */
+export async function writeDashboard(location: WorkflowLocation): Promise<DashboardData> {
+	const data = await collectDashboardData(location);
+	await writeFile(location.dashboard, renderDashboard(data));
+	return data;
 }
 
 function escapeHtml(value: string): string {

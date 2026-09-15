@@ -1,561 +1,117 @@
 import { createHash } from "node:crypto";
-import { constants } from "node:fs";
-import { lstat, open, readFile, realpath } from "node:fs/promises";
-import { createServer, request, type Server, type ServerResponse } from "node:http";
-import { resolve } from "node:path";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { createServer, type Server, type ServerResponse } from "node:http";
+import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import {
-	implementationWorkflowConfigPath,
-	loadImplementationWorkflowConfig,
-	type ImplementationWorkflowConfig,
-} from "./config.ts";
-import {
-	IDENTIFIER_PATTERN,
-	resolveWorkflowLocator,
-	workflowFiles,
-	type WorkflowFiles,
-} from "./storage.ts";
+import { getAgentDir } from "@earendil-works/pi-coding-agent";
+import type { DashboardConfig } from "./config.ts";
+import { isRecord, isSlug, readOptional } from "./plan.ts";
 
-export const DEFAULT_DASHBOARD_PORT = 43121;
-// Version 4 adds the syntax-highlighting asset required by current dashboards.
-export const DASHBOARD_SERVER_PROTOCOL_VERSION = 4;
-export const DASHBOARD_HEALTH_PATH = "/implementation-workflow/health";
-export const DASHBOARD_REVISION_HEADER = "X-Implementation-Workflow-Revision";
-const PROCESS_SERVER_KEY = Symbol.for("pi-implementation-workflow.dashboard-server.v1");
-const PROBE_TIMEOUT_MS = 750;
-const MAX_HEALTH_RESPONSE_BYTES = 8 * 1024;
-const MAX_DASHBOARD_REVISION_SCAN_BYTES = 8 * 1024;
-const DASHBOARD_REVISION_PATTERN = /<meta name="implementation-workflow-revision" content="([a-f0-9]{64})">/;
-const DASHBOARD_ASSETS = new Map([
-	["marked.umd.js", fileURLToPath(new URL("./marked.umd.js", import.meta.resolve("marked")))],
-	["highlight.min.js", fileURLToPath(import.meta.resolve("@highlightjs/cdn-assets/highlight.min.js"))],
-	["mermaid.min.js", fileURLToPath(new URL("./mermaid.min.js", import.meta.resolve("mermaid")))],
+const ASSETS = new Map([
+	["marked.umd.js", () => fileURLToPath(new URL("./marked.umd.js", import.meta.resolve("marked")))],
+	["highlight.min.js", () => fileURLToPath(import.meta.resolve("@highlightjs/cdn-assets/highlight.min.js"))],
+	["mermaid.min.js", () => fileURLToPath(new URL("./mermaid.min.js", import.meta.resolve("mermaid")))],
 ]);
 
-export type DashboardScope = "workflow";
+let owned: Server | undefined;
+let starting: Promise<void> | undefined;
 
-export interface DashboardReference {
-	scope: DashboardScope;
-	id: string;
-	filePath: string;
+export function dashboardUrl(config: DashboardConfig, id: string): string {
+	return `${config.publicBaseUrl}/w/${encodeURIComponent(id)}`;
 }
 
-export interface DashboardServerConfig {
-	mode: "local" | "remote";
-	publicBaseUrl: string;
-	listenHost: string;
-	listenPort: number;
-	probeHost: string;
-	configPath: string;
+/**
+ * The only global state: ~/.pi/agent/workflows/index.json maps workflow ids to
+ * their .workflows/<id> directories so any pi process can serve any dashboard.
+ */
+export function indexPath(agentDirectory = getAgentDir()): string {
+	return join(agentDirectory, "workflows", "index.json");
 }
 
-export interface DashboardServerIdentity {
-	protocolVersion: number;
-	workflowsRootFingerprint: string;
-}
-
-interface ProcessDashboardServer {
-	config: DashboardServerConfig;
-	workflowsRoot: string;
-	identity: DashboardServerIdentity;
-	server: Server;
-}
-
-interface ProcessServerHolder {
-	ownedServer?: ProcessDashboardServer;
-	startup?: Promise<EnsureDashboardServerResult>;
-}
-
-export type EnsureDashboardServerResult =
-	| { status: "started" | "reused" }
-	| {
-			status: "error";
-			reason: "port-conflict" | "process-configuration-conflict" | "start-failure";
-			message: string;
-	  };
-
-type ProbeResult = "none" | "different" | "matching";
-
-export function dashboardConfigPath(agentDirectory: string): string {
-	return implementationWorkflowConfigPath(agentDirectory);
-}
-
-export async function loadDashboardServerConfig(agentDirectory: string): Promise<DashboardServerConfig> {
-	return dashboardServerConfig(await loadImplementationWorkflowConfig(agentDirectory));
-}
-
-export function dashboardServerConfig(config: ImplementationWorkflowConfig): DashboardServerConfig {
-	const { configPath, dashboard } = config;
-	if (dashboard === undefined) return localDashboardConfig(configPath);
-	const unknownFields = Object.keys(dashboard).filter(
-		(key) => key !== "mode" && key !== "public_base_url" && key !== "listen_port" && key !== "listen_host",
-	);
-	if (unknownFields.length > 0) {
-		throw new Error(
-			`Unknown dashboard field${unknownFields.length === 1 ? "" : "s"} ${unknownFields.join(", ")}: ${configPath}`,
-		);
-	}
-
-	const mode = dashboard.mode;
-	if (mode === undefined || mode === "local") {
-		const listenPort = dashboard.listen_port === undefined
-			? DEFAULT_DASHBOARD_PORT
-			: requireListenPort(dashboard.listen_port, configPath);
-		return localDashboardConfig(configPath, listenPort);
-	}
-	if (mode !== "remote") {
-		throw new Error(`dashboard.mode must be either "local" or "remote": ${configPath}`);
-	}
-
-	const listenPort = requireListenPort(dashboard.listen_port, configPath);
-	let listenHost = "0.0.0.0";
-	if (dashboard.listen_host !== undefined) {
-		if (typeof dashboard.listen_host !== "string" || !dashboard.listen_host.trim()) {
-			throw new Error(`dashboard.listen_host must be a non-empty string: ${configPath}`);
-		}
-		listenHost = dashboard.listen_host.trim();
-	}
-	const publicBaseUrl = requirePublicBaseUrl(dashboard.public_base_url, configPath);
-	return {
-		mode: "remote",
-		publicBaseUrl,
-		listenHost,
-		listenPort,
-		probeHost: isWildcardHost(listenHost) ? "127.0.0.1" : listenHost,
-		configPath,
-	};
-}
-
-export function dashboardReference(files: WorkflowFiles, scope: DashboardScope, id: string): DashboardReference {
-	assertDashboardIdentifier(scope, id);
-	return { scope, id, filePath: resolve(files.dashboard) };
-}
-
-export function dashboardUrl(reference: DashboardReference, config: DashboardServerConfig): string {
-	assertDashboardIdentifier(reference.scope, reference.id);
-	return `${config.publicBaseUrl}/implementation-workflow/workflows/${encodeURIComponent(reference.id)}`;
-}
-
-export function dashboardServerIdentity(workflowsRoot: string): DashboardServerIdentity {
-	return {
-		protocolVersion: DASHBOARD_SERVER_PROTOCOL_VERSION,
-		workflowsRootFingerprint: createHash("sha256").update(resolve(workflowsRoot)).digest("hex"),
-	};
-}
-
-export async function ensureSharedDashboardServer(
-	config: DashboardServerConfig,
-	workflowsRoot: string,
-): Promise<EnsureDashboardServerResult> {
-	const holder = processServerHolder();
-	if (holder.startup) return holder.startup;
-	const identity = dashboardServerIdentity(workflowsRoot);
-	const owned = holder.ownedServer;
-	if (owned && !owned.server.listening) holder.ownedServer = undefined;
-	if (holder.ownedServer) {
-		if (serverMatches(holder.ownedServer, config, workflowsRoot, identity)) return { status: "reused" };
-		return {
-			status: "error",
-			reason: "process-configuration-conflict",
-			message: "This Pi process already owns a dashboard server with different addressing or workflow storage.",
-		};
-	}
-
-	const startup = probeAndClaimServer(holder, config, resolve(workflowsRoot), identity);
-	holder.startup = startup;
+export async function readIndex(path = indexPath()): Promise<Record<string, string>> {
+	const text = await readOptional(path);
+	if (!text?.trim()) return {};
 	try {
-		return await startup;
-	} finally {
-		if (holder.startup === startup) holder.startup = undefined;
+		const value: unknown = JSON.parse(text);
+		return isRecord(value) ? Object.fromEntries(Object.entries(value).filter(([id, root]) => isSlug(id) && typeof root === "string")) as Record<string, string> : {};
+	} catch {
+		return {};
 	}
 }
 
-export async function closeOwnedDashboardServer(): Promise<void> {
-	const holder = processServerHolder();
-	if (holder.startup) await holder.startup.catch(() => undefined);
-	const owned = holder.ownedServer;
-	holder.ownedServer = undefined;
-	holder.startup = undefined;
-	if (!owned?.server.listening) return;
-	await new Promise<void>((resolveClose) => {
-		owned.server.close(() => resolveClose());
-	});
+export async function registerDashboard(id: string, root: string, path = indexPath()): Promise<void> {
+	const index = await readIndex(path);
+	if (index[id] === root) return;
+	await mkdir(join(path, ".."), { recursive: true });
+	await writeFile(path, `${JSON.stringify({ ...index, [id]: root }, null, 2)}\n`);
 }
 
-async function probeAndClaimServer(
-	holder: ProcessServerHolder,
-	config: DashboardServerConfig,
-	workflowsRoot: string,
-	identity: DashboardServerIdentity,
-): Promise<EnsureDashboardServerResult> {
-	const observed = await probeDashboardServer(config.probeHost, config.listenPort, identity);
-	if (observed === "matching") return { status: "reused" };
-	if (observed === "different") return portConflict(config);
+export async function unregisterDashboard(id: string, path = indexPath()): Promise<void> {
+	const index = await readIndex(path);
+	if (!(id in index)) return;
+	delete index[id];
+	await writeFile(path, `${JSON.stringify(index, null, 2)}\n`);
+}
 
-	const server = createServer((incoming, response) => {
-		void handleDashboardRequest(incoming.method, incoming.url, response, workflowsRoot, identity).catch(() => {
-			if (!response.headersSent) sendText(response, 500, "Internal Server Error\n");
-			else response.destroy();
+/**
+ * Starts this process's dashboard server once. If the port is already taken,
+ * another pi process is assumed to be serving the same files from disk, so the
+ * URL still works and no error is raised. Real bind errors are thrown.
+ */
+export function ensureDashboardServer(config: DashboardConfig, index = indexPath()): Promise<void> {
+	if (owned?.listening) return Promise.resolve();
+	starting ??= new Promise<void>((resolve, reject) => {
+		const server = createServer((request, response) => {
+			handle(request.method ?? "GET", request.url ?? "/", response, index).catch(() => {
+				if (!response.headersSent) send(response, 500, "text/plain", "Internal Server Error\n");
+				else response.destroy();
+			});
+		});
+		server.once("error", (error: NodeJS.ErrnoException) => {
+			starting = undefined;
+			if (error.code === "EADDRINUSE") resolve();
+			else reject(new Error(`Could not start the dashboard server on ${config.listenHost}:${config.listenPort}: ${error.message}`));
+		});
+		server.listen(config.listenPort, config.listenHost, () => {
+			server.unref();
+			owned = server;
+			starting = undefined;
+			resolve();
 		});
 	});
-	const listenError = await listen(server, config.listenHost, config.listenPort);
-	if (!listenError) {
-		holder.ownedServer = { config, workflowsRoot, identity, server };
-		return { status: "started" };
-	}
-
-	if (listenError.code === "EADDRINUSE") {
-		const raced = await probeDashboardServer(config.probeHost, config.listenPort, identity);
-		if (raced === "matching") return { status: "reused" };
-		return portConflict(config);
-	}
-	return {
-		status: "error",
-		reason: "start-failure",
-		message: `Could not listen on ${config.listenHost}:${config.listenPort}: ${listenError.message}`,
-	};
+	return starting;
 }
 
-async function handleDashboardRequest(
-	method: string | undefined,
-	rawUrl: string | undefined,
-	response: ServerResponse,
-	workflowsRoot: string,
-	identity: DashboardServerIdentity,
-): Promise<void> {
-	setDefensiveHeaders(response);
-	if (method !== "GET" && method !== "HEAD") {
-		response.setHeader("Allow", "GET, HEAD");
-		sendText(response, 405, "Method Not Allowed\n", method === "HEAD");
-		return;
-	}
-
-	const rawPath = (rawUrl ?? "").split("?", 1)[0];
-	if (rawPath === DASHBOARD_HEALTH_PATH) {
-		sendJson(response, 200, identity, method === "HEAD");
-		return;
-	}
-	const assetPath = dashboardAssetPath(rawPath);
-	if (assetPath) {
-		await sendDashboardAsset(response, assetPath, method === "HEAD");
-		return;
-	}
-	const reference = parseDashboardRoute(rawPath);
-	if (!reference) {
-		sendText(response, 404, "Not Found\n", method === "HEAD");
-		return;
-	}
-
-	let dashboardFile: Awaited<ReturnType<typeof open>> | undefined;
-	let fileInfo: Awaited<ReturnType<Awaited<ReturnType<typeof open>>["stat"]>>;
-	try {
-		// The global root is only a locator index. Resolve it afresh on every request;
-		// storage verifies the locator against the worktree's machine-local active marker.
-		const locator = resolveWorkflowLocator(reference.id, workflowsRoot);
-		const files = workflowFiles(reference.id, locator.worktreePath);
-		dashboardFile = await openWorkflowDashboard(files, reference.id);
-		fileInfo = await dashboardFile.stat();
-	} catch {
-		await dashboardFile?.close().catch(() => undefined);
-		sendText(response, 404, "Not Found\n", method === "HEAD");
-		return;
-	}
-	try {
-		const dashboardRevision = await readDashboardRevision(dashboardFile, fileInfo.size);
-		if (dashboardRevision) response.setHeader(DASHBOARD_REVISION_HEADER, dashboardRevision);
-		response.statusCode = 200;
-		response.setHeader("Content-Type", "text/html; charset=utf-8");
-		response.setHeader("Cache-Control", "no-store");
-		response.setHeader("Content-Length", fileInfo.size);
-		if (method === "HEAD") {
-			response.end();
-			return;
-		}
-		const html = await dashboardFile.readFile();
-		response.setHeader("Content-Length", html.byteLength);
-		response.end(html);
-	} catch {
-		if (!response.headersSent) sendText(response, 404, "Not Found\n");
-		else response.destroy();
-	} finally {
-		await dashboardFile.close();
-	}
+export async function closeDashboardServer(): Promise<void> {
+	const server = owned;
+	owned = undefined;
+	if (!server?.listening) return;
+	await new Promise<void>((resolve) => server.close(() => resolve()));
 }
 
-/** Open only the regular dashboard file under the locator's worktree-local workflow directory. */
-async function openWorkflowDashboard(files: WorkflowFiles, id: string): Promise<Awaited<ReturnType<typeof open>>> {
-	const worktree = await realpath(resolve(files.root, "../.."));
-	const expectedRoot = resolve(worktree, ".workflows", id);
-	const expectedDashboard = resolve(expectedRoot, "dashboard.html");
-	if (
-		resolve(files.dashboard) !== resolve(files.root, "dashboard.html") ||
-		await realpath(files.root) !== expectedRoot ||
-		await realpath(files.dashboard) !== expectedDashboard
-	) {
-		throw new Error("Dashboard is outside its worktree-local workflow directory.");
+async function handle(method: string, url: string, response: ServerResponse, index: string): Promise<void> {
+	if (method !== "GET" && method !== "HEAD") return send(response, 405, "text/plain", "Method Not Allowed\n");
+	const path = new URL(url, "http://localhost").pathname;
+	const asset = /\/assets\/([a-z0-9.-]+)$/.exec(path);
+	if (asset) {
+		const resolveAsset = ASSETS.get(asset[1]!);
+		if (!resolveAsset) return send(response, 404, "text/plain", "Not Found\n");
+		return send(response, 200, "text/javascript; charset=utf-8", await readFile(resolveAsset()), method === "HEAD", "public, max-age=86400");
 	}
-
-	// Do not follow a replaced dashboard symlink or block on a FIFO/device.
-	const file = await open(expectedDashboard, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
-	try {
-		const [opened, current, root] = await Promise.all([
-			file.stat(),
-			lstat(expectedDashboard),
-			realpath(files.root),
-		]);
-		if (!opened.isFile() || !current.isFile() || opened.dev !== current.dev || opened.ino !== current.ino || root !== expectedRoot) {
-			throw new Error("Dashboard changed while opening or is not a regular file.");
-		}
-		return file;
-	} catch (error) {
-		await file.close();
-		throw error;
-	}
+	const dashboard = /\/w\/([a-z0-9-]+)$/.exec(path);
+	if (!dashboard) return send(response, 404, "text/plain", "Not Found\n");
+	const root = (await readIndex(index))[dashboard[1]!];
+	const html = root ? await readOptional(join(root, "dashboard.html")) : undefined;
+	if (html === undefined) return send(response, 404, "text/plain", "No dashboard for this workflow. Run /workflow-dashboard in its session.\n");
+	return send(response, 200, "text/html; charset=utf-8", html, method === "HEAD");
 }
 
-async function readDashboardRevision(
-	dashboardFile: Awaited<ReturnType<typeof open>>,
-	fileSize: number,
-): Promise<string | undefined> {
-	const scanLength = Math.min(fileSize, MAX_DASHBOARD_REVISION_SCAN_BYTES);
-	if (!scanLength) return undefined;
-	const buffer = Buffer.allocUnsafe(scanLength);
-	const { bytesRead } = await dashboardFile.read(buffer, 0, scanLength, 0);
-	return DASHBOARD_REVISION_PATTERN.exec(buffer.toString("utf8", 0, bytesRead))?.[1];
-}
-
-function dashboardAssetPath(rawPath: string): string | undefined {
-	const routeStart = rawPath.lastIndexOf("/implementation-workflow/assets/");
-	if (routeStart < 0) return undefined;
-	const name = rawPath.slice(routeStart + "/implementation-workflow/assets/".length);
-	return DASHBOARD_ASSETS.get(name);
-}
-
-async function sendDashboardAsset(response: ServerResponse, path: string, headOnly: boolean): Promise<void> {
-	let content: Buffer;
-	try {
-		content = await readFile(path);
-	} catch {
-		sendText(response, 404, "Not Found\n", headOnly);
-		return;
-	}
-	response.statusCode = 200;
-	response.setHeader("Content-Type", "text/javascript; charset=utf-8");
-	response.setHeader("Cache-Control", "no-store");
-	response.setHeader("Content-Length", content.byteLength);
-	response.end(headOnly ? undefined : content);
-}
-
-function parseDashboardRoute(rawPath: string): Pick<DashboardReference, "scope" | "id"> | undefined {
-	const routeStart = rawPath.lastIndexOf("/implementation-workflow/");
-	if (routeStart < 0) return undefined;
-	const match = /^\/implementation-workflow\/workflows\/([^/]+)$/.exec(rawPath.slice(routeStart));
-	if (!match) return undefined;
-	let id: string;
-	try {
-		id = decodeURIComponent(match[1]);
-	} catch {
-		return undefined;
-	}
-	const scope: DashboardScope = "workflow";
-	try {
-		assertDashboardIdentifier(scope, id);
-		return { scope, id };
-	} catch {
-		return undefined;
-	}
-}
-
-function assertDashboardIdentifier(scope: DashboardScope, id: string): void {
-	const valid = scope === "workflow" && IDENTIFIER_PATTERN.test(id);
-	if (!valid) throw new Error(`Invalid ${scope} dashboard identifier: ${id}`);
-}
-
-function localDashboardConfig(configPath: string, listenPort = DEFAULT_DASHBOARD_PORT): DashboardServerConfig {
-	return {
-		mode: "local",
-		publicBaseUrl: `http://127.0.0.1:${listenPort}`,
-		listenHost: "127.0.0.1",
-		listenPort,
-		probeHost: "127.0.0.1",
-		configPath,
-	};
-}
-
-function requireListenPort(value: unknown, configPath: string): number {
-	if (!Number.isInteger(value) || (value as number) < 1 || (value as number) > 65_535) {
-		throw new Error(`dashboard.listen_port must be an integer from 1 through 65535: ${configPath}`);
-	}
-	return value as number;
-}
-
-function requirePublicBaseUrl(value: unknown, configPath: string): string {
-	if (typeof value !== "string" || !value.trim()) {
-		throw new Error(`Remote dashboard mode requires dashboard.public_base_url: ${configPath}`);
-	}
-	const rawUrl = value.trim();
-	let url: URL;
-	try {
-		url = new URL(rawUrl);
-	} catch {
-		throw new Error(`dashboard.public_base_url must be an absolute HTTP or HTTPS URL: ${configPath}`);
-	}
-	if ((url.protocol !== "http:" && url.protocol !== "https:") || !url.hostname) {
-		throw new Error(`dashboard.public_base_url must be an absolute HTTP or HTTPS URL: ${configPath}`);
-	}
-	if (url.username || url.password || rawUrl.includes("?") || rawUrl.includes("#")) {
-		throw new Error(`dashboard.public_base_url cannot contain credentials, a query, or a fragment: ${configPath}`);
-	}
-	return url.href.replace(/\/$/, "");
-}
-
-function isWildcardHost(host: string): boolean {
-	return host === "0.0.0.0" || host === "::";
-}
-
-function processServerHolder(): ProcessServerHolder {
-	const store = globalThis as typeof globalThis & { [key: symbol]: unknown };
-	const existing = store[PROCESS_SERVER_KEY];
-	if (existing) return existing as ProcessServerHolder;
-	const holder: ProcessServerHolder = {};
-	store[PROCESS_SERVER_KEY] = holder;
-	return holder;
-}
-
-function serverMatches(
-	owned: ProcessDashboardServer,
-	config: DashboardServerConfig,
-	workflowsRoot: string,
-	identity: DashboardServerIdentity,
-): boolean {
-	return (
-		resolve(owned.workflowsRoot) === resolve(workflowsRoot) &&
-		owned.identity.protocolVersion === identity.protocolVersion &&
-		owned.identity.workflowsRootFingerprint === identity.workflowsRootFingerprint &&
-		owned.config.mode === config.mode &&
-		owned.config.publicBaseUrl === config.publicBaseUrl &&
-		owned.config.listenHost === config.listenHost &&
-		owned.config.listenPort === config.listenPort &&
-		owned.config.probeHost === config.probeHost
-	);
-}
-
-function listen(server: Server, host: string, port: number): Promise<NodeJS.ErrnoException | undefined> {
-	return new Promise((resolveListen) => {
-		const onError = (error: NodeJS.ErrnoException) => {
-			server.off("listening", onListening);
-			resolveListen(error);
-		};
-		const onListening = () => {
-			server.off("error", onError);
-			resolveListen(undefined);
-		};
-		server.once("error", onError);
-		server.once("listening", onListening);
-		server.listen(port, host);
+function send(response: ServerResponse, status: number, type: string, body: string | Buffer, headOnly = false, cache = "no-store"): void {
+	response.writeHead(status, {
+		"Content-Type": type,
+		"Content-Length": Buffer.byteLength(body),
+		"Cache-Control": cache,
+		ETag: `"${createHash("sha256").update(body).digest("hex").slice(0, 16)}"`,
 	});
-}
-
-function probeDashboardServer(
-	host: string,
-	port: number,
-	identity: DashboardServerIdentity,
-): Promise<ProbeResult> {
-	return new Promise((resolveProbe) => {
-		let settled = false;
-		let deadline: NodeJS.Timeout | undefined;
-		const finish = (result: ProbeResult) => {
-			if (settled) return;
-			settled = true;
-			if (deadline) clearTimeout(deadline);
-			resolveProbe(result);
-		};
-		const probe = request(
-			{
-				host,
-				port,
-				path: DASHBOARD_HEALTH_PATH,
-				method: "GET",
-				headers: { Connection: "close" },
-			},
-			(response) => {
-				const chunks: Buffer[] = [];
-				let bytes = 0;
-				response.on("data", (chunk: Buffer) => {
-					bytes += chunk.byteLength;
-					if (bytes > MAX_HEALTH_RESPONSE_BYTES) {
-						response.destroy();
-						finish("different");
-						return;
-					}
-					chunks.push(chunk);
-				});
-				response.on("end", () => {
-					if (response.statusCode !== 200) {
-						finish("different");
-						return;
-					}
-					try {
-						const observed = JSON.parse(Buffer.concat(chunks).toString("utf8")) as Partial<DashboardServerIdentity>;
-						finish(
-							observed.protocolVersion === identity.protocolVersion &&
-								observed.workflowsRootFingerprint === identity.workflowsRootFingerprint
-								? "matching"
-								: "different",
-						);
-					} catch {
-						finish("different");
-					}
-				});
-			},
-		);
-		deadline = setTimeout(() => {
-			probe.destroy();
-			finish("different");
-		}, PROBE_TIMEOUT_MS);
-		probe.on("error", (error: NodeJS.ErrnoException) => {
-			finish(
-				error.code === "ECONNREFUSED" || error.code === "EHOSTUNREACH" || error.code === "ENETUNREACH"
-					? "none"
-					: "different",
-			);
-		});
-		probe.end();
-	});
-}
-
-function portConflict(config: DashboardServerConfig): EnsureDashboardServerResult {
-	return {
-		status: "error",
-		reason: "port-conflict",
-		message: `Port ${config.listenPort} on ${config.probeHost} is occupied by a different service or workflow root.`,
-	};
-}
-
-function setDefensiveHeaders(response: ServerResponse): void {
-	response.setHeader("Cache-Control", "no-store");
-	response.setHeader("X-Content-Type-Options", "nosniff");
-	response.setHeader("X-Frame-Options", "DENY");
-	response.setHeader("Referrer-Policy", "no-referrer");
-	response.setHeader("Content-Security-Policy", "default-src 'self' 'unsafe-inline'; img-src 'self' data:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'");
-}
-
-function sendText(response: ServerResponse, statusCode: number, text: string, head = false): void {
-	const body = Buffer.from(text);
-	response.statusCode = statusCode;
-	response.setHeader("Content-Type", "text/plain; charset=utf-8");
-	response.setHeader("Content-Length", body.byteLength);
-	response.end(head ? undefined : body);
-}
-
-function sendJson(response: ServerResponse, statusCode: number, value: unknown, head = false): void {
-	const body = Buffer.from(`${JSON.stringify(value)}\n`);
-	response.statusCode = statusCode;
-	response.setHeader("Content-Type", "application/json; charset=utf-8");
-	response.setHeader("Content-Length", body.byteLength);
-	response.end(head ? undefined : body);
-}
-
-function errorMessage(error: unknown): string {
-	return error instanceof Error ? error.message : String(error);
+	response.end(headOnly ? undefined : body);
 }
