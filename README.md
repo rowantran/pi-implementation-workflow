@@ -129,6 +129,8 @@ npm test      # typecheck + node --test
 
 Pi loads `src/index.ts` directly; there is no build step.
 
+Everything the model reads is defined under `src/prompts/`: phase prompts and kickoff messages as Markdown, and shorter strings (tool metadata, tool results and errors, blocked-tool reasons) in `strings.toml`, accessed through `text()`. `test/prompt-strings.test.ts` walks the TypeScript AST and fails when a model-facing sink (tool metadata, text content parts, block reasons, `systemPrompt`, `sendUserMessage`, or a `throw` reachable from a tool's `execute`) is fed an inline string. Validation messages built by `plan.ts`/`review.ts` are the deliberate exception; they reach the model only inside `workflow_*_save` errors.
+
 ## License
 
 MIT
