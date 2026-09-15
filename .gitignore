@@ -13,3 +13,13 @@ dist/
 .DS_Store
 *.swp
 *.swo
+# Sandbox/editor placeholders
+.bash_profile
+.bashrc
+.profile
+.zprofile
+.zshrc
+.ripgreprc
+.idea
+.vscode
+.claude/

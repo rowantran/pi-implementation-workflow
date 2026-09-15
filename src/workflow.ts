@@ -2,6 +2,7 @@ import { mkdir, readdir, readFile, rm, stat, writeFile } from "node:fs/promises"
 import { join, resolve } from "node:path";
 import { git, type ExecFn } from "./git.ts";
 import { isRecord, isSlug, readOptional, writePlanSkeleton } from "./plan.ts";
+import { text } from "./prompts.ts";
 
 export const WORKFLOWS_DIR = ".workflows";
 export const WORKTREES_DIR = ".worktrees";
@@ -54,11 +55,11 @@ export function workflowLocation(repositoryRoot: string, worktree: string, id: s
 }
 
 export async function readWorkflow(location: WorkflowLocation): Promise<Workflow> {
-	const text = await readFile(location.manifest, "utf8");
-	const value: unknown = JSON.parse(text);
+	const raw = await readFile(location.manifest, "utf8");
+	const value: unknown = JSON.parse(raw);
 	if (!isRecord(value) || value.id !== location.id || typeof value.ask !== "string" || typeof value.baseBranch !== "string" ||
 		typeof value.baseCommit !== "string" || typeof value.branch !== "string" || typeof value.createdAt !== "string") {
-		throw new Error(`Invalid workflow file: ${location.manifest}`);
+		throw new Error(text("messages.invalid_workflow_file", { path: location.manifest }));
 	}
 	return { id: value.id, ask: value.ask, baseBranch: value.baseBranch, baseCommit: value.baseCommit, branch: value.branch, createdAt: value.createdAt };
 }
@@ -139,10 +140,10 @@ export async function removeWorkflow(exec: ExecFn, location: WorkflowLocation, f
 }
 
 export async function readClarifications(location: WorkflowLocation): Promise<Clarification[]> {
-	const text = await readOptional(location.clarifications);
-	if (!text?.trim()) return [];
-	const value: unknown = JSON.parse(text);
-	if (!Array.isArray(value)) throw new Error(`Invalid clarifications file: ${location.clarifications}`);
+	const raw = await readOptional(location.clarifications);
+	if (!raw?.trim()) return [];
+	const value: unknown = JSON.parse(raw);
+	if (!Array.isArray(value)) throw new Error(text("messages.invalid_clarifications_file", { path: location.clarifications }));
 	return value.filter((entry): entry is Clarification =>
 		isRecord(entry) && typeof entry.question === "string" && typeof entry.answer === "string" &&
 		typeof entry.custom === "boolean" && typeof entry.answeredAt === "string");

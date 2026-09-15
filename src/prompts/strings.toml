@@ -41,4 +41,6 @@ unbound = "This session is not bound to a workflow. Run /workflow-plan, /workflo
 blocked_managed_file = "{{{file}}} is managed by the workflow and read-only."
 blocked_planning = "Planning sessions may only edit files under {{{plan}}}. Code changes happen in /workflow-implement."
 blocked_review = "Review sessions may only edit files under {{{plan}}} (followups) and {{{review}}}. Code changes happen in /workflow-implement."
+invalid_workflow_file = "Invalid workflow file: {{{path}}}"
+invalid_clarifications_file = "Invalid clarifications file: {{{path}}}"
 slug_request = "Generate a stable workflow identifier from this request:\n\n{{{ask}}}"
