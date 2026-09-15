@@ -3,716 +3,254 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="implementation-workflow-revision" content="{{dashboardRevision}}">
-<title>Implementation workflow{{#slug}} · {{slug}}{{/slug}}</title>
+<meta name="workflow-revision" content="__REVISION__">
+<title>__TITLE__ · Implementation workflow</title>
 <style>
-/* Isara design-system semantic tokens and component geometry. */
-:root {
-  --ds-black:#000;--ds-white:#fff;
-  --ds-blue-50:#eff5fe;--ds-blue-100:#cfe2ff;--ds-blue-200:#9ec5ff;--ds-blue-300:#6ea9ff;--ds-blue-400:#3d8cff;--ds-blue-500:#0d6fe1;--ds-blue-600:#0a59cc;--ds-blue-700:#084399;--ds-blue-800:#0d2c58;--ds-blue-900:#041e46;
-  --ds-cream-50:#f7f5f4;--ds-cream-100:#ece9e6;--ds-cream-200:#dad5d1;--ds-cream-300:#c1bbb6;--ds-cream-400:#a19a94;--ds-cream-600:#655d58;--ds-cream-900:#161412;
-  --ds-gray-600:#606060;--ds-gray-800:#2c2c2c;--ds-green-50:#e5f7e7;--ds-green-700:#066a2c;--ds-green-900:#072810;--ds-red-50:#ffe4e1;--ds-red-700:#921921;--ds-red-900:#330b0b;
-  --ds-font-sans:"Inter",-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;--ds-font-serif:"Libre Baskerville",Georgia,"Times New Roman",serif;--ds-font-mono:"SFMono-Regular",Consolas,"Liberation Mono",monospace;
-  --ds-text-primary:var(--ds-gray-800);--ds-text-secondary:var(--ds-gray-600);--ds-text-muted:var(--ds-cream-600);--ds-text-faint:var(--ds-cream-400);--ds-text-heading:var(--ds-black);
-  --ds-border-subtle:var(--ds-cream-200);--ds-border-strong:var(--ds-cream-300);--ds-surface-default:var(--ds-white);--ds-surface-subtle:var(--ds-cream-50);--ds-surface-inset:var(--ds-cream-100);--ds-surface-raised:var(--ds-white);
-  --ds-accent-action:var(--ds-blue-500);--ds-accent-action-hover:var(--ds-blue-600);--ds-accent-subtle:var(--ds-blue-100);--ds-accent-text:var(--ds-blue-700);--ds-focus-ring:var(--ds-blue-300);--ds-control-border:var(--ds-cream-300);--ds-control-muted:var(--ds-cream-600);--ds-control-hover-bg:var(--ds-cream-100);
-  --ds-success-text:var(--ds-green-700);--ds-success-subtle:var(--ds-green-50);--ds-danger-text:var(--ds-red-700);--ds-danger-subtle:var(--ds-red-50);
-  --syntax-keyword:#cf222e;--syntax-title:#8250df;--syntax-literal:#0550ae;--syntax-string:#0a3069;--syntax-variable:#953800;--syntax-comment:#57606a;--syntax-tag:#116329;
-  --ds-space-1:4px;--ds-space-2:8px;--ds-space-3:12px;--ds-space-4:16px;--ds-space-5:20px;--ds-space-6:24px;--ds-space-8:32px;--ds-space-10:40px;--ds-space-12:48px;
-  --ds-radius-sm:4px;--ds-radius-md:10px;--ds-radius-lg:15px;--ds-radius-full:9999px;--ds-shadow-sm:0 1px 2px rgba(22,20,18,.06);--ds-shadow-md:0 4px 12px rgba(22,20,18,.08);
+:root{
+  --bg:#f7f5f4;--surface:#fff;--inset:#ece9e6;--border:#dad5d1;--border-strong:#c1bbb6;
+  --text:#2c2c2c;--text-2:#606060;--muted:#655d58;--faint:#a19a94;--heading:#000;
+  --accent:#0d6fe1;--accent-bg:#cfe2ff;--ok:#066a2c;--ok-bg:#e5f7e7;--bad:#921921;--bad-bg:#ffe4e1;--warn:#7a4b00;--warn-bg:#fff1d6;
+  --sans:"Inter",-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;--serif:"Libre Baskerville",Georgia,serif;--mono:"SFMono-Regular",Consolas,"Liberation Mono",monospace;
+  --k:#cf222e;--t:#8250df;--l:#0550ae;--s:#0a3069;--v:#953800;--c:#57606a;--g:#116329;
 }
-[data-theme="dark"] {
-  --ds-text-primary:var(--ds-cream-50);--ds-text-secondary:var(--ds-cream-200);--ds-text-muted:var(--ds-cream-300);--ds-text-faint:var(--ds-cream-400);--ds-text-heading:var(--ds-white);
-  --ds-border-subtle:var(--ds-gray-800);--ds-border-strong:var(--ds-gray-600);--ds-surface-default:var(--ds-black);--ds-surface-subtle:var(--ds-cream-900);--ds-surface-inset:var(--ds-gray-800);--ds-surface-raised:var(--ds-cream-900);
-  --ds-accent-action:var(--ds-blue-400);--ds-accent-action-hover:var(--ds-white);--ds-accent-subtle:var(--ds-blue-100);--ds-accent-text:var(--ds-blue-800);--ds-control-border:var(--ds-gray-600);--ds-control-muted:var(--ds-cream-300);--ds-control-hover-bg:var(--ds-gray-800);
-  --ds-success-text:#81d090;--ds-success-subtle:var(--ds-green-900);--ds-danger-text:#fb8d87;--ds-danger-subtle:var(--ds-red-900);
-  --syntax-keyword:#ff7b72;--syntax-title:#d2a8ff;--syntax-literal:#79c0ff;--syntax-string:#a5d6ff;--syntax-variable:#ffa657;--syntax-comment:#a8b1bb;--syntax-tag:#7ee787;
+[data-theme=dark]{
+  --bg:#000;--surface:#161412;--inset:#2c2c2c;--border:#2c2c2c;--border-strong:#606060;
+  --text:#f7f5f4;--text-2:#dad5d1;--muted:#c1bbb6;--faint:#a19a94;--heading:#fff;
+  --accent:#3d8cff;--accent-bg:#0d2c58;--ok:#81d090;--ok-bg:#072810;--bad:#fb8d87;--bad-bg:#330b0b;--warn:#ffcf7a;--warn-bg:#3a2a05;
+  --k:#ff7b72;--t:#d2a8ff;--l:#79c0ff;--s:#a5d6ff;--v:#ffa657;--c:#a8b1bb;--g:#7ee787;
 }
-/* highlight.js token colors follow the dashboard theme without repainting code.
-   Keep backgrounds on the existing code blocks and diff rows, not syntax spans. */
-.markdown .hljs{color:var(--ds-text-primary)}
-.markdown .hljs-keyword,.markdown .hljs-doctag,.markdown .hljs-type,.markdown .hljs-template-tag,.markdown .hljs-template-variable,.markdown .hljs-variable.language_{color:var(--syntax-keyword)}
-.markdown .hljs-title{color:var(--syntax-title)}
-.markdown .hljs-attr,.markdown .hljs-attribute,.markdown .hljs-literal,.markdown .hljs-meta,.markdown .hljs-number,.markdown .hljs-operator,.markdown .hljs-variable,.markdown .hljs-selector-attr,.markdown .hljs-selector-class,.markdown .hljs-selector-id{color:var(--syntax-literal)}
-.markdown .hljs-string,.markdown .hljs-regexp,.markdown .hljs-meta .hljs-string{color:var(--syntax-string)}
-.markdown .hljs-built_in,.markdown .hljs-symbol,.markdown .hljs-bullet{color:var(--syntax-variable)}
-.markdown .hljs-comment,.markdown .hljs-code,.markdown .hljs-formula{color:var(--syntax-comment)}
-.markdown .hljs-name,.markdown .hljs-quote,.markdown .hljs-selector-tag,.markdown .hljs-selector-pseudo{color:var(--syntax-tag)}
-.markdown .hljs-subst{color:var(--ds-text-primary)}.markdown .hljs-section{color:var(--syntax-literal);font-weight:600}.markdown .hljs-emphasis{font-style:italic}.markdown .hljs-strong{font-weight:600}
-.markdown .hljs-addition{color:var(--ds-success-text)}.markdown .hljs-deletion{color:var(--ds-danger-text)}
-*{box-sizing:border-box}html{background:var(--ds-surface-subtle);color:var(--ds-text-primary);font-family:var(--ds-font-sans)}body{margin:0;min-width:320px}button,select{font:inherit}
-.ds-app-header{position:sticky;top:0;z-index:20;display:flex;align-items:center;gap:var(--ds-space-4);height:60px;padding:0 var(--ds-space-6);background:color-mix(in srgb,var(--ds-surface-default) 94%,transparent);border-bottom:1px solid var(--ds-border-subtle);backdrop-filter:blur(14px)}
-.brand{display:flex;align-items:center;gap:var(--ds-space-3);min-width:0}.brand svg{width:28px;height:28px;flex:none;color:var(--ds-accent-action)}.brand-title{font-size:15px;font-weight:500;line-height:20px}
-.ds-tabs{display:flex;align-self:stretch;height:60px;margin-left:var(--ds-space-6)}.ds-tabs__tab{display:inline-flex;align-items:center;height:60px;padding:0 var(--ds-space-4);border:0;border-bottom:2px solid transparent;background:transparent;color:var(--ds-text-secondary);cursor:pointer;font-size:13px}.ds-tabs__tab[hidden]{display:none}.ds-tabs__tab:hover{color:var(--ds-text-primary)}.ds-tabs__tab--active{color:var(--ds-accent-action);border-bottom-color:var(--ds-accent-action)}
-.header-actions{display:flex;align-items:center;gap:var(--ds-space-2);margin-left:auto}.ds-badge{display:inline-flex;align-items:center;height:20px;padding:0 8px;border-radius:6px;background:var(--ds-surface-subtle);color:var(--ds-text-muted);font-size:11px;font-weight:600}.ds-badge[hidden]{display:none}.ds-button{display:inline-flex;align-items:center;justify-content:center;height:32px;padding:0 12px;border:1px solid var(--ds-control-border);border-radius:var(--ds-radius-md);background:transparent;color:var(--ds-control-muted);cursor:pointer;font-size:13px}.ds-button:hover{background:var(--ds-control-hover-bg)}button:focus-visible,select:focus-visible,a:focus-visible,.dependency-canvas:focus-visible,.review-collapsible>summary:focus-visible{outline:2px solid var(--ds-focus-ring);outline-offset:2px}
-.shell{width:min(1480px,100%);margin:0 auto;padding:var(--ds-space-8)}.view[hidden]{display:none}.plan-layout{display:grid;grid-template-columns:minmax(0,1fr) 340px;gap:var(--ds-space-6);align-items:start}.plan-layout--context-collapsed{grid-template-columns:minmax(0,1fr)}.card{background:var(--ds-surface-default);border:1px solid var(--ds-border-subtle);border-radius:var(--ds-radius-lg);box-shadow:var(--ds-shadow-sm)}.plan-card{overflow:clip}.plan-mode-bar{display:flex;align-items:center;gap:var(--ds-space-2);min-height:56px;padding:11px 16px;border-bottom:1px solid var(--ds-border-subtle);background:var(--ds-surface-subtle)}.plan-mode-label{margin-right:4px;color:var(--ds-text-muted);font-size:11px;font-weight:600;text-transform:uppercase}.plan-mode-button--active{border-color:var(--ds-accent-action);background:var(--ds-surface-default);color:var(--ds-accent-action)}.plan-mode-note{color:var(--ds-text-muted);font-size:12px}.plan-sidebar-actions{display:flex;align-items:center;gap:var(--ds-space-2);margin-left:auto}.sidebar-toggle{gap:7px}.sidebar-toggle:disabled{opacity:.45;cursor:not-allowed}.plan-reader{display:grid;grid-template-columns:238px minmax(0,1fr);min-height:620px}.plan-reader--sidebar-collapsed{grid-template-columns:minmax(0,1fr)}.plan-reader--full{display:block}.plan-outline{border-right:1px solid var(--ds-border-subtle);background:var(--ds-surface-subtle)}.plan-outline-sticky{position:sticky;top:84px;max-height:calc(100vh - 108px);overflow-y:auto;padding:24px 14px}.plan-outline-title{margin:0 10px 14px;color:var(--ds-text-heading);font-size:13px;font-weight:600}.plan-outline-list{display:flex;flex-direction:column;gap:2px}#plan-change-links,#review-change-links{display:flex;flex-direction:column;gap:2px;margin-left:10px;padding-left:9px;border-left:1px solid var(--ds-border-strong)}.plan-outline-label{margin:16px 10px 5px;color:var(--ds-text-faint);font-size:10px;font-weight:700;letter-spacing:.05em;text-transform:uppercase}.plan-outline-divider{height:1px;margin:12px 10px 10px;background:var(--ds-border-subtle)}.plan-outline-button{width:100%;padding:8px 10px;border:0;border-radius:var(--ds-radius-md);background:transparent;color:var(--ds-text-secondary);cursor:pointer;text-align:left;font-size:13px;line-height:18px}.plan-outline-button:hover{background:var(--ds-control-hover-bg);color:var(--ds-text-primary)}.plan-outline-button--section{color:var(--ds-text-primary);font-weight:600}.plan-outline-button--active{background:var(--ds-surface-default);box-shadow:var(--ds-shadow-sm);color:var(--ds-accent-action);font-weight:600}.plan-document-wrap{min-width:0;padding:clamp(24px,4vw,56px)}.plan-reader--full .plan-document-wrap{padding:clamp(24px,5vw,64px)}
-.markdown{max-width:850px;margin:0 auto;font-size:15px;line-height:1.7}.plan-document-header{display:flex;align-items:baseline;justify-content:space-between;gap:var(--ds-space-6);margin:0 0 32px;padding-bottom:20px;border-bottom:1px solid var(--ds-border-subtle)}.plan-document-header .plan-version{flex:none;color:var(--ds-accent-action);font-family:var(--ds-font-serif);font-size:24px;font-weight:400;line-height:34px;white-space:nowrap}.markdown h1,.markdown h2,.markdown h3,.markdown h4{color:var(--ds-text-heading);scroll-margin-top:80px}.markdown h1{margin:0 0 32px;font-family:var(--ds-font-serif);font-size:32px;font-weight:400;line-height:44px}.plan-document-header h1{margin:0}.markdown h2{margin:40px 0 12px;padding-top:8px;border-top:1px solid var(--ds-border-subtle);font-size:22px;font-weight:500;line-height:32px}.markdown h3{margin:28px 0 8px;font-size:18px;font-weight:500}.markdown p{margin:0 0 16px}.markdown ul,.markdown ol{margin:0 0 20px;padding-left:24px}.markdown li{margin:6px 0}.markdown blockquote{margin:20px 0;padding:12px 16px;border-left:3px solid var(--ds-accent-action);background:var(--ds-surface-subtle);color:var(--ds-text-secondary)}.markdown table{display:block;width:max-content;max-width:100%;margin:20px 0;overflow-x:auto;border-collapse:collapse;border-spacing:0}.markdown th,.markdown td{min-width:120px;padding:9px 12px;border:1px solid var(--ds-border-subtle);text-align:left;vertical-align:top}.markdown th{background:var(--ds-surface-subtle);color:var(--ds-text-heading);font-weight:600}.markdown tbody tr:nth-child(even){background:color-mix(in srgb,var(--ds-surface-subtle) 55%,transparent)}code{padding:2px 5px;border-radius:var(--ds-radius-sm);background:var(--ds-surface-inset);font-family:var(--ds-font-mono);font-size:.9em}.markdown pre{overflow:auto;padding:16px;border:1px solid var(--ds-border-subtle);border-radius:var(--ds-radius-md);background:var(--ds-surface-subtle)}.markdown pre code{padding:0;background:none}.markdown .mermaid{margin:24px 0;overflow-x:auto;padding:16px;border:1px solid var(--ds-border-subtle);border-radius:var(--ds-radius-md);background:var(--ds-surface-default);text-align:center}.markdown .mermaid svg{display:block;max-width:100%;height:auto;margin:0 auto}.markdown .mermaid-error{white-space:pre;text-align:left}.empty{padding:48px;text-align:center;color:var(--ds-text-muted)}.guided-view>.guided-kicker+h2{margin-top:0;padding-top:0;border-top:0}.guided-kicker{margin-bottom:6px;color:var(--ds-accent-action);font-size:11px;font-weight:700;letter-spacing:.04em;text-transform:uppercase}.guided-pagination{display:flex;align-items:center;justify-content:space-between;gap:16px;margin:0 0 28px;padding:0 0 20px;border-bottom:1px solid var(--ds-border-subtle)}.guided-pagination[hidden]{display:none}.guided-position{color:var(--ds-text-muted);font-size:12px;text-align:center}.guided-pagination .ds-button{min-width:118px;gap:7px}.guided-pagination .ds-button:disabled{opacity:.45;cursor:not-allowed}.shortcut-key{display:inline-flex;align-items:center;justify-content:center;min-width:20px;height:20px;padding:0 5px;border:1px solid var(--ds-border-strong);border-radius:var(--ds-radius-sm);background:var(--ds-surface-default);color:var(--ds-text-muted);font-family:var(--ds-font-mono);font-size:11px;line-height:1}
-.clarifications{position:sticky;top:84px;overflow:hidden}.section-head{display:flex;align-items:center;justify-content:space-between;padding:18px 20px;border-bottom:1px solid var(--ds-border-subtle)}.section-head h2{margin:0;font-size:15px;font-weight:500}.original-ask{padding:18px 20px;border-bottom:1px solid var(--ds-border-subtle)}.original-ask-label{margin-bottom:8px;color:var(--ds-accent-action);font-size:11px;font-weight:600;text-transform:uppercase}.original-ask-text{margin:0;white-space:pre-wrap;overflow-wrap:anywhere;font-size:15px;line-height:24px}.clarification-list{display:flex;max-height:calc(100vh - 260px);overflow:auto;flex-direction:column}.clarification{padding:18px 20px;border-bottom:1px solid var(--ds-border-subtle)}.clarification:last-child{border-bottom:0}.clarification-label{margin-bottom:8px;color:var(--ds-accent-action);font-size:11px;font-weight:600;text-transform:uppercase}.clarification-question{margin:0 0 10px;color:var(--ds-text-secondary);font-size:13px;line-height:20px}.clarification-answer{margin:0;white-space:pre-wrap;font-size:15px;line-height:24px}.clarification-time{margin-top:10px;color:var(--ds-text-faint);font-size:11px}.clarification-empty{padding:24px 20px;color:var(--ds-text-muted);font-size:13px;line-height:20px}
-.review-card{overflow:clip}.review-document-header{align-items:flex-start}.review-document-header>div:first-child{min-width:0}.review-actions{display:flex;flex:none;gap:8px}.review-actions .ds-button{text-decoration:none}.review-meta{margin-top:8px;color:var(--ds-text-muted);font-size:12px;font-weight:400;line-height:18px}.review-full-section:first-child>h2{margin-top:0;padding-top:0;border-top:0}.review-document h2{scroll-margin-top:80px}.review-document h3{margin-top:28px}.planned-review-id{color:var(--ds-accent-action)}.review-document h4{margin:18px 0 6px;color:var(--ds-text-muted);font-size:11px;text-transform:uppercase}.review-text{white-space:pre-wrap}.verdicts{display:flex;flex-wrap:wrap;gap:8px;margin:14px 0 18px}.verdict{display:inline-flex;gap:6px;padding:7px 10px;border-radius:var(--ds-radius-full);background:var(--ds-surface-subtle);font-size:12px;font-weight:600}.verdict.yes{background:var(--ds-success-subtle);color:var(--ds-success-text)}.verdict.no,.verdict.partial{background:var(--ds-danger-subtle);color:var(--ds-danger-text)}.verdict-explanations{display:grid;gap:6px;margin:0 0 18px;color:var(--ds-text-secondary);font-size:13px;line-height:1.5}.verdict-explanations p{margin:0}.stale-warning{margin:18px 0;padding:12px 14px;border-radius:var(--ds-radius-md);background:var(--ds-danger-subtle);color:var(--ds-danger-text);font-size:13px}.review-concern-list{display:grid;gap:10px;margin:14px 0 20px}.review-concern{padding:14px 16px;border:1px solid var(--ds-border-subtle);border-radius:var(--ds-radius-md);background:var(--ds-surface-subtle)}.concern-title{font-weight:600}.concern-severity{display:inline-flex;margin-right:8px;padding:2px 7px;border-radius:var(--ds-radius-full);background:var(--ds-surface-inset);font-size:10px;text-transform:uppercase}.concern-severity.blocking,.concern-severity.warning{background:var(--ds-danger-subtle);color:var(--ds-danger-text)}.concern-details{margin:8px 0 0!important;color:var(--ds-text-secondary);line-height:1.55}.evidence-list{margin:10px 0 0!important;padding-left:20px!important;color:var(--ds-text-muted);font-size:12px}.review-collapsible{margin:28px 0 24px;border:1px solid var(--ds-border-subtle);border-radius:var(--ds-radius-md);background:var(--ds-surface-subtle)}.review-collapsible>summary{padding:12px 16px;cursor:pointer;color:var(--ds-text-heading);font-size:18px;font-weight:500}.review-collapsible>summary::marker{color:var(--ds-accent-action)}.review-collapsible>summary:hover{color:var(--ds-accent-action)}.review-collapsible[open]>summary{border-bottom:1px solid var(--ds-border-subtle)}.review-planned-design,.testing-original{margin:0;padding:16px 18px;border-left:3px solid var(--ds-accent-action)}.review-planned-design p:last-child,.review-planned-design pre:last-child,.testing-original>*:last-child{margin-bottom:0}.criterion-result{margin:14px 0;padding:14px 16px;border:1px solid var(--ds-border-subtle);border-radius:var(--ds-radius-md)}.criterion-result h3{margin:0 0 8px;font-size:15px}.criterion-result .verdict{margin-bottom:10px}.review-empty{margin:12px 0 20px;color:var(--ds-text-muted)}.review-walkthrough blockquote{margin:18px 0;padding:14px 16px;border:1px solid var(--ds-border-subtle);border-left:3px solid var(--ds-accent-action);border-radius:var(--ds-radius-md);background:var(--ds-surface-subtle);color:var(--ds-text-primary)}.review-walkthrough blockquote p{margin:0 0 8px}.review-walkthrough blockquote p:last-child{margin-bottom:0}
-.diff-card{overflow:hidden}.diff-toolbar{display:flex;align-items:end;gap:var(--ds-space-3);padding:16px 20px;border-bottom:1px solid var(--ds-border-subtle);background:var(--ds-surface-default)}.field{display:flex;flex-direction:column;gap:5px}.field label{color:var(--ds-text-muted);font-size:11px;font-weight:600}.ds-select{min-width:180px;height:38px;padding:0 34px 0 12px;border:1px solid var(--ds-border-subtle);border-radius:var(--ds-radius-md);background:var(--ds-surface-default);color:var(--ds-text-primary);cursor:pointer}.arrow{color:var(--ds-text-faint);font-size:18px;padding-bottom:8px}.diff-summary{margin-left:auto;align-self:center;color:var(--ds-text-muted);font-size:13px}.diff-navigation{display:flex;align-items:center;gap:var(--ds-space-2);align-self:center}.diff-navigation .ds-button{gap:7px}.diff-navigation .ds-button:disabled{opacity:.45;cursor:not-allowed}.diff-scroll{overflow:auto;max-height:calc(100vh - 180px);background:var(--ds-surface-default)}.diff-document{min-height:240px;padding:clamp(24px,5vw,64px)}.diff-document .diff-line{position:relative;border-radius:var(--ds-radius-sm)}.diff-document [data-diff-block-index]{scroll-margin-top:24px}.diff-document .diff-block--active{outline:2px solid var(--ds-focus-ring);outline-offset:3px}.diff-document .diff-line.add,.diff-document .diff-code-line.add,.diff-document .diff-blank-line.add{background:var(--ds-success-subtle)}.diff-document .diff-line.remove,.diff-document .diff-code-line.remove,.diff-document .diff-blank-line.remove{background:var(--ds-danger-subtle)}.diff-document .diff-line.add::before,.diff-document .diff-line.remove::before,.diff-document .diff-code-line.add::before,.diff-document .diff-code-line.remove::before,.diff-document .diff-blank-line.add::before,.diff-document .diff-blank-line.remove::before{position:absolute;font-family:var(--ds-font-mono);font-weight:700;text-align:center}.diff-document .diff-line.add::before,.diff-document .diff-code-line.add::before,.diff-document .diff-blank-line.add::before{content:"+";color:var(--ds-success-text)}.diff-document .diff-line.remove::before,.diff-document .diff-code-line.remove::before,.diff-document .diff-blank-line.remove::before{content:"−";color:var(--ds-danger-text)}.diff-document .diff-line::before{top:.15em;right:calc(100% + 8px);width:18px}.diff-document h1.diff-line::before,.diff-document h2.diff-line::before,.diff-document h3.diff-line::before{top:.5em}.diff-document li.diff-line::before{right:calc(100% + 24px)}.diff-document blockquote.diff-line.add{border-left-color:var(--ds-success-text)}.diff-document blockquote.diff-line.remove{border-left-color:var(--ds-danger-text)}.diff-code-block{padding:16px 0!important}.diff-code-line{position:relative;display:block;min-height:1.7em;padding:0 16px 0 36px;white-space:pre-wrap;overflow-wrap:anywhere}.diff-code-line::before,.diff-blank-line::before{top:0;left:10px;width:18px}.diff-blank-line{position:relative;min-height:12px;margin:4px 0;border-radius:var(--ds-radius-sm)}.diff-empty{padding:48px;text-align:center;color:var(--ds-text-muted)}
-.plan-mode-bar{flex-wrap:wrap}.plan-layout>.plan-card{min-width:0}.plan-reader--dependencies .plan-document-wrap{padding:clamp(20px,3vw,40px)}.plan-reader--dependencies .markdown{max-width:none}.dependency-view{--graph-selected-bg:var(--ds-blue-700);--graph-selected-text:var(--ds-white);--graph-upstream-bg:var(--ds-blue-50);--graph-upstream-border:var(--ds-blue-600)}[data-theme="dark"] .dependency-view{--graph-selected-bg:var(--ds-blue-300);--graph-selected-text:var(--ds-black);--graph-upstream-bg:var(--ds-blue-900);--graph-upstream-border:var(--ds-blue-300)}.dependency-header{display:flex;justify-content:space-between;align-items:start;gap:16px;margin-bottom:20px}.dependency-header h2,.dependency-unavailable h2{margin:0;padding:0;border:0;font-family:var(--ds-font-serif);font-size:25px;font-weight:400}.dependency-header p{margin:5px 0 0;color:var(--ds-text-muted);font-size:13px}.dependency-count{flex:none;padding:5px 10px;border:1px solid var(--ds-border-subtle);border-radius:var(--ds-radius-full);color:var(--ds-text-muted);font-size:12px}.dependency-goal{margin:0 0 20px;padding:12px 16px;border-left:3px solid var(--ds-border-strong);background:var(--ds-surface-subtle);font-size:13px;color:var(--ds-text-secondary)}.dependency-goal strong{display:block;margin-bottom:4px;color:var(--ds-text-muted);font-size:11px;text-transform:uppercase}.dependency-goal p:last-child{margin-bottom:0}.dependency-legend{display:flex;flex-wrap:wrap;gap:16px;margin:0 0 14px;color:var(--ds-text-muted);font-size:11px}.dependency-legend span{display:inline-flex;align-items:center;gap:6px}.dependency-legend i{width:10px;height:10px;border-radius:3px;border:1px solid var(--ds-border-strong);background:var(--ds-surface-default)}.dependency-legend .legend-selected{background:var(--graph-selected-bg);border-color:var(--graph-selected-bg)}.dependency-legend .legend-requires{background:var(--graph-upstream-bg);border-color:var(--graph-upstream-border)}.dependency-legend .legend-enables{background:var(--ds-success-subtle);border-color:var(--ds-success-text)}.dependency-canvas{overflow:auto;max-width:100%;min-height:240px;padding:24px;border:1px solid var(--ds-border-subtle);border-radius:var(--ds-radius-md);background-color:var(--ds-surface-subtle);background-image:radial-gradient(var(--ds-border-subtle) .7px,transparent .7px);background-size:16px 16px}.dependency-canvas svg{display:block;height:auto;margin:0 auto;overflow:visible}.dependency-canvas .node{cursor:pointer}.dependency-canvas .node rect,.dependency-canvas .node polygon,.dependency-canvas .node path{fill:var(--ds-surface-default)!important;stroke:var(--ds-border-strong)!important;stroke-width:1.5px!important}#plan-dependency-canvas .node text,#plan-dependency-canvas .node .label,#plan-dependency-canvas .node .label *{fill:var(--ds-text-primary)!important;color:var(--ds-text-primary)!important}.dependency-canvas .node rect{rx:10;ry:10}.dependency-canvas .node.graph-node--ancestor rect{fill:var(--graph-upstream-bg)!important;stroke:var(--graph-upstream-border)!important;stroke-width:2px!important}.dependency-canvas .node.graph-node--downstream rect{fill:var(--ds-success-subtle)!important;stroke:var(--ds-success-text)!important;stroke-width:2px!important}.dependency-canvas .node.graph-node--selected rect{fill:var(--graph-selected-bg)!important;stroke:var(--graph-selected-bg)!important;stroke-width:2.5px!important}#plan-dependency-canvas .node.graph-node--selected text,#plan-dependency-canvas .node.graph-node--selected .label,#plan-dependency-canvas .node.graph-node--selected .label *{fill:var(--graph-selected-text)!important;color:var(--graph-selected-text)!important}.dependency-canvas .node:focus-visible rect{stroke:var(--ds-focus-ring)!important;stroke-width:4px!important}.dependency-canvas .flowchart-link{stroke:var(--ds-text-muted)!important;stroke-width:1.7px!important}.dependency-canvas marker path{fill:var(--ds-text-muted)!important;stroke:var(--ds-text-muted)!important}.dependency-render-status{color:var(--ds-text-muted);font-size:13px}.dependency-links{display:flex;flex-wrap:wrap;align-items:baseline;gap:6px 10px;font-size:12px;line-height:1.8}.dependency-links strong{min-width:54px;color:var(--ds-text-muted);font-weight:500}.dependency-links a,.dependency-diff a{color:var(--ds-accent-action);text-decoration:none}.dependency-links a:hover{text-decoration:underline}.dependency-relations{display:grid;gap:5px;margin:12px 0 18px;padding:10px 12px;border-radius:var(--ds-radius-sm);background:var(--ds-surface-subtle)}.dependency-unavailable{padding:24px;border:1px solid var(--ds-border-subtle);border-radius:var(--ds-radius-md);background:var(--ds-surface-subtle)}.dependency-unavailable p{margin:12px 0;color:var(--ds-text-secondary)}.dependency-unavailable .ds-button{margin:8px 8px 0 0}.dependency-diff{padding:16px 20px;border-bottom:1px solid var(--ds-border-subtle);color:var(--ds-text-muted);font-size:12px}.dependency-diff h3{margin:0 0 6px;color:var(--ds-text-heading);font-size:13px}.dependency-diff p{margin:0}.dependency-diff ul{margin:6px 0 0;padding-left:20px}.dependency-diff li{margin:3px 0}.dependency-diff .dependency-added{color:var(--ds-success-text)}.dependency-diff .dependency-removed{color:var(--ds-danger-text)}
-.implementation-summary{margin:0 0 24px;padding:12px 16px;border:1px solid var(--ds-border-subtle);border-radius:var(--ds-radius-md);font-size:13px}.implementation-summary p{margin:6px 0 0;color:var(--ds-text-muted);font-size:12px}.implementation-flag{display:inline-block;margin:10px 0;padding:4px 9px;border:1px solid var(--ds-border-strong);border-radius:var(--ds-radius-sm);font-size:12px}.followup-details{margin:12px 0;padding:12px 16px;background:var(--ds-surface-subtle);border-left:3px solid var(--ds-accent-action)}.followup-details p:last-child{margin-bottom:0}.snapshot-picker{display:flex;align-items:center;gap:8px;margin-bottom:16px;font-size:12px;color:var(--ds-text-muted)}.snapshot-picker select{min-width:0;max-width:100%}
-@media(max-width:560px){.brand-title{display:none}.dependency-header{flex-direction:column;gap:10px}.dependency-canvas{padding:16px}}
-@media(max-width:900px){.ds-app-header{padding:0 12px;gap:8px}.header-actions .ds-badge{display:none}.ds-tabs{margin-left:0}.ds-tabs__tab{padding:0 10px}.shell{padding:16px}.plan-layout{grid-template-columns:1fr}.clarifications{position:static}.clarification-list{max-height:none}.diff-toolbar{align-items:stretch;flex-direction:column}.ds-select{width:100%}.arrow{display:none}.diff-summary{margin-left:0}.diff-navigation{align-self:stretch}.diff-navigation .ds-button{flex:1}.diff-document{padding:24px}.diff-document .diff-line::before{right:calc(100% + 3px)}.diff-document li.diff-line::before{right:calc(100% + 19px)}}
-@media(max-width:700px){.plan-mode-bar{flex-wrap:wrap}.plan-mode-label,.plan-mode-note,.sidebar-toggle-label{display:none}.plan-reader{grid-template-columns:1fr}.plan-outline{position:sticky;top:60px;z-index:10;align-self:start;overflow:auto;border-right:0;border-bottom:1px solid var(--ds-border-subtle)}.plan-outline-sticky{position:static;max-height:none;overflow:visible;padding:10px}.plan-outline-title,.plan-outline-label,.plan-outline-divider{display:none}.plan-outline-list,#plan-change-links,#review-change-links{width:max-content;max-width:none;flex-direction:row}#plan-change-links,#review-change-links{margin:0;padding:0;border:0}.plan-outline-button{width:auto;white-space:nowrap}.plan-document-wrap{padding:24px}}
-@media(max-width:560px){.review-document-header{align-items:flex-start;flex-direction:column;gap:var(--ds-space-4)}.review-actions{flex-wrap:wrap}.plan-document-header{align-items:flex-start;flex-direction:column;gap:var(--ds-space-2)}.plan-document-header .plan-version{font-size:20px;line-height:28px}.guided-pagination{align-items:stretch;flex-wrap:wrap}.guided-position{order:-1;width:100%}.guided-pagination .ds-button{flex:1}}
+*{box-sizing:border-box}html{background:var(--bg);color:var(--text);font-family:var(--sans)}body{margin:0}button{font:inherit}
+header.app{position:sticky;top:0;z-index:10;display:flex;align-items:center;gap:16px;height:56px;padding:0 24px;background:color-mix(in srgb,var(--surface) 94%,transparent);border-bottom:1px solid var(--border);backdrop-filter:blur(12px)}
+.brand{font-size:14px;font-weight:600;color:var(--heading)}
+.tabs{display:flex;align-self:stretch;margin-left:8px}.tabs button{height:56px;padding:0 14px;border:0;border-bottom:2px solid transparent;background:none;color:var(--text-2);cursor:pointer;font-size:13px}.tabs button[hidden]{display:none}.tabs button.active{color:var(--accent);border-bottom-color:var(--accent)}
+.right{margin-left:auto;display:flex;gap:8px;align-items:center}
+.badge{display:inline-flex;align-items:center;height:20px;padding:0 8px;border-radius:6px;background:var(--inset);color:var(--muted);font-size:11px;font-weight:600;font-family:var(--mono)}
+.btn{display:inline-flex;align-items:center;gap:6px;height:30px;padding:0 10px;border:1px solid var(--border-strong);border-radius:8px;background:none;color:var(--text-2);cursor:pointer;font-size:12px}.btn:hover{background:var(--inset)}.btn:disabled{opacity:.4;cursor:default}
+kbd{display:inline-flex;min-width:18px;height:18px;padding:0 4px;align-items:center;justify-content:center;border:1px solid var(--border-strong);border-radius:4px;font-family:var(--mono);font-size:10px;color:var(--muted)}
+main{width:min(1440px,100%);margin:0 auto;padding:28px}.view[hidden]{display:none}
+.layout{display:grid;grid-template-columns:minmax(0,1fr) 320px;gap:24px;align-items:start}
+.card{background:var(--surface);border:1px solid var(--border);border-radius:14px;overflow:clip}
+.reader{display:grid;grid-template-columns:240px minmax(0,1fr);min-height:600px}
+.outline{border-right:1px solid var(--border);background:var(--bg)}.outline-inner{position:sticky;top:76px;max-height:calc(100vh - 100px);overflow:auto;padding:20px 12px;display:flex;flex-direction:column;gap:2px}
+.outline .label{margin:14px 10px 4px;color:var(--faint);font-size:10px;font-weight:700;letter-spacing:.05em;text-transform:uppercase}
+.outline button{width:100%;padding:7px 10px;border:0;border-radius:8px;background:none;color:var(--text-2);cursor:pointer;text-align:left;font-size:13px;line-height:18px}.outline button:hover{background:var(--inset);color:var(--text)}.outline button.section{color:var(--text);font-weight:600}.outline button.active{background:var(--surface);color:var(--accent);font-weight:600;box-shadow:0 1px 2px rgba(0,0,0,.08)}
+.outline button .dot{display:inline-block;width:7px;height:7px;margin-right:7px;border-radius:50%;background:var(--border-strong);vertical-align:middle}.outline button .dot.done{background:var(--ok)}
+.document{min-width:0;padding:clamp(24px,4vw,56px)}
+.doc-header{display:flex;align-items:baseline;justify-content:space-between;gap:24px;margin:0 0 24px;padding-bottom:18px;border-bottom:1px solid var(--border)}
+.doc-header h1{margin:0;font-family:var(--serif);font-size:30px;font-weight:400;line-height:40px;color:var(--heading)}.doc-header .meta{flex:none;color:var(--muted);font-size:12px;text-align:right;white-space:nowrap}
+.pager{display:flex;align-items:center;justify-content:space-between;gap:12px;margin:0 0 24px;padding-bottom:16px;border-bottom:1px solid var(--border)}.pager .pos{color:var(--muted);font-size:12px}
+.kicker{margin-bottom:4px;color:var(--accent);font-size:11px;font-weight:700;letter-spacing:.04em;text-transform:uppercase}
+.markdown{max-width:840px;font-size:15px;line-height:1.7}.markdown>h2:first-of-type{margin-top:0}
+.markdown h2{margin:36px 0 12px;font-size:22px;font-weight:500;color:var(--heading)}.markdown h3{margin:26px 0 8px;font-size:17px;font-weight:600;color:var(--heading)}.markdown h4{margin:18px 0 6px;font-size:11px;text-transform:uppercase;color:var(--muted)}
+.markdown p{margin:0 0 14px}.markdown ul,.markdown ol{margin:0 0 16px;padding-left:24px}.markdown li{margin:5px 0}
+.markdown blockquote{margin:16px 0;padding:10px 14px;border-left:3px solid var(--accent);background:var(--bg);color:var(--text-2)}
+.markdown table{display:block;width:max-content;max-width:100%;margin:16px 0;overflow-x:auto;border-collapse:collapse}.markdown th,.markdown td{padding:8px 12px;border:1px solid var(--border);text-align:left;vertical-align:top}.markdown th{background:var(--bg);font-weight:600}
+code{padding:2px 5px;border-radius:4px;background:var(--inset);font-family:var(--mono);font-size:.9em}.markdown pre{overflow:auto;padding:14px;border:1px solid var(--border);border-radius:8px;background:var(--bg)}.markdown pre code{padding:0;background:none}
+.markdown .mermaid{margin:20px 0;padding:14px;border:1px solid var(--border);border-radius:8px;background:var(--surface);text-align:center;overflow-x:auto}
+.hljs-keyword,.hljs-doctag,.hljs-type,.hljs-template-tag,.hljs-variable.language_{color:var(--k)}.hljs-title{color:var(--t)}.hljs-attr,.hljs-attribute,.hljs-literal,.hljs-meta,.hljs-number,.hljs-operator,.hljs-variable,.hljs-selector-class,.hljs-selector-id{color:var(--l)}.hljs-string,.hljs-regexp{color:var(--s)}.hljs-built_in,.hljs-symbol,.hljs-bullet{color:var(--v)}.hljs-comment,.hljs-code,.hljs-formula{color:var(--c)}.hljs-name,.hljs-quote,.hljs-selector-tag{color:var(--g)}.hljs-section{color:var(--l);font-weight:600}.hljs-emphasis{font-style:italic}.hljs-strong{font-weight:600}
+.pills{display:flex;flex-wrap:wrap;gap:8px;margin:10px 0 16px}.pill{display:inline-flex;align-items:center;gap:6px;padding:5px 10px;border-radius:999px;background:var(--inset);color:var(--muted);font-size:12px;font-weight:600}
+.pill.yes{background:var(--ok-bg);color:var(--ok)}.pill.no,.pill.partial{background:var(--bad-bg);color:var(--bad)}.pill.needs-human-review{background:var(--warn-bg);color:var(--warn)}.pill.followup{background:var(--accent-bg);color:var(--accent)}
+.verdicts{display:grid;gap:8px;margin:0 0 20px;font-size:13px;color:var(--text-2)}.verdicts p{margin:0}.verdicts b{color:var(--text)}
+.relations{display:grid;gap:4px;margin:10px 0 18px;padding:10px 12px;border-radius:6px;background:var(--bg);font-size:12px}.relations a{color:var(--accent);text-decoration:none}.relations a:hover{text-decoration:underline}.relations b{color:var(--muted);font-weight:500;margin-right:6px}
+details.planned{margin:20px 0;border:1px solid var(--border);border-radius:8px;background:var(--bg)}details.planned>summary{padding:10px 14px;cursor:pointer;font-weight:600;color:var(--heading)}details.planned>div{padding:4px 16px 8px;border-top:1px solid var(--border)}
+.graph{overflow:auto;padding:20px;border:1px solid var(--border);border-radius:8px;background-color:var(--bg);background-image:radial-gradient(var(--border) .7px,transparent .7px);background-size:16px 16px}
+.graph svg{display:block;margin:0 auto;height:auto;overflow:visible}.graph .node{cursor:pointer}.graph .node rect{fill:var(--surface)!important;stroke:var(--border-strong)!important;rx:8;ry:8}.graph .node.done rect{stroke:var(--ok)!important;stroke-width:2px!important}.graph .node .label,.graph .node text{fill:var(--text)!important;color:var(--text)!important}.graph .flowchart-link{stroke:var(--muted)!important}.graph marker path{fill:var(--muted)!important;stroke:var(--muted)!important}
+.context{position:sticky;top:76px}.context h2{margin:0;padding:14px 18px;border-bottom:1px solid var(--border);font-size:13px;font-weight:600;color:var(--heading)}.context .ask{margin:0;padding:14px 18px;white-space:pre-wrap;overflow-wrap:anywhere;font-size:14px;line-height:22px;border-bottom:1px solid var(--border);max-height:40vh;overflow:auto}
+.clar{padding:14px 18px;border-bottom:1px solid var(--border)}.clar:last-child{border-bottom:0}.clar .q{margin:0 0 6px;color:var(--text-2);font-size:13px}.clar .a{margin:0;white-space:pre-wrap;font-size:14px}.clar .a.custom::after{content:" (typed)";color:var(--faint);font-size:11px}.empty{padding:20px 18px;color:var(--muted);font-size:13px}
+.errors{margin:0 0 20px;padding:14px 16px;border-radius:8px;background:var(--bad-bg);color:var(--bad);font-size:13px}.errors ul{margin:8px 0 0;padding-left:20px}.errors code{background:none;padding:0}
+@media(max-width:1000px){.layout{grid-template-columns:1fr}.context{position:static}}
+@media(max-width:720px){.reader{grid-template-columns:1fr}.outline{border-right:0;border-bottom:1px solid var(--border)}.outline-inner{position:static;max-height:none;flex-direction:row;flex-wrap:wrap}.outline .label{display:none}.document{padding:20px}.doc-header{flex-direction:column;gap:6px}}
 </style>
 </head>
 <body>
-<template id="dashboard-data">{{dashboardData}}</template>
-<header class="ds-app-header">
-  <div class="brand">
-    <svg viewBox="0 0 191.2 191.2" fill="none" role="img" aria-label="Isara"><g fill="currentColor"><path d="M163,148.17c12.19-15.89,24.55-43.65,13.71-62.73-3.85-6.21-8.43-8.22-15.66-8.26-9.73-.04-19.29,2.45-28.62,5.12-25.24,7.07-48.2,20.29-73.29,27.8-10.75,3.08-29.88,8.88-39.99,2.95-11.17-7.71-11.94-23.42-9.19-35.53,5.72-24.95,24.81-48.51,47.39-60.33,11.19-5.81,26.64-9.64,37.51-1,9.13,8.17,9.85,29.11,10.38,40.73.39,16.63-.64,33.08-3.18,49.55-3.12,15.54-6.42,31.41-6.61,47.26.14,6.05.28,13.17,4.04,17.93,3.86,4.15,9.71,5.87,15.36,5.95,19.73-.01,36.53-14.68,48.17-29.44Z"/><path d="M117.42,146.6c13.08-5.48,26.36-13.42,33.77-25.66,2.56-4.43,4.34-11.12-.32-14.72-6.79-5.47-16.54-6.75-24.82-7.85-20.27-2.84-40.82-1.23-61.1-3.98-7.62-1.12-15.37-2.38-22.49-5.52-5.82-2.51-8.59-6.24-8.17-12.68.77-7.96,6.03-14.62,11.51-19.98,17.25-16.24,47.6-27.95,71.13-22.09,5.25,1.49,10.62,4.65,12.49,10.22,1.26,5.95-1.2,11.12-3.34,16.28-9.81,21.37-28.45,38.27-43.05,58.25-3.37,4.86-7.06,11.12-5.45,17.15,5.53,15.26,32.61,10.85,43.75,6.54Z"/></g><circle cx="95.6" cy="95.6" r="94.6" stroke="currentColor" stroke-width="2"/></svg>
-    <div class="brand-title">Implementation workflow</div>
-  </div>
-  <nav class="ds-tabs" aria-label="Dashboard views">
-    <button class="ds-tabs__tab" id="review-tab" data-view="review" hidden>Review</button>
-    <button class="ds-tabs__tab" id="plan-tab" data-view="plan">Plan</button>
-    <button class="ds-tabs__tab" id="diff-tab" data-view="diff">Compare versions</button>
-  </nav>
-  <div class="header-actions"><span class="ds-badge" id="workflow-name"></span><button class="ds-button" id="refresh-button" type="button">Refresh</button><button class="ds-button" id="theme-button" type="button" aria-label="Toggle color theme">Theme</button></div>
+<header class="app">
+  <div class="brand">Implementation workflow</div>
+  <nav class="tabs"><button data-view="plan">Plan</button><button data-view="review" id="review-tab" hidden>Review</button></nav>
+  <div class="right"><span class="badge" id="workflow-id"></span><button class="btn" id="theme" type="button">Theme</button></div>
 </header>
-<main class="shell">
-  <section class="view" id="review-view" hidden>
-    <article class="card review-card">
-      <div class="plan-mode-bar" aria-label="Review reading mode"><span class="plan-mode-label">Reading mode</span><button class="ds-button" id="review-guided-mode-button" type="button">Guided view</button><button class="ds-button" id="review-full-mode-button" type="button">Full document</button><div class="plan-sidebar-actions"><button class="ds-button sidebar-toggle" id="review-navigation-sidebar-button" type="button" aria-label="Hide left navigation sidebar (S)" aria-controls="review-outline" aria-expanded="true" aria-keyshortcuts="S"><span class="sidebar-toggle-label">Hide navigation</span> <kbd class="shortcut-key">S</kbd></button></div></div>
-      <div class="plan-reader" id="review-reader">
-        <nav class="plan-outline" id="review-outline" aria-label="Review outline">
-          <div class="plan-outline-sticky">
-            <h2 class="plan-outline-title">Review outline</h2>
-            <div class="plan-outline-list"><button class="plan-outline-button plan-outline-button--section" type="button" data-reader="review" data-reader-destination="overall">Overall result</button><button class="plan-outline-button plan-outline-button--section" type="button" data-reader="review" data-reader-destination="concerns">Overall concerns</button><div class="plan-outline-label">Planned changes</div><div id="review-change-links"></div><div class="plan-outline-divider" aria-hidden="true"></div><button class="plan-outline-button plan-outline-button--section" type="button" data-reader="review" data-reader-destination="testing">Testing criteria</button></div>
-          </div>
-        </nav>
-        <div class="plan-document-wrap"><div class="markdown review-document"><div class="plan-document-header review-document-header"><div><h1>Implementation review</h1><div class="review-meta" id="review-meta"></div></div><div class="review-actions" id="review-pull-requests"></div></div><div class="guided-pagination" id="review-pagination"><button class="ds-button" id="review-previous-section" type="button" aria-label="Previous section ([)" aria-keyshortcuts="[">← Previous <kbd class="shortcut-key">[</kbd></button><div class="guided-position" id="review-position" role="status" aria-live="polite" aria-atomic="true"></div><button class="ds-button" id="review-next-section" type="button" aria-label="Next section (])" aria-keyshortcuts="]">Next <kbd class="shortcut-key">]</kbd> →</button></div><div class="guided-view" id="review-content"></div></div></div>
-      </div>
-    </article>
-  </section>
+<main>
   <section class="view" id="plan-view">
-    <div class="plan-layout">
-      <article class="card plan-card">
-        <div class="plan-mode-bar" aria-label="Plan reading mode"><span class="plan-mode-label">Reading mode</span><button class="ds-button" id="plan-guided-mode-button" type="button">Guided view</button><button class="ds-button" id="plan-full-mode-button" type="button">Full document</button><span class="plan-mode-note" id="plan-mode-note" hidden>Guided view is available after the first plan is finalized.</span><div class="plan-sidebar-actions"><button class="ds-button sidebar-toggle" id="plan-navigation-sidebar-button" type="button" aria-label="Hide left navigation sidebar (S)" aria-controls="plan-outline" aria-expanded="true" aria-keyshortcuts="S"><span class="sidebar-toggle-label">Hide navigation</span> <kbd class="shortcut-key">S</kbd></button><button class="ds-button sidebar-toggle" id="context-sidebar-button" type="button" aria-label="Hide workflow context sidebar (C)" aria-controls="workflow-context-sidebar" aria-expanded="true" aria-keyshortcuts="C"><span class="sidebar-toggle-label">Hide context</span> <kbd class="shortcut-key">C</kbd></button></div></div>
-        <div class="plan-reader" id="plan-reader">
-          <nav class="plan-outline" id="plan-outline" aria-label="Plan outline">
-            <div class="plan-outline-sticky">
-              <h2 class="plan-outline-title">Plan outline</h2>
-              <div class="plan-outline-list"><button class="plan-outline-button plan-outline-button--section" type="button" data-reader="plan" data-reader-destination="goal">Goal</button><button class="plan-outline-button plan-outline-button--section" id="plan-intro-link" type="button" data-reader="plan" data-reader-destination="intro" hidden>Introduction</button><button class="plan-outline-button plan-outline-button--section" type="button" data-reader="plan" data-reader-destination="graph">Dependency graph</button><div class="plan-outline-label">Planned changes</div><div id="plan-change-links"></div><div class="plan-outline-divider" aria-hidden="true"></div><button class="plan-outline-button plan-outline-button--section" type="button" data-reader="plan" data-reader-destination="testing">Testing</button></div>
-            </div>
-          </nav>
-          <div class="plan-document-wrap"><div class="markdown"><div class="plan-document-header" id="plan-document-header"><h1 id="plan-title"></h1><div class="plan-version" id="version-badge"></div></div><div class="snapshot-picker"><label for="plan-version">Plan snapshot</label><select class="ds-select" id="plan-version"></select></div><div class="implementation-summary" id="implementation-summary" hidden></div><div class="guided-pagination" id="plan-pagination" hidden><button class="ds-button" id="plan-previous-section" type="button" aria-label="Previous section ([)" aria-keyshortcuts="[">← Previous <kbd class="shortcut-key">[</kbd></button><div class="guided-position" id="plan-position" role="status" aria-live="polite" aria-atomic="true"></div><button class="ds-button" id="plan-next-section" type="button" aria-label="Next section (])" aria-keyshortcuts="]">Next <kbd class="shortcut-key">]</kbd> →</button></div><div id="plan-content"></div></div></div>
+    <div class="layout">
+      <article class="card"><div class="reader">
+        <nav class="outline"><div class="outline-inner" id="plan-outline"></div></nav>
+        <div class="document">
+          <div class="doc-header"><h1 id="plan-title"></h1><div class="meta" id="plan-meta"></div></div>
+          <div class="pager"><button class="btn" id="plan-prev" type="button">← Previous <kbd>[</kbd></button><span class="pos" id="plan-pos"></span><button class="btn" id="plan-next" type="button">Next <kbd>]</kbd> →</button></div>
+          <div class="markdown" id="plan-content"></div>
         </div>
-      </article>
-      <aside class="card clarifications" id="workflow-context-sidebar"><div class="section-head"><h2>Workflow context</h2><span class="ds-badge" id="clarification-count"></span></div><section class="original-ask" id="original-ask"><div class="original-ask-label">Original ask</div><p class="original-ask-text" id="original-ask-text"></p></section><div class="clarification-list" id="clarification-list"></div></aside>
+      </div></article>
+      <aside class="card context"><h2>Original ask</h2><pre class="ask" id="ask"></pre><h2>Clarifications</h2><div id="clarifications"></div></aside>
     </div>
   </section>
-  <section class="view" id="diff-view" hidden>
-    <div class="card diff-card">
-      <div class="diff-toolbar">
-        <div class="field"><label for="from-version">Base version</label><select class="ds-select" id="from-version"></select></div><div class="arrow" aria-hidden="true">→</div>
-        <div class="field"><label for="to-version">Compare version</label><select class="ds-select" id="to-version"></select></div><div class="diff-summary" id="diff-summary"></div><div class="diff-navigation" aria-label="Diff block navigation"><button class="ds-button" id="diff-previous-block" type="button" aria-label="Previous diff block ([)" aria-keyshortcuts="[" disabled>← Previous <kbd class="shortcut-key">[</kbd></button><button class="ds-button" id="diff-next-block" type="button" aria-label="Next diff block (])" aria-keyshortcuts="]" disabled>Next <kbd class="shortcut-key">]</kbd> →</button></div>
+  <section class="view" id="review-view" hidden>
+    <article class="card"><div class="reader">
+      <nav class="outline"><div class="outline-inner" id="review-outline"></div></nav>
+      <div class="document">
+        <div class="doc-header"><h1>Implementation review</h1><div class="meta" id="review-meta"></div></div>
+        <div class="pager"><button class="btn" id="review-prev" type="button">← Previous <kbd>[</kbd></button><span class="pos" id="review-pos"></span><button class="btn" id="review-next" type="button">Next <kbd>]</kbd> →</button></div>
+        <div class="markdown" id="review-content"></div>
       </div>
-      <section class="dependency-diff" id="dependency-diff" aria-label="Dependency changes"></section>
-      <div class="diff-scroll" id="diff-content"></div>
-    </div>
+    </div></article>
   </section>
 </main>
+<script type="application/json" id="data">__DATA__</script>
 <script src="../assets/marked.umd.js"></script>
 <script src="../assets/highlight.min.js"></script>
-<script id="dashboard-app">
-const dashboardDataElement = document.getElementById("dashboard-data");
-const dashboardSnapshot = dashboardDataElement.content.textContent;
-const dashboardRevision = document.querySelector('meta[name="implementation-workflow-revision"]').content;
-const dashboard = JSON.parse(dashboardSnapshot);
-const stateKey = "isara-workflow-dashboard:" + location.pathname;
-let latestPlan = null, planStructure = null, selectedGraphNode = null;
-let graphRenderSequence = 0;
-let navigationSidebarCollapsed = false, contextSidebarCollapsed = false, currentDiffBlockIndex = -1;
-const readers = {};
-function escapeHtml(value) { return String(value).replace(/[&<>\"]/g, function(character) { if (character === "&") return "&amp;"; if (character === "<") return "&lt;"; if (character === ">") return "&gt;"; return "&quot;"; }); }
-function inlineMarkdown(value,context) { return marked.parseInline(String(value || ''),{gfm:true,renderer:markdownRenderer(context)}); }
-function safeMarkdownUrl(value) { const url=String(value || ""), compact=url.replace(/[\u0000-\u0020\u007f]/g,"").toLowerCase(); return /^(?:javascript|vbscript|data):/.test(compact) ? null : url; }
-function planMarkdownUrl(value,context) {
-  if(!context || !context.document)return value;
-  const source=String(value || "");let id=null;
-  try {
-    if(/^#(?:plan-change-|review-change-)/.test(source))id=decodeURIComponent(source.replace(/^#(?:plan-change-|review-change-)/,""));
-    else if(source.startsWith("#") && !source.includes("/"))id=decodeURIComponent(source.slice(1));
-    else {
-      const file=/^(?:\.\/)?(?:changes\/)?([a-z0-9-]+)\.md(?:#.*)?$/.exec(source);
-      const directory=/^(?:(?:\.\.\/)*|\.\/)?(?:planned-changes\/)?([a-z0-9-]+)\/change\.md(?:#.*)?$/.exec(source);
-      if(file || directory)id=(file || directory)[1];
-    }
-  } catch { return value; }
-  return id && context.document.changes.some(function(change){return change.id===id;}) ? "#"+(context.reader || "plan")+"/change/"+encodeURIComponent(id) : value;
+<script>
+const data = JSON.parse(document.getElementById("data").textContent);
+const plan = data.plan, review = data.review;
+const $ = (id) => document.getElementById(id);
+const esc = (v) => String(v ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+const numberOf = (slug) => plan ? plan.changes.findIndex((c) => c.slug === slug) + 1 : 0;
+const changeBySlug = (slug) => plan && plan.changes.find((c) => c.slug === slug);
+
+// ---------- markdown ----------
+function renderer() {
+  const r = new marked.Renderer();
+  r.html = (t) => esc(t.text);
+  r.code = (t) => {
+    const lang = String(t.lang || "").trim().split(/\s+/)[0].toLowerCase();
+    if (lang === "mermaid") return '<div class="mermaid">' + esc(t.text) + "</div>";
+    let body = esc(t.text);
+    try { if (lang && hljs.getLanguage(lang)) body = hljs.highlight(t.text, { language: lang, ignoreIllegals: true }).value; } catch {}
+    return '<pre><code class="hljs">' + body + "</code></pre>";
+  };
+  r.link = function (t) {
+    const text = this.parser.parseInline(t.tokens);
+    let href = String(t.href || "");
+    const m = /^(?:\.\.?\/)?(?:changes\/)?([a-z][a-z0-9-]*)\.md$/.exec(href);
+    if (m && changeBySlug(m[1])) href = "#plan/change/" + m[1];
+    if (/^\s*(javascript|vbscript|data):/i.test(href)) return text;
+    return '<a href="' + esc(href) + '" rel="noopener noreferrer">' + text + "</a>";
+  };
+  return r;
 }
-function codeLanguage(info) { return String(info || "").trim().split(/\s+/,1)[0].toLowerCase(); }
-function highlightCode(source,language) {
-  // Never guess a language or pass source through as HTML. A missing asset,
-  // unsupported language, or highlighter failure leaves readable, escaped code.
-  const library=globalThis.hljs;
-  try { if(language && library && library.getLanguage(language))return library.highlight(source,{language:language,ignoreIllegals:true}).value; }
-  catch { /* Keep the document usable even if highlighting fails. */ }
-  return escapeHtml(source);
-}
-function highlightedCodeLines(source,language) {
-  // highlight.js emits only escaped text and span tags. Reopen those spans at
-  // line boundaries so multiline tokens survive the diff's independent row wrappers.
-  const result=[],open=[];let line="";
-  for(const part of highlightCode(source,language).split(/(<span\b[^>]*>|<\/span>|\n)/g)) {
-    if(part==="\n") { result.push(line+"</span>".repeat(open.length));line=open.join("");continue; }
-    if(part.startsWith("<span"))open.push(part);else if(part==="</span>")open.pop();
-    line+=part;
-  }
-  result.push(line);return result;
-}
-function markdownRenderer(context) {
-  const renderer=new marked.Renderer();
-  renderer.html=function(token){return escapeHtml(token.text);};
-  renderer.code=function(token){const language=codeLanguage(token.lang);if(language==="mermaid")return '<div class="mermaid">'+escapeHtml(token.text)+"</div>";const languageClass=language ? " language-"+escapeHtml(language) : "";return '<pre><code class="hljs'+languageClass+'">'+highlightCode(token.text,language)+"</code></pre>";};
-  renderer.link=function(token){const text=this.parser.parseInline(token.tokens),href=safeMarkdownUrl(planMarkdownUrl(token.href,context));if(href===null)return text;const title=token.title ? ' title="'+escapeHtml(token.title)+'"' : "";return '<a href="'+escapeHtml(href)+'"'+title+' rel="noopener noreferrer">'+text+"</a>";};
-  renderer.image=function(token){const href=safeMarkdownUrl(token.href);if(href===null)return escapeHtml(token.text);const title=token.title ? ' title="'+escapeHtml(token.title)+'"' : "";return '<img src="'+escapeHtml(href)+'" alt="'+escapeHtml(token.text)+'"'+title+">";};
-  return renderer;
-}
-function renderMarkdown(markdown,context) {
-  const source=String(markdown || '');
-  if(!source.trim())return '<div class="empty">The plan is empty.</div>';
-  return marked.parse(source,{gfm:true,breaks:false,renderer:markdownRenderer(context)});
-}
-let mermaidLibraryPromise=null;
-function loadMermaidLibrary() {
+const md = (s) => marked.parse(String(s || ""), { gfm: true, renderer: renderer() });
+
+let mermaidPromise;
+function mermaidLib() {
   if (globalThis.mermaid) return Promise.resolve(globalThis.mermaid);
-  if (!mermaidLibraryPromise) mermaidLibraryPromise=new Promise(function(resolve,reject){const script=document.createElement("script");script.src=new URL("../assets/mermaid.min.js",location.href).href;script.onload=function(){globalThis.mermaid ? resolve(globalThis.mermaid) : reject(new Error("Mermaid did not initialize."));};script.onerror=function(){reject(new Error("Could not load Mermaid."));};document.head.appendChild(script);});
-  return mermaidLibraryPromise;
+  return mermaidPromise ??= new Promise((res, rej) => { const s = document.createElement("script"); s.src = new URL("../assets/mermaid.min.js", location.href).href; s.onload = () => res(globalThis.mermaid); s.onerror = () => rej(new Error("Could not load Mermaid")); document.head.appendChild(s); });
 }
-async function renderMermaidDiagrams(root) {
-  const nodes=Array.from((root || document).querySelectorAll(".mermaid:not([data-processed])"));
+async function runMermaid(root) {
+  const nodes = [...root.querySelectorAll(".mermaid:not([data-processed])")];
   if (!nodes.length) return;
-  for (const node of nodes) if (!node.dataset.mermaidSource) node.dataset.mermaidSource=node.textContent || "";
-  try { const library=await loadMermaidLibrary();library.initialize({startOnLoad:false,securityLevel:"strict",theme:document.documentElement.dataset.theme==="dark" ? "dark" : "default"});await library.run({nodes:nodes,suppressErrors:true}); }
-  catch (error) { for (const node of nodes) { node.classList.add("mermaid-error");node.title=error instanceof Error ? error.message : "Could not render Mermaid diagram."; } }
+  try {
+    const lib = await mermaidLib();
+    lib.initialize({ startOnLoad: false, securityLevel: "strict", theme: document.documentElement.dataset.theme === "dark" ? "dark" : "default" });
+    await lib.run({ nodes, suppressErrors: true });
+  } catch (e) { for (const n of nodes) n.title = e.message; }
 }
-function rerenderMermaidDiagrams() { const nodes=Array.from(document.querySelectorAll(".mermaid[data-mermaid-source]"));for(const node of nodes){node.textContent=node.dataset.mermaidSource;node.removeAttribute("data-processed");}void renderMermaidDiagrams(document);if(isPlanGraphSection() && currentDependencyGraph().status==="valid")void renderDependencyGraphDiagram(currentDependencyGraph()); }
-function currentDependencyGraph() { return latestPlan && latestPlan.dependencyGraph || {status:"unavailable",reason:"This snapshot has no validated dependency information."}; }
-function dependencyRelations(graph,id) {
-  const ancestors=new Set(), downstream=new Set();
-  if (graph.status!=="valid") return {ancestors:ancestors,downstream:downstream};
-  const byId=new Map(graph.nodes.map(function(node){return [node.id,node];})), children=new Map(graph.nodes.map(function(node){return [node.id,[]];}));
-  for (const node of graph.nodes) for (const prerequisite of node.dependsOn) if(children.has(prerequisite))children.get(prerequisite).push(node.id);
-  function visit(start,seen,next) { const pending=next(start).slice();while(pending.length){const candidate=pending.pop();if(candidate===start || seen.has(candidate))continue;seen.add(candidate);pending.push.apply(pending,next(candidate));} }
-  visit(id,ancestors,function(key){return byId.get(key) ? byId.get(key).dependsOn : [];});
-  visit(id,downstream,function(key){return children.get(key) || [];});
-  return {ancestors:ancestors,downstream:downstream};
+
+// ---------- verdict helpers ----------
+const label = (s) => s === "needs-human-review" ? "Needs human review" : s[0].toUpperCase() + s.slice(1);
+const pills = (v) => '<div class="pills">' + ["necessary", "sufficient", "testing"].map((k) => '<span class="pill ' + v[k].status + '">' + k[0].toUpperCase() + k.slice(1) + ": " + label(v[k].status) + "</span>").join("") + "</div>";
+const explanations = (v) => '<div class="verdicts">' + ["necessary", "sufficient", "testing"].map((k) => "<p><b>" + k[0].toUpperCase() + k.slice(1) + ".</b> " + esc(v[k].explanation) + "</p>").join("") + "</div>";
+const errorBox = (title, errors) => '<div class="errors"><b>' + esc(title) + "</b><ul>" + errors.map((e) => "<li><code>" + esc(e) + "</code></li>").join("") + "</ul></div>";
+
+// ---------- plan sections ----------
+function changeHeader(c) {
+  const enables = plan.changes.filter((o) => o.dependsOn.includes(c.slug));
+  const links = (list) => list.length ? list.map((o) => '<a href="#plan/change/' + o.slug + '">' + numberOf(o.slug) + ". " + esc(o.title) + "</a>").join(", ") : "none";
+  return '<div class="kicker">Change ' + numberOf(c.slug) + " · <code>" + c.slug + "</code></div><h2>" + esc(c.title) + "</h2>" +
+    '<div class="pills"><span class="pill ' + (c.implemented ? "yes" : "") + '">' + (c.implemented ? "Marked implemented" : "Not marked implemented") + "</span>" + (c.followup ? '<span class="pill followup">Followup</span>' : "") + "</div>" +
+    '<div class="relations"><span><b>Requires</b>' + links(c.dependsOn.map(changeBySlug).filter(Boolean)) + "</span><span><b>Enables</b>" + links(enables) + "</span></div>";
 }
-function wrapGraphTitle(title) {
-  const lines=[];let line="";
-  for(const word of String(title).replace(/\s+/g," ").trim().split(" ")) {
-    const pieces=Array.from(word);while(pieces.length>28){if(line){lines.push(line);line="";}lines.push(pieces.splice(0,28).join(""));}
-    const tail=pieces.join("");if(line && Array.from(line+" "+tail).length>28){lines.push(line);line="";}line+=(line ? " " : "")+tail;
-  }
-  if(line)lines.push(line);return lines;
-}
-function mermaidGraphText(value) { return Array.from(String(value)).map(function(character){return /[a-zA-Z0-9 .,!?():/_-]/.test(character) ? character : "#"+character.codePointAt(0)+";";}).join(""); }
-function generateDependencyDiagram(graph) {
-  if(graph.status!=="valid")return "";
-  const identifiers=new Map(graph.nodes.map(function(node,index){return [node.id,"dag_"+index];})), lines=["flowchart TD"];
-  for(const [index,node] of graph.nodes.entries()) {
-    const label=["Change "+(index+1)].concat(wrapGraphTitle(node.title)).map(mermaidGraphText).join("<br/>");
-    lines.push('  '+identifiers.get(node.id)+'["'+label+'"]');
-    lines.push("  class "+identifiers.get(node.id)+" dag-node-"+index+";");
-  }
-  for(const node of graph.nodes)for(const prerequisite of node.dependsOn)lines.push("  "+identifiers.get(prerequisite)+" --> "+identifiers.get(node.id));
+function graphSource() {
+  const lines = ["flowchart LR"];
+  plan.changes.forEach((c, i) => lines.push("  n" + i + '["' + (i + 1) + ". " + c.title.replace(/["\\]/g, "'") + '"]' + (c.implemented ? ":::done" : "")));
+  plan.changes.forEach((c, i) => c.dependsOn.forEach((d) => { const j = plan.changes.findIndex((o) => o.slug === d); if (j >= 0) lines.push("  n" + j + " --> n" + i); }));
+  lines.push("  classDef done stroke-width:2px");
   return lines.join("\n");
 }
-function graphDestination(id) { return "plan/graph"+(id ? "/"+encodeURIComponent(id) : ""); }
-function isPlanGraphSection() { return Boolean(readers.plan && readers.plan.mode==="guided" && readers.plan.currentDestination==="graph"); }
-function readerDestinationHash(name) { const reader=readers[name];return name==="plan" && isPlanGraphSection() ? graphDestination(selectedGraphNode) : name+"/"+(reader.mode==="guided" ? reader.currentDestination.split("/").map(encodeURIComponent).join("/") : "full"); }
-function planChangeDestination(id) { const change=planStructure && planStructure.changes && planStructure.changes.find(function(item){return item.id===id;});return change ? "change/"+change.id : null; }
-function dependencyLink(graph,id) {
-  const node=graph.nodes.find(function(item){return item.id===id;});if(!node)return escapeHtml(id);
-  const destination="plan/"+(planChangeDestination(id) || "full");
-  return '<a href="#'+destination+'" data-dependency-node="'+escapeHtml(id)+'" title="'+escapeHtml(id)+'">'+(graph.nodes.indexOf(node)+1)+'. '+escapeHtml(node.title)+'</a>';
+function planSections() {
+  if (!plan) return [{ id: "errors", label: "Plan status", section: true, html: () => errorBox("The plan directory is not valid yet. The agent must fix these before the plan can be used:", data.planErrors) }];
+  const s = [{ id: "goal", label: "Goal", section: true, html: () => '<div class="kicker">Goal</div>' + md(plan.goal) }];
+  if (plan.intro) s.push({ id: "intro", label: "Introduction", section: true, html: () => '<div class="kicker">Introduction</div>' + md(plan.intro) });
+  s.push({ id: "graph", label: "Dependency graph", section: true, html: () => '<div class="kicker">Dependency graph</div><p>Arrows point from prerequisites to the changes that need them. Select a node to open it.</p><div class="graph"><div class="mermaid">' + esc(graphSource()) + "</div></div>" });
+  s.push({ id: "changes", label: "Changes", group: true });
+  for (const c of plan.changes) s.push({ id: "change/" + c.slug, label: numberOf(c.slug) + ". " + c.title, done: c.implemented, html: () => changeHeader(c) + md(c.content) });
+  s.push({ id: "testing", label: "Testing", section: true, html: () => '<div class="kicker">End-to-end testing</div>' + md(plan.testing) });
+  return s;
 }
-function renderDependencyRelations(graph,id) {
-  if(graph.status!=="valid")return "";const node=graph.nodes.find(function(item){return item.id===id;});if(!node)return "";
-  const enables=graph.nodes.filter(function(item){return item.dependsOn.includes(id);}).map(function(item){return item.id;});
-  return [["Requires",node.dependsOn],["Enables",enables]].map(function(item){return '<div class="dependency-links"><strong>'+item[0]+'</strong><span>'+(item[1].length ? item[1].map(function(key){return dependencyLink(graph,key);}).join(" · ") : "None")+'</span></div>';}).join("");
+function reviewSections() {
+  if (!review) return data.reviewErrors.length ? [{ id: "errors", label: "Review status", section: true, html: () => errorBox("The review directory is not valid yet:", data.reviewErrors) }] : [];
+  const s = [{ id: "overall", label: "Overall result", section: true, html: () => '<div class="kicker">Overall</div>' + pills(review.overall) + explanations(review.overall) + md(review.summary) }];
+  s.push({ id: "changes", label: "Changes", group: true });
+  for (const r of review.changes) {
+    const c = changeBySlug(r.slug);
+    s.push({ id: "change/" + r.slug, label: numberOf(r.slug) + ". " + c.title, done: r.necessary.status === "yes" && r.sufficient.status === "yes" && r.testing.status === "yes", html: () =>
+      '<div class="kicker">Change ' + numberOf(r.slug) + " · <code>" + r.slug + "</code></div><h2>" + esc(c.title) + "</h2>" + pills(r) + explanations(r) +
+      '<details class="planned"><summary>Planned change</summary><div>' + md(c.content) + "</div></details>" +
+      '<h3>What was implemented</h3>' + md(r.content) });
+  }
+  return s;
 }
-function updateGraphHighlight(graph) {
-  const relations=dependencyRelations(graph,selectedGraphNode), canvas=document.getElementById("plan-dependency-canvas");
-  if(canvas)for(const [index,node] of graph.nodes.entries()) {
-    const element=canvas.querySelector(".node.dag-node-"+index);if(!element)continue;
-    const selected=node.id===selectedGraphNode;element.classList.toggle("graph-node--selected",selected);element.classList.toggle("graph-node--ancestor",relations.ancestors.has(node.id));element.classList.toggle("graph-node--downstream",relations.downstream.has(node.id));element.setAttribute("aria-pressed",String(selected));
+
+// ---------- reader ----------
+function reader(name, sections) {
+  const outline = $(name + "-outline"), content = $(name + "-content"), pos = $(name + "-pos");
+  const pages = sections.filter((s) => !s.group);
+  let current = 0;
+  outline.innerHTML = sections.map((s) => s.group ? '<div class="label">' + esc(s.label) + "</div>" : '<button type="button" class="' + (s.section ? "section" : "") + '" data-id="' + esc(s.id) + '">' + (s.done !== undefined ? '<span class="dot ' + (s.done ? "done" : "") + '"></span>' : "") + esc(s.label) + "</button>").join("");
+  outline.addEventListener("click", (e) => { const b = e.target.closest("button[data-id]"); if (b) location.hash = "#" + name + "/" + b.dataset.id; });
+  $(name + "-prev").addEventListener("click", () => go(current - 1));
+  $(name + "-next").addEventListener("click", () => go(current + 1));
+  function go(i) { if (i >= 0 && i < pages.length) location.hash = "#" + name + "/" + pages[i].id; }
+  function show(id) {
+    const i = Math.max(0, pages.findIndex((p) => p.id === id));
+    current = i;
+    if (!pages.length) { content.innerHTML = '<div class="empty">Nothing here yet.</div>'; return; }
+    content.innerHTML = pages[i].html();
+    for (const b of outline.querySelectorAll("button")) b.classList.toggle("active", b.dataset.id === pages[i].id);
+    pos.textContent = (i + 1) + " / " + pages.length;
+    $(name + "-prev").disabled = i === 0; $(name + "-next").disabled = i === pages.length - 1;
+    content.scrollIntoView({ block: "start" }); window.scrollTo({ top: 0 });
+    runMermaid(content).then(() => wireGraph(content));
+  }
+  return { show, go: (d) => go(current + d), pages };
+}
+function wireGraph(root) {
+  const svg = root.querySelector(".graph svg");
+  if (!svg || !plan) return;
+  for (const node of svg.querySelectorAll(".node")) {
+    const m = /flowchart-n(\d+)-/.exec(node.id);
+    if (!m) continue;
+    const c = plan.changes[Number(m[1])];
+    if (c.implemented) node.classList.add("done");
+    node.addEventListener("click", () => { location.hash = "#plan/change/" + c.slug; });
   }
 }
-function selectGraphNode(id,updateHash) {
-  const graph=currentDependencyGraph();if(graph.status!=="valid" || !graph.nodes.some(function(node){return node.id===id;}))return;
-  selectedGraphNode=id;updateGraphHighlight(graph);
-  saveState({graphNode:id});if(updateHash!==false)replaceHash(graphDestination(id));
+
+// ---------- boot ----------
+$("workflow-id").textContent = data.id;
+$("plan-title").textContent = plan ? plan.title : data.id;
+if (plan) { const done = plan.changes.filter((c) => c.implemented).length; $("plan-meta").textContent = done + " / " + plan.changes.length + " marked implemented" + (plan.changes.some((c) => c.followup) ? " · " + plan.changes.filter((c) => c.followup).length + " followups" : ""); }
+$("ask").textContent = data.ask;
+$("clarifications").innerHTML = data.clarifications.length ? data.clarifications.map((c) => '<div class="clar"><p class="q">' + esc(c.question) + '</p><p class="a' + (c.custom ? " custom" : "") + '">' + esc(c.answer) + "</p></div>").join("") : '<div class="empty">No clarifications recorded.</div>';
+const readers = { plan: reader("plan", planSections()), review: reader("review", reviewSections()) };
+if (review || data.reviewErrors.length) { $("review-tab").hidden = false; if (review) $("review-meta").textContent = (review.baseCommit || "").slice(0, 10) + " → " + (review.headCommit || "").slice(0, 10) + (review.reviewedAt ? " · " + new Date(review.reviewedAt).toLocaleString() : ""); }
+let view = "plan";
+function route() {
+  const [v, ...rest] = location.hash.replace(/^#/, "").split("/");
+  view = v === "review" && !$("review-tab").hidden ? "review" : "plan";
+  for (const b of document.querySelectorAll(".tabs button")) b.classList.toggle("active", b.dataset.view === view);
+  $("plan-view").hidden = view !== "plan"; $("review-view").hidden = view !== "review";
+  readers[view].show(rest.join("/") || readers[view].pages[0]?.id);
 }
-async function renderDependencyGraphDiagram(graph) {
-  const canvas=document.getElementById("plan-dependency-canvas"), sequence=++graphRenderSequence;if(!canvas)return;
-  const isCurrent=function(){return sequence===graphRenderSequence && canvas===document.getElementById("plan-dependency-canvas");};
-  try {
-    const library=await loadMermaidLibrary();if(!isCurrent())return;
-    library.initialize({startOnLoad:false,securityLevel:"strict",theme:document.documentElement.dataset.theme==="dark" ? "dark" : "default",htmlLabels:false,fontFamily:'Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',flowchart:{htmlLabels:false,useMaxWidth:false,curve:"basis",nodeSpacing:36,rankSpacing:64,padding:18}});
-    const rendered=await library.render("plan-dag-"+sequence,generateDependencyDiagram(graph));if(!isCurrent())return;
-    // Only generated nodes get browser-owned handlers. Never call Mermaid bindFunctions.
-    canvas.innerHTML=rendered.svg;const svg=canvas.querySelector("svg");
-    if(svg){
-      const viewBox=svg.viewBox.baseVal;
-      // Fit the guided column when possible, but keep labels at least 75% of their original size.
-      // Larger graphs and narrow screens retain horizontal scrolling rather than unreadable text.
-      if(viewBox.width){svg.style.width="100%";svg.style.maxWidth=Math.ceil(viewBox.width)+"px";svg.style.minWidth=Math.ceil(viewBox.width*0.75)+"px";svg.style.height="auto";}
-      svg.setAttribute("role","group");svg.setAttribute("aria-label","Planned changes, prerequisite to dependent, top to bottom");
-    }
-    for(const [index,node] of graph.nodes.entries()) {
-      const element=canvas.querySelector(".node.dag-node-"+index);if(!element)continue;
-      element.setAttribute("role","button");element.setAttribute("tabindex","0");element.setAttribute("aria-label","Change "+(index+1)+": "+node.title+" ("+node.id+"). Requires: "+(node.dependsOn.join(", ") || "none")+". Highlight prerequisites and downstream changes.");
-      element.addEventListener("click",function(){selectGraphNode(node.id);});element.addEventListener("keydown",function(event){if(event.key==="Enter" || event.key===" "){event.preventDefault();selectGraphNode(node.id);}});
-    }
-    updateGraphHighlight(graph);
-  } catch {
-    if(!isCurrent())return;
-    canvas.innerHTML='<p class="dependency-render-status" role="status">The diagram could not be rendered. Use the plan outline or Next to read the planned changes and their dependencies.</p>';
-  }
-}
-function renderPlanGraph() {
-  const graph=currentDependencyGraph();
-  if(graph.status!=="valid") {
-    return '<section class="dependency-unavailable" id="plan-graph-unavailable"><div class="guided-kicker">Plan section · Dependency graph</div><h2>Graph unavailable</h2><p>'+escapeHtml(graph.reason)+'</p><p>This version does not have a validated dependency graph. No dependencies have been inferred. Continue to the planned changes using Next, or read the original document.</p><button class="ds-button" type="button" data-graph-fallback="full">Read full document</button></section>';
-  }
-  const edges=graph.nodes.reduce(function(total,node){return total+node.dependsOn.length;},0);
-  const goal=planStructure && planStructure.goal ? '<div class="dependency-goal"><strong>Goal</strong>'+renderMarkdown(planStructure.goal)+'</div>' : '';
-  return '<section id="plan-dependency-graph" aria-labelledby="plan-graph-title"><div class="dependency-header"><div><div class="guided-kicker">Plan dependencies</div><h2 id="plan-graph-title">How the changes fit together</h2><p>Prerequisite → dependent · Read from top to bottom.</p></div><span class="dependency-count">'+graph.nodes.length+' '+(graph.nodes.length===1 ? 'change' : 'changes')+' · '+edges+' '+(edges===1 ? 'dependency' : 'dependencies')+'</span></div>'+goal+'<div class="dependency-legend" aria-label="Selection legend"><span><i class="legend-selected" aria-hidden="true"></i>Selected</span><span><i class="legend-requires" aria-hidden="true"></i>All prerequisites</span><span><i class="legend-enables" aria-hidden="true"></i>All downstream changes</span></div><div class="dependency-canvas" id="plan-dependency-canvas" role="region" aria-label="Scrollable dependency diagram" tabindex="0"><p class="dependency-render-status">Drawing dependency graph…</p></div></section>';
-}
-function activatePlanGraph() {
-  const graph=currentDependencyGraph();if(graph.status!=="valid" || !graph.nodes.length)return;
-  selectGraphNode(graph.nodes.some(function(node){return node.id===selectedGraphNode;}) ? selectedGraphNode : graph.nodes[0].id,false);void renderDependencyGraphDiagram(graph);
-}
-function handleDependencyNavigation(event) {
-  const button=event.target.closest("[data-dependency-node],[data-graph-fallback]");if(!button)return;
-  if(event.metaKey || event.ctrlKey || event.shiftKey || event.altKey || event.button>0)return;
-  event.preventDefault();
-  if(button.dataset.graphFallback){setReaderMode("plan",button.dataset.graphFallback,undefined,true);return;}
-  const id=button.dataset.dependencyNode, graph=currentDependencyGraph();
-  if(graph.status!=="valid" || !graph.nodes.some(function(node){return node.id===id;}))return;
-  const destination=planChangeDestination(id);setReaderMode("plan",destination ? "guided" : "full",destination,true);
-  if(!destination){const heading=document.getElementById("plan-change-"+id);if(heading){heading.tabIndex=-1;heading.focus();heading.scrollIntoView({block:"start"});}}
-}
-function planModeForState(destination,savedMode,guidedAvailable) {
-  if(!guidedAvailable)return "full";
-  if(destination)return destination==="full" ? "full" : "guided";
-  return savedMode==="full" ? "full" : "guided";
-}
-function planDestinationForState(destination,savedMode,savedDestination) {
-  if(destination && destination!=="full")return destination;
-  // Restore the old standalone graph mode as an ordinary guided section.
-  return savedMode==="graph" ? "graph" : savedDestination || "goal";
-}
-function createPlanDestinations(structure) {
-  if(!structure.canUseGuidedView)return [];
-  return [{id:"goal",label:"Goal",kind:"goal"}].concat(structure.intro ? [{id:"intro",label:"Introduction",kind:"intro"}] : [],[{id:"graph",label:"Dependency graph",kind:"graph"}],structure.changes.map(function(change){return {id:"change/"+change.id,label:"Change "+change.number,position:"Change "+change.number+" of "+structure.changes.length,kind:"change",change:change};}),[{id:"testing",label:"Testing",kind:"testing"}]);
-}
-function dependencyChanges(before,after) {
-  if(!before || !after || before.status!=="valid" || after.status!=="valid")return null;
-  const beforeNodes=new Set(before.nodes.map(function(node){return node.id;})), afterNodes=new Set(after.nodes.map(function(node){return node.id;}));
-  function edges(graph){return new Set(graph.nodes.flatMap(function(node){return node.dependsOn.map(function(id){return id+" → "+node.id;});}));}
-  const beforeEdges=edges(before), afterEdges=edges(after);
-  return {addedNodes:[...afterNodes].filter(function(id){return !beforeNodes.has(id);}),removedNodes:[...beforeNodes].filter(function(id){return !afterNodes.has(id);}),addedEdges:[...afterEdges].filter(function(edge){return !beforeEdges.has(edge);}),removedEdges:[...beforeEdges].filter(function(edge){return !afterEdges.has(edge);})};
-}
-function renderDependencyChanges(before,after) {
-  const changes=dependencyChanges(before,after), heading='<h3>Dependency changes</h3>';
-  if(!changes)return heading+'<p>Dependency comparison unavailable: one or both versions lack a validated graph. The document diff remains available below.</p>';
-  const items=[];for(const [key,label,kind] of [["addedNodes","Change added","added"],["removedNodes","Change removed","removed"],["addedEdges","Dependency added","added"],["removedEdges","Dependency removed","removed"]])for(const value of changes[key])items.push('<li class="dependency-'+kind+'">'+label+': '+escapeHtml(value)+'</li>');
-  return heading+(items.length ? '<ul>'+items.join("")+'</ul>' : '<p>No dependency changes.</p>');
-}
-function planDocumentStructure(document) {
-  if(!document)return {canUseGuidedView:false,changes:[]};
-  const byId=new Map(document.changes.map(function(change){return [change.id,change];}));
-  const changes=document.readingOrder.map(function(id,index){return Object.assign({},byId.get(id),{number:index+1});});
-  return {canUseGuidedView:true,goal:document.goal,intro:document.intro,testing:document.testing,changes:changes};
-}
-function implementedLabel(change) { return change.implemented===true ? "Marked implemented" : "Not marked implemented"; }
-function renderImplemented(change) { return '<span class="implementation-flag">'+implementedLabel(change)+'</span>'; }
-function renderImplementationSummary(snapshot,baseline) {
-  if(!snapshot || !snapshot.document)return '';
-  const changes=snapshot.document.changes,marked=changes.filter(function(change){return change.implemented===true;}).length;
-  return '<strong>Marked implemented: '+marked+' · Not marked implemented: '+(changes.length-marked)+'</strong><p>All '+changes.length+' original and followup changes in version '+snapshot.number+'.'+(baseline ? ' Original approved baseline: version '+baseline+'.' : ' Not yet approved.')+'</p><p>True is the implementer’s assessment, not independent verification. False is not proof that code is missing. Review verdicts are separate.</p>';
-}
-function requirementSourceLabel(source) { return source.type==='original-ask' ? 'Original ask' : source.type==='plan-section' ? 'Plan section: '+source.name : 'Change: '+source.id; }
-function renderScopeEffect(effect,context) {
-  if(!effect)return '';
-  if(effect.type==='addition')return '<p><strong>Scope effect:</strong> Addition</p>';
-  return '<p><strong>Scope effect:</strong> Amendment</p>'+effect.requirements.map(function(requirement){const source=requirement.source,label=escapeHtml(requirementSourceLabel(source)),link=source.type==='change' ? '<a href="#'+(context && context.reader || 'plan')+'/change/'+encodeURIComponent(source.id)+'">'+label+'</a>' : label;return '<div class="amended-requirement"><strong>Amends '+link+'</strong><blockquote class="review-text">'+escapeHtml(requirement.quotedRequirement)+'</blockquote></div>';}).join('');
-}
-function renderFollowupDetails(change,context) {
-  if(!change.followup)return '';
-  return '<aside class="followup-details"><p><strong>Followup · Source review '+change.followup.origin.reviewNumber+'</strong></p>'+renderScopeEffect(change.followup.effect,context)+'<h3>Followup testing</h3>'+renderMarkdown(change.testing,context)+'</aside>';
-}
-function changeRequirements(change) {
-  const effect=change.followup ? change.followup.effect : change.effect;
-  return JSON.stringify({id:change.id,title:change.title,content:change.content,dependsOn:change.dependsOn.slice().sort(),kind:change.followup || change.kind==='followup' ? 'followup' : 'original',effect:effect ? effect.type==='addition' ? {type:'addition'} : {type:'amendment',requirements:effect.requirements.map(function(requirement){return {source:requirementSourceLabel(requirement.source),quotedRequirement:requirement.quotedRequirement};})} : null});
-}
-function reviewedChangeMatches(change,report) {
-  const reviewed=report.plannedChanges.find(function(item){return item.id===change.id;});
-  if(!reviewed || changeRequirements(change)!==changeRequirements(reviewed))return false;
-  return !change.followup || Boolean(report.testingCriteria.groups && report.testingCriteria.groups.some(function(group){return group.sourceId==='followup:'+change.id && group.criteria===change.testing;}));
-}
-function planRequirements(document) {
-  return JSON.stringify([document.goal,document.intro || null,document.testing,planDocumentStructure(document).changes.map(function(change){return [changeRequirements(change),change.testing || null];})]);
-}
-function renderPlanReviewVerdicts(change) {
-  const report=typeof dashboard==='undefined' ? null : dashboard.review;
-  if(!report || !latestPlan || !reviewedChangeMatches(change,report))return '';
-  const snapshot=reviewPlanSnapshot();
-  // A verdict on one unchanged item can still depend on an amendment elsewhere.
-  // Only attach verdicts when the entire selected requirement scope matches;
-  // flag-only history remains comparable without borrowing newer definitions.
-  if(!snapshot || planRequirements(latestPlan.document)!==planRequirements(snapshot.document) || report.version===4 && dashboard.approvedPlanVersion!==report.baselinePlanVersion)return '';
-  const reviewed=report.plannedChanges.find(function(item){return item.id===change.id;});
-  return '<section class="independent-review"><h3>Independent review verdicts</h3><p class="plan-mode-note">Saved report at '+escapeHtml(report.headCommit)+(report.version===4 ? ' · Reviewed plan version '+report.currentPlanVersion : '')+(dashboard.reviewStale ? ' · Report is stale' : '')+'. These verdicts do not set the implemented flag.</p>'+renderVerdicts(reviewed.review.necessary,reviewed.review.sufficient)+'</section>';
-}
-function renderPlanTesting() {
-  const context={document:latestPlan.document,reader:'plan'};
-  return '<h3>Original testing criteria</h3>'+renderMarkdown(planStructure.testing,context)+planStructure.changes.filter(function(change){return change.followup;}).map(function(change){return '<section><h3>Followup testing: '+escapeHtml(change.title)+'</h3><p class="plan-mode-note">followup:'+escapeHtml(change.id)+' · Source review '+change.followup.origin.reviewNumber+'</p>'+renderMarkdown(change.testing,context)+'</section>';}).join('');
-}
-function selectPlanSnapshot(number) {
-  latestPlan=dashboard.versions.find(function(version){return version.number===number;}) || dashboard.versions[dashboard.versions.length-1] || null;
-  planStructure=planDocumentStructure(latestPlan && latestPlan.document);
-  document.getElementById('version-badge').textContent=latestPlan ? 'Version '+latestPlan.number : 'No saved plan';
-  document.getElementById('plan-title').textContent=latestPlan && latestPlan.description || dashboard.description || 'Implementation plan';
-  const summary=document.getElementById('implementation-summary');summary.hidden=!latestPlan;summary.innerHTML=renderImplementationSummary(latestPlan,dashboard.approvedPlanVersion);
-  const destinations=createPlanDestinations(planStructure),changeLinks=document.getElementById('plan-change-links');changeLinks.innerHTML='';
-  document.getElementById('plan-intro-link').hidden=!destinations.some(function(section){return section.kind==='intro';});
-  for(const change of planStructure.changes){const button=document.createElement('button');button.className='plan-outline-button';button.type='button';button.dataset.reader='plan';button.dataset.readerDestination='change/'+change.id;button.textContent=change.number+'. '+change.title+(change.followup ? ' · Followup' : '');changeLinks.appendChild(button);}
-  const previous=readers.plan;configureReader('plan',destinations,renderPlanDestination,renderFullPlan);
-  if(previous)setReaderMode('plan',previous.mode,previous.currentDestination);
-}
-function readState() { try { return JSON.parse(localStorage.getItem(stateKey) || "{}"); } catch { return {}; } }
-function saveState(patch) { try { localStorage.setItem(stateKey, JSON.stringify(Object.assign(readState(), patch))); } catch {} }
-function replaceHash(value) { try { const url=new URL(location.href); url.hash=value; history.replaceState(null,"",url.href); } catch { location.hash=value; } }
-function hashReaderDestination(hash,name) { if(name==="plan" && /^#plan-graph(?:\/|$)/.test(hash || ""))return "graph"+(hash.slice(11) || "");const match=new RegExp("^#"+name+"/(.+)$").exec(hash || location.hash); if (!match) return null; try { return decodeURIComponent(match[1]); } catch { return null; } }
-function initialViewForHash(hash,savedView,hasReview) { if (hash.startsWith("#review") && hasReview) return "review"; if (hash==="#compare") return "diff"; if (hash.startsWith("#plan/") || /^#plan-graph(?:\/|$)/.test(hash)) return "plan"; if (savedView==="review" && hasReview) return "review"; return savedView==="diff" ? "diff" : "plan"; }
-function configureReader(name,destinations,renderDestination,renderFullDocument) { readers[name]={name:name,destinations:destinations,renderDestination:renderDestination,renderFullDocument:renderFullDocument,currentDestination:destinations[0] ? destinations[0].id : "",mode:"full"}; }
-function updateNavigationSidebar(name) {
-  const reader=readers[name], readerElement=document.getElementById(name+"-reader"), outline=document.getElementById(name+"-outline"), button=document.getElementById(name+"-navigation-sidebar-button"), guided=Boolean(reader && reader.mode==="guided");
-  readerElement.classList.toggle("plan-reader--sidebar-collapsed",navigationSidebarCollapsed); outline.hidden=!guided || navigationSidebarCollapsed; button.disabled=!guided; button.setAttribute("aria-expanded",String(guided && !navigationSidebarCollapsed)); button.setAttribute("aria-label",(navigationSidebarCollapsed ? "Show" : "Hide")+" left navigation sidebar (S)"); button.querySelector(".sidebar-toggle-label").textContent=navigationSidebarCollapsed ? "Show navigation" : "Hide navigation";
-}
-function setNavigationSidebarCollapsed(collapsed) { navigationSidebarCollapsed=Boolean(collapsed); for (const name of ["plan","review"]) if(document.getElementById(name+"-navigation-sidebar-button"))updateNavigationSidebar(name); saveState({navigationSidebarCollapsed:navigationSidebarCollapsed}); }
-function setContextSidebarCollapsed(collapsed) {
-  contextSidebarCollapsed=Boolean(collapsed); const layout=document.querySelector(".plan-layout"), sidebar=document.getElementById("workflow-context-sidebar"), button=document.getElementById("context-sidebar-button"); layout.classList.toggle("plan-layout--context-collapsed",contextSidebarCollapsed); sidebar.hidden=contextSidebarCollapsed; button.setAttribute("aria-expanded",String(!contextSidebarCollapsed)); button.setAttribute("aria-label",(contextSidebarCollapsed ? "Show" : "Hide")+" workflow context sidebar (C)"); button.querySelector(".sidebar-toggle-label").textContent=contextSidebarCollapsed ? "Show context" : "Hide context"; saveState({contextSidebarCollapsed:contextSidebarCollapsed});
-}
-function revealOutlineButton(name,button) {
-  const outline=document.getElementById(name+"-outline"); if (!outline) return; const scroller=outline.querySelector(".plan-outline-sticky"), buttonRect=button.getBoundingClientRect();
-  if (scroller && scroller.scrollHeight>scroller.clientHeight) { const scrollerRect=scroller.getBoundingClientRect(); if (buttonRect.top<scrollerRect.top) scroller.scrollTop-=scrollerRect.top-buttonRect.top; else if (buttonRect.bottom>scrollerRect.bottom) scroller.scrollTop+=buttonRect.bottom-scrollerRect.bottom; }
-  if (outline.scrollWidth>outline.clientWidth) { const outlineRect=outline.getBoundingClientRect(); if (buttonRect.left<outlineRect.left) outline.scrollLeft-=outlineRect.left-buttonRect.left; else if (buttonRect.right>outlineRect.right) outline.scrollLeft+=buttonRect.right-outlineRect.right; }
-}
-function renderReader(name,destination,focusContent,scrollContent) {
-  const reader=readers[name]; if (!reader || !reader.destinations.length) return;
-  const graphDestinationRequested=name==="plan" && (destination==="graph" || String(destination).startsWith("graph/"));
-  if(graphDestinationRequested && destination.startsWith("graph/"))selectedGraphNode=destination.slice(6);
-  const resolvedDestination=graphDestinationRequested ? "graph" : reader.destinations.some(function(item){return item.id===destination;}) ? destination : "change/"+destination;
-  const selected=reader.destinations.find(function(item){return item.id===resolvedDestination;}) || reader.destinations[0]; reader.currentDestination=selected.id;
-  const graphSection=name==="plan" && selected.kind==="graph", content=document.getElementById(name+"-content");
-  document.getElementById(name+"-reader").classList.toggle("plan-reader--dependencies",graphSection);
-  content.className=graphSection ? "guided-view dependency-view" : "guided-view"; content.innerHTML=reader.renderDestination(selected);
-  if(graphSection)activatePlanGraph();else void renderMermaidDiagrams(content);
-  let activeButton=null; document.querySelectorAll('[data-reader="'+name+'"][data-reader-destination]').forEach(function(button){const active=button.dataset.readerDestination===selected.id;button.classList.toggle("plan-outline-button--active",active);if(active){button.setAttribute("aria-current","page");activeButton=button;}else button.removeAttribute("aria-current");}); if(activeButton)revealOutlineButton(name,activeButton);
-  const index=reader.destinations.indexOf(selected), previous=document.getElementById(name+"-previous-section"), next=document.getElementById(name+"-next-section"); previous.disabled=index===0; next.disabled=index===reader.destinations.length-1; previous.dataset.destination=index>0 ? reader.destinations[index-1].id : ""; next.dataset.destination=index<reader.destinations.length-1 ? reader.destinations[index+1].id : "";
-  document.getElementById(name+"-position").textContent=selected.position || selected.label; document.getElementById(name+"-pagination").hidden=false;
-  if (focusContent) { const heading=content.querySelector("h2"); if (heading) { heading.tabIndex=-1; requestAnimationFrame(function(){heading.focus({preventScroll:true});if(scrollContent!==false)heading.scrollIntoView({block:"start"});}); } }
-  const statePatch={}; statePatch[name+"Destination"]=selected.id; saveState(statePatch); replaceHash(readerDestinationHash(name)); return activeButton;
-}
-function moveReader(name,offset,focusContent,scrollContent,focusOutline,scrollPageTop) { const reader=readers[name]; if (!reader) return; const index=reader.destinations.findIndex(function(item){return item.id===reader.currentDestination;}), destination=reader.destinations[index+offset]; if (destination) { const activeButton=renderReader(name,destination.id,focusContent,scrollContent); if(focusOutline && activeButton)activeButton.focus({preventScroll:true}); if(scrollPageTop)window.scrollTo({top:0,left:0,behavior:"auto"}); } }
-function setModeButtons(name,mode) {
-  for (const item of ["guided","full"]) { const button=document.getElementById(name+"-"+item+"-mode-button"), active=mode===item;if(!button)continue;button.classList.toggle("plan-mode-button--active",active); button.setAttribute("aria-pressed",String(active)); }
-}
-function renderFullPlan() {
-  const planContent=document.getElementById("plan-content"); planContent.className="";
-  planContent.innerHTML=latestPlan && latestPlan.document ? createPlanDestinations(planStructure).filter(function(section){return section.kind!=="graph";}).map(function(section){return '<section class="plan-full-section">'+renderPlanDestination(section,true)+'</section>';}).join("") : '<div class="empty">No saved plan yet. Finalize the working draft to publish the first version.</div>';
-  void renderMermaidDiagrams(planContent);
-  document.getElementById("plan-pagination").hidden=true;
-}
-function renderPlanDestination(selected,fullDocument) {
-  const context={document:latestPlan && latestPlan.document,reader:"plan"}, kicker=fullDocument ? "" : '<div class="guided-kicker">Plan section</div>';
-  if (selected.kind==="graph") return renderPlanGraph();
-  if (selected.kind==="goal") return kicker+'<h2>Goal</h2>'+renderMarkdown(planStructure.goal,context);
-  if (selected.kind==="intro") return kicker+'<h2>Introduction</h2>'+renderMarkdown(planStructure.intro,context);
-  if (selected.kind==="testing") return kicker+'<h2>Testing</h2>'+renderPlanTesting();
-  const graph=currentDependencyGraph(), change=selected.change, changeKicker=fullDocument ? '' : '<div class="guided-kicker">Change '+change.number+' of '+planStructure.changes.length+'</div>';
-  return changeKicker+'<h2 id="plan-change-'+escapeHtml(change.id)+'">'+change.number+'. '+inlineMarkdown(change.title)+'</h2><div class="plan-mode-note">'+escapeHtml(change.id)+' · '+(change.followup ? 'Followup' : 'Original change')+'</div>'+renderImplemented(change)+'<div class="dependency-relations">'+renderDependencyRelations(graph,change.id)+'</div>'+renderMarkdown(change.content,context)+renderFollowupDetails(change,context)+renderPlanReviewVerdicts(change);
-}
-function setReaderMode(name,mode,destination,focusContent) {
-  const reader=readers[name]; if (!reader) return; reader.mode=mode==="guided" && reader.destinations.length ? "guided" : "full"; setModeButtons(name,reader.mode);
-  const readerElement=document.getElementById(name+"-reader"); readerElement.classList.toggle("plan-reader--full",reader.mode==="full");readerElement.classList.toggle("plan-reader--dependencies",false);updateNavigationSidebar(name);
-  if (reader.mode==="guided") renderReader(name,destination || reader.currentDestination,focusContent); else { reader.renderFullDocument(); replaceHash(name+"/full"); }
-  const statePatch={}; statePatch[name+"Mode"]=reader.mode; saveState(statePatch);
-}
-function setView(view) {
-  const selected=view==="review" && dashboard.review ? "review" : view==="diff" ? "diff" : "plan";
-  for (const name of ["review","plan","diff"]) { document.getElementById(name+"-view").hidden=name!==selected; document.getElementById(name+"-tab").classList.toggle("ds-tabs__tab--active",name===selected); }
-  saveState({view:selected});
-  replaceHash(selected==="diff" ? "compare" : readerDestinationHash(selected));
-}
-function verdictLabel(status) { return status==="needs-human-review" ? "Needs human review" : status.charAt(0).toUpperCase()+status.slice(1); }
-function renderVerdicts(necessary,sufficient) { return '<div class="verdicts"><span class="verdict '+escapeHtml(necessary.status)+'">Necessary: '+escapeHtml(verdictLabel(necessary.status))+'</span><span class="verdict '+escapeHtml(sufficient.status)+'">Sufficient: '+escapeHtml(verdictLabel(sufficient.status))+'</span></div><div class="verdict-explanations"><p><strong>Necessary:</strong> '+escapeHtml(necessary.explanation)+'</p><p><strong>Sufficient:</strong> '+escapeHtml(sufficient.explanation)+'</p></div>'; }
-function renderEvidence(items) { if (!items || !items.length) return ""; return '<ul class="evidence-list">'+items.map(function(item){return "<li><code>"+escapeHtml(item.location)+"</code> — "+escapeHtml(item.description)+"</li>";}).join("")+"</ul>"; }
-function renderConcerns(concerns) { if (!concerns || !concerns.length) return '<p class="review-empty">No concerns.</p>'; return '<div class="review-concern-list">'+concerns.map(function(item){return '<section class="review-concern"><div><span class="concern-severity '+escapeHtml(item.severity)+'">'+escapeHtml(item.severity)+'</span><span class="concern-title">'+escapeHtml(item.title)+'</span></div><p class="concern-details review-text">'+escapeHtml(item.details)+'</p>'+renderEvidence(item.evidence)+"</section>";}).join("")+"</div>"; }
-function testingSourceLabel(sourceId) { return sourceId==='plan:testing' ? 'Original testing criteria' : 'Followup testing: '+sourceId.slice('followup:'.length); }
-function renderTestingCriterion(criterion) { return '<section class="criterion-result">'+(criterion.sourceId ? '<p class="plan-mode-note">'+escapeHtml(testingSourceLabel(criterion.sourceId))+' · '+escapeHtml(criterion.sourceId)+'</p>' : '')+'<h3>'+escapeHtml(criterion.criterion)+'</h3><span class="verdict '+escapeHtml(criterion.status)+'">'+escapeHtml(verdictLabel(criterion.status))+'</span><p class="review-text">'+escapeHtml(criterion.explanation)+'</p>'+renderEvidence(criterion.evidence)+"</section>"; }
-function reviewPlanSnapshot() {
-  // Reports retain their definitions and order. V4 identifies the exact snapshot
-  // that supplies historical flags; never borrow assessments from a later plan.
-  const report=dashboard.review;if(!report)return null;
-  const snapshot=dashboard.versions.find(function(version){return version.number===(report.version===4 ? report.currentPlanVersion : dashboard.approvedPlanVersion);});
-  if(!snapshot || !snapshot.document)return null;
-  const planned=planDocumentStructure(snapshot.document).changes;
-  return planned.length===report.plannedChanges.length && planned.every(function(change,index){return change.id===report.plannedChanges[index].id && reviewedChangeMatches(change,report);}) && snapshot.document.testing===report.testingCriteria.originalCriteria ? snapshot : null;
-}
-function createReviewDestinations(report) {
-  const changes=report.plannedChanges.map(function(change,index){return {id:"change/"+change.id,label:(index+1)+". "+change.title+(change.kind==='followup' ? ' · Followup' : ''),position:"Change "+(index+1)+" of "+report.plannedChanges.length,kind:"change",number:index+1,change:change};});
-  return [{id:"overall",label:"Overall result",kind:"overall"},{id:"concerns",label:"Overall concerns",kind:"concerns"}].concat(changes,[{id:"testing",label:"Testing criteria",kind:"testing"}]);
-}
-function renderReviewDestination(selected,fullDocument) {
-  const report=dashboard.review, context={document:{changes:report.plannedChanges},reader:"review"}, sectionKicker=fullDocument ? "" : '<div class="guided-kicker">Review section</div>';
-  if (selected.kind==="overall") { const stale=dashboard.reviewStale ? '<div class="stale-warning">This report does not cover the current code, requirements, or report format. Finalize any followups, then run /workflow-implement to continue work or /workflow-review to refresh the review.</div>' : ""; return sectionKicker+'<h2>Overall result</h2>'+renderVerdicts(report.overallResult.necessary,report.overallResult.sufficient)+'<p class="review-text">'+escapeHtml(report.overallResult.summary)+"</p>"+stale; }
-  if (selected.kind==="concerns") return sectionKicker+'<h2>Overall concerns</h2>'+renderConcerns(report.overallConcerns);
-  if (selected.kind==="testing") { const testing=report.testingCriteria,review=testing.review,criteria=review.criteria.length ? review.criteria.map(renderTestingCriterion).join("") : '<p class="review-empty">No individual criteria were identified.</p>'; return sectionKicker+'<h2>Testing criteria</h2><details class="review-collapsible"><summary>Planned tests</summary><div class="testing-original">'+(report.version===4 ? testing.groups.map(function(group){return '<section><h3>'+escapeHtml(testingSourceLabel(group.sourceId))+'</h3><p class="plan-mode-note">'+escapeHtml(group.sourceId)+'</p>'+renderMarkdown(group.criteria,context)+'</section>';}).join('') : renderMarkdown(testing.originalCriteria,context))+'</div></details><div class="verdicts"><span class="verdict '+escapeHtml(review.satisfied.status)+'">Satisfied: '+escapeHtml(verdictLabel(review.satisfied.status))+'</span></div><div class="verdict-explanations"><p><strong>Result:</strong> '+escapeHtml(review.satisfied.explanation)+'</p></div><p class="review-text">'+escapeHtml(review.summary)+'</p><h3>Criterion evidence</h3>'+criteria+'<h3>Testing concerns</h3>'+renderConcerns(review.concerns); }
-  const change=selected.change, review=change.review, changeKicker=fullDocument ? "" : '<div class="guided-kicker">Planned change '+(selected.number || '—')+' of '+report.plannedChanges.length+'</div>';
-  const implementation='<div class="review-walkthrough">'+renderMarkdown(review.walkthrough,context)+'</div>';
-  const snapshot=report.version===4 ? reviewPlanSnapshot() : null,savedChange=snapshot && snapshot.document.changes.find(function(item){return item.id===change.id;});
-  const assessment=savedChange ? '<div class="review-assessment">'+renderImplemented(savedChange)+'<p class="plan-mode-note">Implementer’s assessment in reviewed plan version '+snapshot.number+'; not independent verification.</p></div>' : '';
-  const followup=change.kind==='followup' ? '<aside class="followup-details"><p><strong>Followup'+(savedChange && savedChange.followup ? ' · Source review '+savedChange.followup.origin.reviewNumber : '')+'</strong></p>'+renderScopeEffect(change.effect,context)+'</aside>' : '';
-  return changeKicker+'<h2 id="review-change-'+escapeHtml(change.id)+'"><span class="planned-review-id">'+(selected.number ? selected.number+'.' : '')+'</span> '+escapeHtml(change.title)+'</h2><div class="plan-mode-note">'+escapeHtml(change.id)+'</div>'+followup+assessment+'<h3>Independent review verdicts</h3>'+renderVerdicts(review.necessary,review.sufficient)+'<details class="review-collapsible"><summary>Planned design</summary><div class="review-planned-design">'+renderMarkdown(change.content,context)+'</div></details><h3>Actual implementation</h3>'+implementation+'<h3>Concerns</h3>'+renderConcerns(review.concerns);
-}
-function renderFullReview() { const content=document.getElementById("review-content"); content.className=""; content.innerHTML=readers.review.destinations.map(function(destination){return '<section class="review-full-section">'+renderReviewDestination(destination,true)+"</section>";}).join(""); document.getElementById("review-pagination").hidden=true; void renderMermaidDiagrams(content); }
-function prepareReview() {
-  const report=dashboard.review; if (!report) return; document.getElementById("review-tab").hidden=false;
-  const pullRequestUrls=report.pullRequestUrls, approvedSnapshot=reviewPlanSnapshot();
-  document.getElementById("review-meta").textContent=report.baseCommit+" → "+report.headCommit+" · "+new Date(report.generatedAt).toLocaleString()+(report.version===4 ? " · Original approved baseline: version "+report.baselinePlanVersion+" · Reviewed plan version "+report.currentPlanVersion : approvedSnapshot ? " · Approved plan version "+approvedSnapshot.number : "");
-  const pullRequestActions=document.getElementById("review-pull-requests"); pullRequestUrls.forEach(function(url,index){const link=document.createElement("a"); link.className="ds-button"; link.href=url; link.textContent=pullRequestUrls.length===1 ? "Open pull request" : "Open PR "+(index+1); pullRequestActions.appendChild(link);});
-  const destinations=createReviewDestinations(report);
-  const changeLinks=document.getElementById("review-change-links");
-  for (const destination of destinations.filter(function(item){return item.kind==="change";})) { const button=document.createElement("button"); button.className="plan-outline-button"; button.type="button"; button.dataset.reader="review"; button.dataset.readerDestination=destination.id; button.textContent=destination.label; changeLinks.appendChild(button); }
-  configureReader("review",destinations,renderReviewDestination,renderFullReview);
-}
-function lines(value) { return String(value).replace(/\r\n/g, "\n").split("\n"); }
-function lineDiff(before, after) {
-  const a = lines(before), b = lines(after), cells = a.length * b.length;
-  if (cells > 2000000) {
-    const rows = [], length = Math.max(a.length, b.length);
-    for (let i=0;i<length;i++) { if (a[i] === b[i]) rows.push({kind:"context",old:i+1,new:i+1,text:a[i] || ""}); else { if (i<a.length) rows.push({kind:"remove",old:i+1,new:null,text:a[i]}); if (i<b.length) rows.push({kind:"add",old:null,new:i+1,text:b[i]}); } }
-    return rows;
-  }
-  const table = Array.from({length:a.length+1}, function(){ return new Uint32Array(b.length+1); });
-  for (let i=a.length-1;i>=0;i--) for (let j=b.length-1;j>=0;j--) table[i][j] = a[i] === b[j] ? table[i+1][j+1]+1 : Math.max(table[i+1][j],table[i][j+1]);
-  const result = []; let i=0,j=0;
-  while (i<a.length || j<b.length) {
-    if (i<a.length && j<b.length && a[i] === b[j]) { result.push({kind:"context",old:i+1,new:j+1,text:a[i]}); i++;j++; }
-    else if (j<b.length && (i===a.length || table[i][j+1] >= table[i+1][j])) { result.push({kind:"add",old:null,new:j+1,text:b[j++]}); }
-    else { result.push({kind:"remove",old:i+1,new:null,text:a[i++]}); }
-  }
-  return result;
-}
-function analyzeMarkdown(markdown,context) {
-  let fenceCharacter=null,fenceLength=0,list='',orderedIndex=0,language='',codeRecords=[];
-  function finishCode() {
-    if(!codeRecords.length)return;
-    const highlighted=highlightedCodeLines(codeRecords.map(function(record){return record.text;}).join("\n"),language);
-    codeRecords.forEach(function(record,index){record.html=highlighted[index];});codeRecords=[];
-  }
-  const records=lines(markdown).map(function(raw) {
-    const fence=/^\s*(\x60{3,}|~{3,})/.exec(raw);
-    if(fence && (!fenceCharacter || (fence[1][0]===fenceCharacter && fence[1].length>=fenceLength && !raw.slice(fence[0].length).trim()))) {
-      if(fenceCharacter)finishCode();else language=codeLanguage(raw.slice(fence[0].length));
-      fenceCharacter=fenceCharacter ? null : fence[1][0];fenceLength=fenceCharacter ? fence[1].length : 0;list='';return {type:'fence'};
-    }
-    if(fenceCharacter){const record={type:'code',text:raw};codeRecords.push(record);return record;}
-    const heading = /^(#{1,4})\s+(.+)$/.exec(raw);
-    if (heading) { list = ""; return {type:"heading", level:heading[1].length, html:inlineMarkdown(heading[2],context)}; }
-    const unordered = /^\s*[-*]\s+(.+)$/.exec(raw), ordered = /^\s*\d+[.)]\s+(.+)$/.exec(raw);
-    if (unordered || ordered) {
-      const next = unordered ? "ul" : "ol";
-      if (list !== next) orderedIndex = 0;
-      list = next;
-      if (next === "ol") orderedIndex++;
-      return {type:next, html:inlineMarkdown((unordered || ordered)[1],context), ordinal:orderedIndex};
-    }
-    list = "";
-    if (!raw.trim()) return {type:"blank"};
-    const quote = /^>\s?(.*)$/.exec(raw);
-    return quote ? {type:"quote", html:inlineMarkdown(quote[1],context)} : {type:"paragraph", html:inlineMarkdown(raw,context)};
-  });
-  finishCode();return records;
-}
-function diffBlockStartIndexes(rows, contextLines = 3) {
-  const starts = new Map(), maximumContextGap = Math.max(0,contextLines) * 2;
-  let previousChangeIndex = -1, blockIndex = -1;
-  for (let index=0;index<rows.length;index++) {
-    if (rows[index].kind === "context") continue;
-    if (previousChangeIndex < 0 || index - previousChangeIndex - 1 > maximumContextGap) { blockIndex++; starts.set(index,blockIndex); }
-    previousChangeIndex = index;
-  }
-  return starts;
-}
-function renderRichDiff(rows, before, after, contexts) {
-  const oldContext=contexts && contexts.before,newContext=contexts && contexts.after;
-  // Tables, diagrams, and nested/indented code need whole Markdown blocks.
-  // Use Marked's token tree so quoted or list-contained code keeps its syntax.
-  const blockRich=function(source){
-    const tokens=marked.lexer(String(source || '')),topLevel=new Set(tokens);let rich=false;
-    marked.walkTokens(tokens,function(token){if(token.type==='table' || token.type==='code' && (codeLanguage(token.lang)==='mermaid' || token.codeBlockStyle==='indented' || !topLevel.has(token)))rich=true;});
-    return rich;
-  };
-  if(blockRich(before) || blockRich(after)) {
-    if(before===after)return renderMarkdown(after,newContext);
-    return '<section class="diff-rich-change" data-diff-block-index="0" tabindex="-1"><h3>Before</h3>'+(before ? renderMarkdown(before,oldContext) : '<p>Not present in this version.</p>')+'<h3>After</h3>'+(after ? renderMarkdown(after,newContext) : '<p>Not present in this version.</p>')+'</section>';
-  }
-  const oldLines = analyzeMarkdown(before,oldContext), newLines = analyzeMarkdown(after,newContext), blockStarts = diffBlockStartIndexes(rows);
-  let html = "", list = "", code = false;
-  function closeList() { if (list) { html += "</" + list + ">"; list = ""; } }
-  function closeCode() { if (code) { html += "</code></pre>"; code = false; } }
-  function changeClass(kind, base) { return base + (kind === "context" ? " context" : " " + kind); }
-  function blockAttributes(index) { const blockIndex=blockStarts.get(index); return blockIndex===undefined ? "" : ' data-diff-block-index="'+blockIndex+'" tabindex="-1"'; }
-  for (let index=0;index<rows.length;index++) {
-    const row=rows[index], attributes=blockAttributes(index), record = row.kind === "remove" ? oldLines[row.old - 1] : newLines[row.new - 1];
-    if (!record) continue;
-    if (record.type === "fence") { closeList(); closeCode(); if (row.kind !== "context") html += '<div class="' + changeClass(row.kind,"diff-blank-line") + '"' + attributes + ' title="Code block formatting changed"></div>'; continue; }
-    if (record.type === "code") {
-      closeList();
-      if (!code) { html += '<pre class="diff-code-block"><code class="hljs">'; code = true; }
-      html += '<span class="' + changeClass(row.kind,"diff-code-line") + '"' + attributes + '>' + (record.html || "&#8203;") + "</span>";
-      continue;
-    }
-    closeCode();
-    if (record.type === "ul" || record.type === "ol") {
-      if (list !== record.type) { closeList(); list = record.type; html += "<" + list + ">"; }
-      const value = record.type === "ol" ? ' value="' + record.ordinal + '"' : "";
-      html += '<li class="' + changeClass(row.kind,"diff-line") + '"' + attributes + value + ">" + record.html + "</li>";
-      continue;
-    }
-    closeList();
-    if (record.type === "blank") { if (row.kind !== "context") html += '<div class="' + changeClass(row.kind,"diff-blank-line") + '"' + attributes + ' aria-label="' + (row.kind === "add" ? "Added" : "Removed") + ' blank line"></div>'; continue; }
-    const className = changeClass(row.kind,"diff-line");
-    if (record.type === "heading") html += "<h" + record.level + ' class="' + className + '"' + attributes + ">" + record.html + "</h" + record.level + ">";
-    else if (record.type === "quote") html += '<blockquote class="' + className + '"' + attributes + ">" + record.html + "</blockquote>";
-    else html += '<p class="' + className + '"' + attributes + ">" + record.html + "</p>";
-  }
-  closeList(); closeCode();
-  return html;
-}
-function diffBlockAnchors() { return Array.from(document.querySelectorAll("[data-diff-block-index]")); }
-function updateDiffBlockNavigation() {
-  const count=diffBlockAnchors().length;
-  document.getElementById("diff-previous-block").disabled=currentDiffBlockIndex<=0;
-  document.getElementById("diff-next-block").disabled=!count || currentDiffBlockIndex>=count-1;
-}
-function moveDiffBlock(offset) {
-  const anchors=diffBlockAnchors(), nextIndex=currentDiffBlockIndex+offset, anchor=anchors[nextIndex];
-  if (!anchor) return;
-  for (const item of anchors) item.classList.remove("diff-block--active");
-  currentDiffBlockIndex=nextIndex; anchor.classList.add("diff-block--active"); anchor.focus({preventScroll:true}); anchor.scrollIntoView({block:"start",behavior:"auto"}); updateDiffBlockNavigation();
-}
-function comparePlanDocuments(before,after) {
-  const oldChanges=planDocumentStructure(before).changes, newChanges=planDocumentStructure(after).changes;
-  const oldById=new Map(oldChanges.map(function(change){return [change.id,change];})), newById=new Map(newChanges.map(function(change){return [change.id,change];}));
-  const changes=newChanges.map(function(change){return change.id;}).concat(oldChanges.filter(function(change){return !newById.has(change.id);}).map(function(change){return change.id;})).map(function(id){
-    const oldChange=oldById.get(id),newChange=newById.get(id);
-    return {id:id,before:oldChange,after:newChange,oldNumber:oldChange && oldChange.number,newNumber:newChange && newChange.number,moved:Boolean(oldChange && newChange && oldChange.number!==newChange.number),modified:Boolean(oldChange && newChange && (changeRequirements(oldChange)!==changeRequirements(newChange) || oldChange.testing!==newChange.testing)),flagChanged:Boolean(oldChange && newChange && (oldChange.implemented===true)!==(newChange.implemented===true))};
-  });
-  return {changes:changes,moves:changes.filter(function(change){return change.moved;}),added:changes.filter(function(change){return !change.before;}),removed:changes.filter(function(change){return !change.after;}),modified:changes.filter(function(change){return change.modified;}),flags:changes.filter(function(change){return change.flagChanged;})};
-}
-function renderPlanComparison(before,after) {
-  const comparison=comparePlanDocuments(before.document,after.document), sections=[];let added=0,removed=0;
-  function body(oldText,newText,context) {
-    if(oldText===newText)return oldText ? renderMarkdown(oldText,context) : '';
-    const rows=lineDiff(oldText || '',newText || '');added+=rows.filter(function(row){return row.kind==='add';}).length;removed+=rows.filter(function(row){return row.kind==='remove';}).length;
-    return renderRichDiff(rows,oldText || '',newText || '',{before:{document:before.document,reader:'plan'},after:{document:after.document,reader:'plan'}});
-  }
-  if(comparison.flags.length)sections.push('<section class="implementation-diff"><h2>Implementation flag changes</h2><p>Assessments only, not requirement edits or review verdicts.</p><ul>'+comparison.flags.map(function(change){return '<li data-diff-block-index="0" tabindex="-1"><code>'+escapeHtml(change.id)+'</code> · Version '+before.number+': '+implementedLabel(change.before)+' → Version '+after.number+': '+implementedLabel(change.after)+(change.modified || change.moved ? ' · Requirements also changed' : ' · Flag-only edit')+'</li>';}).join('')+'</ul></section>');
-  if(comparison.moves.length)sections.push('<section id="reading-order-diff"><h2>Reading order changes</h2><ul>'+comparison.moves.map(function(change){return '<li data-diff-block-index="0" tabindex="-1">Moved <code>'+escapeHtml(change.id)+'</code>: '+change.oldNumber+' → '+change.newNumber+'</li>';}).join('')+'</ul><p>Numbers are local to each version. Slugs and dependencies keep their identities.</p></section>');
-  for(const [key,label] of [['description','Description'],['intro','Introduction'],['goal','Goal'],['testing','Testing']]) {
-    const oldText=(key==='description' ? before.description : before.document[key]) || '',newText=(key==='description' ? after.description : after.document[key]) || '';
-    if(oldText!==newText)sections.push('<section><h2>'+label+'</h2>'+body(oldText,newText,{document:after.document,reader:'plan'})+'</section>');
-  }
-  for(const change of comparison.changes) {
-    if(!change.modified && !change.moved && change.before && change.after)continue;
-    const oldChange=change.before,newChange=change.after, label=oldChange && newChange ? 'Version '+before.number+': '+change.oldNumber+' → Version '+after.number+': '+change.newNumber : oldChange ? 'Removed · Version '+before.number+': '+change.oldNumber : 'Added · Version '+after.number+': '+change.newNumber;
-    const title=oldChange && newChange && oldChange.title!==newChange.title ? body(oldChange.title,newChange.title) : '<h3>'+inlineMarkdown((newChange || oldChange).title)+'</h3>';
-    const content=body(oldChange && oldChange.content,newChange && newChange.content,{document:newChange ? after.document : before.document,reader:'plan'});
-    const context={document:newChange ? after.document : before.document,reader:'plan'};
-    let details='';
-    if(oldChange && newChange && (JSON.stringify(oldChange.followup)!==JSON.stringify(newChange.followup) || oldChange.testing!==newChange.testing))details='<section data-diff-block-index="0" tabindex="-1"><h3>Followup definition before · Version '+before.number+'</h3>'+renderFollowupDetails(oldChange,{document:before.document,reader:'plan'})+'<h3>Followup definition after · Version '+after.number+'</h3>'+renderFollowupDetails(newChange,context)+'</section>';
-    else details=renderFollowupDetails(newChange || oldChange,context);
-    const flags=oldChange && newChange ? '<p class="plan-mode-note">Version '+before.number+': '+implementedLabel(oldChange)+' · Version '+after.number+': '+implementedLabel(newChange)+'</p>' : renderImplemented(newChange || oldChange);
-    sections.push('<section id="diff-change-'+escapeHtml(change.id)+'" data-change-id="'+escapeHtml(change.id)+'"><h2>'+escapeHtml(label)+'</h2><div class="plan-mode-note">'+escapeHtml(change.id)+(change.modified ? ' · Requirements changed' : '')+'</div>'+flags+title+content+details+'</section>');
-  }
-  let blockIndex=0;const html=sections.join('').replace(/data-diff-block-index="\d+"/g,function(){return 'data-diff-block-index="'+blockIndex+++'"';});
-  return {html:html,added:added,removed:removed,comparison:comparison};
-}
-function renderDiff() {
-  const from = Number(document.getElementById("from-version").value), to = Number(document.getElementById("to-version").value);
-  const before = dashboard.versions.find(function(version){return version.number===from;}), after = dashboard.versions.find(function(version){return version.number===to;});
-  currentDiffBlockIndex=-1;
-  if (!before || !after) {
-    document.getElementById("diff-summary").textContent='No saved versions';document.getElementById("dependency-diff").innerHTML='';document.getElementById("diff-content").innerHTML='<div class="diff-empty">No saved plan yet. Finalize a plan before comparing versions.</div>';updateDiffBlockNavigation();return;
-  }
-  const result=renderPlanComparison(before,after);
-  document.getElementById("diff-summary").textContent=result.added+' additions · '+result.removed+' deletions · '+result.comparison.moves.length+' moves · '+result.comparison.modified.length+' requirement edits · '+result.comparison.flags.length+' flag changes';
-  document.getElementById("dependency-diff").innerHTML=renderDependencyChanges(before.dependencyGraph,after.dependencyGraph);
-  document.getElementById("diff-content").innerHTML=result.html ? '<article class="markdown diff-document" aria-label="Formatted plan version differences">'+result.html+'</article>' : '<div class="diff-empty">These versions are identical.</div>';
-  void renderMermaidDiagrams(document.getElementById("diff-content"));updateDiffBlockNavigation();
-}
-function applyDashboardHash() {
-  const hash=location.hash, planDestination=hashReaderDestination(hash,"plan"), reviewDestination=hashReaderDestination(hash,"review");
-  if(planDestination){const mode=planModeForState(planDestination,null,Boolean(planStructure.canUseGuidedView));setReaderMode("plan",mode,planDestination,true);setView("plan");}
-  else if(reviewDestination && dashboard.review){setReaderMode("review",reviewDestination==="full" ? "full" : "guided",reviewDestination,true);setView("review");}
-  else if(hash==="#compare")setView("diff");
-}
-function initialize() {
-  latestPlan=dashboard.versions[dashboard.versions.length-1] || null; planStructure=planDocumentStructure(latestPlan && latestPlan.document);
-  const description=dashboard.description || "", slugBadge=document.getElementById("workflow-name"), guidedAvailable=Boolean(planStructure.canUseGuidedView), state=readState(); slugBadge.textContent=dashboard.slug || ""; slugBadge.hidden=!dashboard.slug;
-  document.getElementById("version-badge").textContent=latestPlan ? "Version "+latestPlan.number : "No saved plan"; document.getElementById("plan-title").textContent=latestPlan && latestPlan.description || description || "Implementation plan";
-  document.getElementById("plan-guided-mode-button").disabled=!guidedAvailable; document.getElementById("plan-mode-note").hidden=guidedAvailable;
-  const snapshotSelect=document.getElementById('plan-version');
-  for(const version of dashboard.versions){const option=document.createElement('option');option.value=String(version.number);option.textContent='Version '+version.number+(version.number===dashboard.approvedPlanVersion ? ' · Original approved baseline' : '')+(version===latestPlan ? ' · Latest finalized' : '');snapshotSelect.appendChild(option);}
-  snapshotSelect.disabled=!latestPlan;snapshotSelect.value=latestPlan ? String(latestPlan.number) : '';snapshotSelect.addEventListener('change',function(){selectPlanSnapshot(Number(snapshotSelect.value));});
-  selectPlanSnapshot(latestPlan && latestPlan.number); prepareReview(); navigationSidebarCollapsed=Boolean(state.navigationSidebarCollapsed); contextSidebarCollapsed=Boolean(state.contextSidebarCollapsed);
-  for(const name of ['plan','review'])document.getElementById(name+'-outline').addEventListener('click',function(event){const button=event.target.closest('[data-reader-destination]');if(!button || readers[name].mode!=='guided')return;renderReader(name,button.dataset.readerDestination,true);});
-  for (const name of ["plan","review"]) { document.getElementById(name+"-guided-mode-button").addEventListener("click",function(){setReaderMode(name,"guided",readers[name].currentDestination,true);}); document.getElementById(name+"-full-mode-button").addEventListener("click",function(){setReaderMode(name,"full");}); document.getElementById(name+"-navigation-sidebar-button").addEventListener("click",function(){setNavigationSidebarCollapsed(!navigationSidebarCollapsed);}); }
-  document.getElementById("plan-content").addEventListener("click",handleDependencyNavigation);
-  window.addEventListener("hashchange",applyDashboardHash);
-  document.getElementById("context-sidebar-button").addEventListener("click",function(){setContextSidebarCollapsed(!contextSidebarCollapsed);});
-  for (const name of ["plan","review"]) for (const direction of ["previous","next"]) document.getElementById(name+"-"+direction+"-section").addEventListener("click",function(event){const destination=event.currentTarget.dataset.destination;if(destination)renderReader(name,destination,true);});
-  document.getElementById("diff-previous-block").addEventListener("click",function(){moveDiffBlock(-1);}); document.getElementById("diff-next-block").addEventListener("click",function(){moveDiffBlock(1);});
-  window.addEventListener("keydown",function(event){if(event.altKey || event.ctrlKey || event.metaKey || /^(INPUT|SELECT|TEXTAREA)$/.test(event.target.tagName))return;const candidate=!document.getElementById("review-view").hidden ? "review" : !document.getElementById("plan-view").hidden ? "plan" : "",name=candidate && readers[candidate].mode==="guided" ? candidate : "",key=event.key.toLowerCase();if(key==="c" && candidate==="plan"){event.preventDefault();setContextSidebarCollapsed(!contextSidebarCollapsed);return;}if(key==="s" && name){event.preventDefault();setNavigationSidebarCollapsed(!navigationSidebarCollapsed);return;}const offset=event.key==="[" ? -1 : event.key==="]" ? 1 : 0;if(!offset)return;if(name){event.preventDefault();moveReader(name,offset,false,false,true,true);}else if(!document.getElementById("diff-view").hidden){event.preventDefault();moveDiffBlock(offset);}});
-  const originalAsk=document.getElementById("original-ask"), originalAskText=document.getElementById("original-ask-text"); if(dashboard.ask) originalAskText.textContent=dashboard.ask; else originalAsk.hidden=true;
-  const clarificationList=document.getElementById("clarification-list"), clarificationCount=dashboard.clarifications.length; document.getElementById("clarification-count").textContent=String(clarificationCount)+(clarificationCount===1 ? " clarification" : " clarifications");
-  if (!dashboard.clarifications.length) clarificationList.innerHTML='<div class="clarification-empty">Answers from implementation questions will appear here verbatim.</div>';
-  for (const item of dashboard.clarifications) { const section=document.createElement("section"); section.className="clarification"; const label=document.createElement("div"); label.className="clarification-label"; label.textContent=item.label; const question=document.createElement("p"); question.className="clarification-question"; question.textContent=item.question; const answer=document.createElement("p"); answer.className="clarification-answer"; answer.textContent=item.answer; const time=document.createElement("div"); time.className="clarification-time"; time.textContent=new Date(item.answeredAt).toLocaleString(); section.append(label,question,answer,time); clarificationList.appendChild(section); }
-  const latestNumber=latestPlan ? latestPlan.number : 1, previousNumber=dashboard.versions.length>1 ? dashboard.versions[dashboard.versions.length-2].number : latestNumber;
-  for (const id of ["from-version","to-version"]) { const select=document.getElementById(id); for (const version of dashboard.versions) { const option=document.createElement("option"); option.value=String(version.number); option.textContent="Version "+version.number+" · "+new Date(version.createdAt).toLocaleString(); select.appendChild(option); } }
-  document.getElementById("from-version").value=String(previousNumber); document.getElementById("to-version").value=String(latestNumber);
-  document.querySelectorAll("[data-view]").forEach(function(tab){tab.addEventListener("click",function(){setView(tab.dataset.view);});}); document.getElementById("from-version").addEventListener("change",renderDiff); document.getElementById("to-version").addEventListener("change",renderDiff); document.getElementById("refresh-button").addEventListener("click",function(){location.reload();});
-  const preferredTheme=state.theme || (matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light"); document.documentElement.dataset.theme=preferredTheme; document.getElementById("theme-button").addEventListener("click",function(){const theme=document.documentElement.dataset.theme==="dark"?"light":"dark";document.documentElement.dataset.theme=theme;saveState({theme:theme});rerenderMermaidDiagrams();});
-  const unseenReview=dashboard.review && state.reviewHead !== dashboard.review.headCommit, initialHash=location.hash, planHashDestination=hashReaderDestination(initialHash,"plan"), reviewHashDestination=hashReaderDestination(initialHash,"review"), savedView=initialViewForHash(initialHash,state.view,Boolean(dashboard.review)), initialView=unseenReview && !planHashDestination ? "review" : savedView, requestedPlanMode=planModeForState(planHashDestination,state.planMode,guidedAvailable), requestedPlanDestination=planDestinationForState(planHashDestination,state.planMode,state.planDestination), requestedReviewMode=unseenReview ? "guided" : (reviewHashDestination ? (reviewHashDestination==="full" ? "full" : "guided") : (state.reviewMode || "guided")), requestedReviewDestination=unseenReview ? "overall" : (reviewHashDestination && reviewHashDestination!=="full" ? reviewHashDestination : state.reviewDestination);
-  selectedGraphNode=planHashDestination && planHashDestination.startsWith("graph/") ? planHashDestination.slice(6) : state.graphNode || null;
-  setReaderMode("plan",requestedPlanMode,requestedPlanDestination); if(dashboard.review)setReaderMode("review",requestedReviewMode,requestedReviewDestination); setContextSidebarCollapsed(contextSidebarCollapsed); setView(initialView); if (dashboard.review) saveState({reviewHead:dashboard.review.headCommit}); renderDiff(); const scroll=Number(sessionStorage.getItem(stateKey+":scroll")); if(scroll){scrollTo(0,scroll);sessionStorage.removeItem(stateKey+":scroll");}
-}
-function reloadDashboard() { try{sessionStorage.setItem(stateKey+":scroll",String(scrollY));}catch{} location.reload(); }
-let dashboardRefreshRunning=false;
-async function refreshDashboardIfChanged() {
-  if (dashboardRefreshRunning) return; dashboardRefreshRunning=true;
-  try {
-    const head=await fetch(location.href,{method:"HEAD",cache:"no-store"}); if(!head.ok)return;
-    const latestRevision=head.headers.get("x-implementation-workflow-revision");
-    if(latestRevision){if(latestRevision!==dashboardRevision)reloadDashboard();return;}
-    const response=await fetch(location.href,{cache:"no-store"}); if(!response.ok)return;
-    const latestDocument=new DOMParser().parseFromString(await response.text(),"text/html"), latestMeta=latestDocument.querySelector('meta[name="implementation-workflow-revision"]'), latestData=latestDocument.getElementById("dashboard-data");
-    const changed=latestMeta ? latestMeta.content!==dashboardRevision : Boolean(latestData && latestData.content.textContent!==dashboardSnapshot); if(changed)reloadDashboard();
-  } catch {} finally { dashboardRefreshRunning=false; }
-}
-let blurredAt=0; window.addEventListener("blur",function(){blurredAt=Date.now();}); window.addEventListener("focus",function(){const elapsed=blurredAt ? Date.now()-blurredAt : 0;blurredAt=0;if(elapsed>500)void refreshDashboardIfChanged();});
-initialize();
+document.querySelector(".tabs").addEventListener("click", (e) => { const b = e.target.closest("button[data-view]"); if (b) location.hash = "#" + b.dataset.view; });
+window.addEventListener("hashchange", route);
+document.addEventListener("keydown", (e) => { if (e.target.closest("input,textarea,select") || e.metaKey || e.ctrlKey || e.altKey) return; if (e.key === "[") readers[view].go(-1); if (e.key === "]") readers[view].go(1); });
+const themeKey = "implementation-workflow-theme";
+function applyTheme(t) { document.documentElement.dataset.theme = t; localStorage.setItem(themeKey, t); route(); }
+document.documentElement.dataset.theme = localStorage.getItem(themeKey) || (matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
+$("theme").addEventListener("click", () => applyTheme(document.documentElement.dataset.theme === "dark" ? "light" : "dark"));
+route();
+// Reload when the file on disk changed, checked whenever the tab regains focus.
+const revision = document.querySelector('meta[name="workflow-revision"]').content;
+async function checkRevision() { try { const html = await (await fetch(location.pathname, { cache: "no-store" })).text(); const m = /workflow-revision" content="([^"]+)"/.exec(html); if (m && m[1] !== revision) location.reload(); } catch {} }
+window.addEventListener("focus", checkRevision);
+document.addEventListener("visibilitychange", () => { if (!document.hidden) checkRevision(); });
 </script>
 </body>
 </html>
