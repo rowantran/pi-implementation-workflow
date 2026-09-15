@@ -72,3 +72,11 @@ test("testing section ends at the next level-two heading", () => {
 	assert.equal(testingSection("no heading"), undefined);
 	assert.equal(testingSection("## Testing\n\n"), undefined);
 });
+
+test("prompt strings render from strings.toml", async () => {
+	const { text } = await import("../src/prompts.ts");
+	assert.equal(text("tools.workflow_plan_save.saved", { title: "T", changes: 2, implemented: 1 }), 'Saved plan "T" with 2 changes (1 marked implemented).');
+	assert.match(text("tools.workflow_plan_save.saved", { title: "T", changes: 2, implemented: 1, url: "http://x" }), /\nDashboard: http:\/\/x$/);
+	assert.equal(text("tools.workflow_questions.answered", { entries: [{ question: "Q1", answer: "A1" }, { question: "Q2", answer: "A2" }] }), "Q: Q1\nA: A1\n\nQ: Q2\nA: A2");
+	assert.throws(() => text("tools.nope"), /Missing prompt string/);
+});

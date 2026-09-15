@@ -16,7 +16,7 @@ import { writeDashboard } from "./dashboard.ts";
 import { closeDashboardServer, dashboardUrl, ensureDashboardServer, registerDashboard, unregisterDashboard } from "./dashboard-server.ts";
 import { git, nodeExec, repositoryIdentity, worktreeStatus, type ExecFn } from "./git.ts";
 import { isSlug, loadPlan } from "./plan.ts";
-import { phaseSystemPrompt, renderPrompt } from "./prompts.ts";
+import { bulletList, phaseSystemPrompt, renderPrompt, text } from "./prompts.ts";
 import { QUESTIONS_TOOL, registerQuestionsTool } from "./questions.ts";
 import { loadReview, stampReview, writeReviewSkeleton } from "./review.ts";
 import {
@@ -64,19 +64,19 @@ export default function implementationWorkflow(pi: ExtensionAPI): void {
 	pi.registerTool({
 		name: PLAN_SAVE_TOOL,
 		label: "Save plan",
-		description: "Validate the workflow plan directory after editing its files and refresh the dashboard. Reports every structural problem (plan.json fields, slugs, reading order, dependency cycles, missing or empty Markdown, missing Testing sections).",
-		promptSnippet: "Validate the edited plan directory and refresh the dashboard",
-		promptGuidelines: [`Call ${PLAN_SAVE_TOOL} after editing files under the workflow plan directory; fix every reported problem and call it again.`],
+		description: text("tools.workflow_plan_save.description"),
+		promptSnippet: text("tools.workflow_plan_save.snippet"),
+		promptGuidelines: [text("tools.workflow_plan_save.guideline")],
 		parameters: Type.Object({}, { additionalProperties: false }),
 		async execute() {
 			const bound = requireBinding();
 			const plan = await loadPlan(bound.plan);
-			if (!plan.ok) throw new Error(`The plan is not valid yet:\n${plan.errors.map((error) => `- ${error}`).join("\n")}`);
+			if (!plan.ok) throw new Error(text("tools.workflow_plan_save.invalid", { errors: bulletList(plan.errors) }));
 			if (phase) pi.setSessionName(sessionName(phase, bound.id, plan.value.title));
 			const url = await publishDashboard(bound);
 			const done = plan.value.changes.filter((change) => change.implemented).length;
 			return {
-				content: [{ type: "text", text: `Saved plan "${plan.value.title}" with ${plan.value.changes.length} changes (${done} marked implemented).${url ? `\nDashboard: ${url}` : ""}` }],
+				content: [{ type: "text", text: text("tools.workflow_plan_save.saved", { title: plan.value.title, changes: plan.value.changes.length, implemented: done, url }) }],
 				details: { title: plan.value.title, changes: plan.value.changes.length, implemented: done, url },
 			};
 		},
@@ -87,24 +87,24 @@ export default function implementationWorkflow(pi: ExtensionAPI): void {
 	pi.registerTool({
 		name: REVIEW_SAVE_TOOL,
 		label: "Save review",
-		description: "Validate the workflow review directory (review.json verdicts, summary.md, and one changes/<slug>.md per reviewed change), stamp the reviewed commit range, and refresh the dashboard.",
-		promptSnippet: "Validate the written review directory and refresh the dashboard",
-		promptGuidelines: [`Call ${REVIEW_SAVE_TOOL} once review.json, summary.md, and every changes/<slug>.md are written; fix every reported problem and call it again.`],
+		description: text("tools.workflow_review_save.description"),
+		promptSnippet: text("tools.workflow_review_save.snippet"),
+		promptGuidelines: [text("tools.workflow_review_save.guideline")],
 		parameters: Type.Object({}, { additionalProperties: false }),
 		async execute() {
 			const bound = requireBinding();
-			if (phase !== "review") throw new Error("Reviews can only be saved from a review session.");
+			if (phase !== "review") throw new Error(text("tools.workflow_review_save.wrong_phase"));
 			const plan = await loadPlan(bound.plan);
-			if (!plan.ok) throw new Error(`The plan is not valid, so the review cannot be checked against it:\n${plan.errors.map((error) => `- ${error}`).join("\n")}`);
+			if (!plan.ok) throw new Error(text("tools.workflow_review_save.plan_invalid", { errors: bulletList(plan.errors) }));
 			const review = await loadReview(bound.review, plan.value);
-			if (!review.ok) throw new Error(`The review is not complete yet:\n${review.errors.map((error) => `- ${error}`).join("\n")}`);
-			if (!review.value) throw new Error(`No review directory exists at ${bound.review}.`);
+			if (!review.ok) throw new Error(text("tools.workflow_review_save.invalid", { errors: bulletList(review.errors) }));
+			if (!review.value) throw new Error(text("tools.workflow_review_save.missing", { path: bound.review }));
 			const headCommit = (await git(exec, bound.worktree, ["rev-parse", "HEAD"])) ?? "unknown";
 			await stampReview(bound.review, { baseCommit: (workflow ?? await readWorkflow(bound)).baseCommit, headCommit, reviewedAt: new Date().toISOString() });
 			const url = await publishDashboard(bound);
 			const overall = review.value.overall;
 			return {
-				content: [{ type: "text", text: `Saved review of ${review.value.changes.length} changes. Overall: necessary ${overall.necessary.status}, sufficient ${overall.sufficient.status}, testing ${overall.testing.status}.${url ? `\nDashboard: ${url}` : ""}` }],
+				content: [{ type: "text", text: text("tools.workflow_review_save.saved", { changes: review.value.changes.length, necessary: overall.necessary.status, sufficient: overall.sufficient.status, testing: overall.testing.status, url }) }],
 				details: { changes: review.value.changes.length, url },
 			};
 		},
@@ -119,7 +119,7 @@ export default function implementationWorkflow(pi: ExtensionAPI): void {
 	});
 
 	function requireBinding(): WorkflowLocation {
-		if (!location) throw new Error("This session is not bound to a workflow. Run /workflow-plan, /workflow-implement, or /workflow-review first.");
+		if (!location) throw new Error(text("messages.unbound"));
 		return location;
 	}
 
@@ -365,13 +365,13 @@ export default function implementationWorkflow(pi: ExtensionAPI): void {
 		if (typeof raw !== "string") return;
 		const target = resolve(ctx.cwd, raw.replace(/^@/, ""));
 		if (target === resolve(location.manifest) || target === resolve(location.clarifications)) {
-			return { block: true, reason: `${relative(location.root, target)} is managed by the workflow and read-only.` };
+			return { block: true, reason: text("messages.blocked_managed_file", { file: relative(location.root, target) }) };
 		}
 		if (phase === "planning" && !isInside(target, location.plan)) {
-			return { block: true, reason: `Planning sessions may only edit files under ${location.plan}. Code changes happen in /workflow-implement.` };
+			return { block: true, reason: text("messages.blocked_planning", { plan: location.plan }) };
 		}
 		if (phase === "review" && !isInside(target, location.plan) && !isInside(target, location.review)) {
-			return { block: true, reason: `Review sessions may only edit files under ${location.plan} (followups) and ${location.review}. Code changes happen in /workflow-implement.` };
+			return { block: true, reason: text("messages.blocked_review", { plan: location.plan, review: location.review }) };
 		}
 	});
 
@@ -426,7 +426,7 @@ export default function implementationWorkflow(pi: ExtensionAPI): void {
 
 	async function generateSlug(ctx: ExtensionCommandContext, ask: string): Promise<string> {
 		if (!ctx.model) throw new Error("No model is selected to name the workflow.");
-		const userMessage: Message = { role: "user", content: [{ type: "text", text: `Generate a stable workflow identifier from this request:\n\n${ask}` }], timestamp: Date.now() };
+		const userMessage: Message = { role: "user", content: [{ type: "text", text: text("messages.slug_request", { ask }) }], timestamp: Date.now() };
 		// Omitting effort can send "none", which always-reasoning models reject; keep the request cheap otherwise.
 		const reasoning = ["openai-completions", "openai-responses", "openai-codex-responses", "azure-openai-responses"].includes(ctx.model.api)
 			? clampThinkingLevel(ctx.model, "low") : "off";
@@ -436,10 +436,10 @@ export default function implementationWorkflow(pi: ExtensionAPI): void {
 			{ ...(reasoning !== "off" ? { reasoningEffort: reasoning } : {}), cacheRetention: "none", sessionId: uuidv7() },
 		);
 		if (response.stopReason === "error" || response.stopReason === "aborted") throw new Error(response.errorMessage || "The model did not return a workflow id.");
-		const text = response.content.filter((part): part is { type: "text"; text: string } => part.type === "text").map((part) => part.text).join("\n");
-		const slug = text.trim().replace(/^```\w*\s*|\s*```$/g, "").split(/\r?\n/).map((line) => line.trim()).find(Boolean)?.replace(/^slug\s*:\s*/i, "")
+		const reply = response.content.filter((part): part is { type: "text"; text: string } => part.type === "text").map((part) => part.text).join("\n");
+		const slug = reply.trim().replace(/^```\w*\s*|\s*```$/g, "").split(/\r?\n/).map((line) => line.trim()).find(Boolean)?.replace(/^slug\s*:\s*/i, "")
 			.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 64).replace(/-+$/g, "") ?? "";
-		if (!isSlug(slug)) throw new Error(`The model returned an unusable workflow id: ${JSON.stringify(text)}`);
+		if (!isSlug(slug)) throw new Error(`The model returned an unusable workflow id: ${JSON.stringify(reply)}`);
 		return slug;
 	}
 }

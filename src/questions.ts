@@ -1,6 +1,7 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Text } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
+import { text } from "./prompts.ts";
 import type { Clarification } from "./workflow.ts";
 
 export const QUESTIONS_TOOL = "workflow_questions";
@@ -8,13 +9,13 @@ const OTHER = "Other (type an answer)";
 
 const Parameters = Type.Object({
 	questions: Type.Array(Type.Object({
-		question: Type.String({ description: "One concrete question, phrased so the options answer it directly" }),
+		question: Type.String({ description: text("tools.workflow_questions.parameters.question") }),
 		options: Type.Array(Type.Object({
-			label: Type.String({ description: "Short answer" }),
-			description: Type.Optional(Type.String({ description: "Trade-off or consequence, one sentence" })),
-		}), { minItems: 2, maxItems: 6, description: "Mutually exclusive answers; put the recommended one first" }),
-		allowOther: Type.Optional(Type.Boolean({ description: "Offer a free-text answer as well; default true" })),
-	}), { minItems: 1, maxItems: 8, description: "Every open question, in one batch" }),
+			label: Type.String({ description: text("tools.workflow_questions.parameters.label") }),
+			description: Type.Optional(Type.String({ description: text("tools.workflow_questions.parameters.option_description") })),
+		}), { minItems: 2, maxItems: 6, description: text("tools.workflow_questions.parameters.options") }),
+		allowOther: Type.Optional(Type.Boolean({ description: text("tools.workflow_questions.parameters.allow_other") })),
+	}), { minItems: 1, maxItems: 8, description: text("tools.workflow_questions.parameters.questions") }),
 }, { additionalProperties: false });
 
 /**
@@ -25,12 +26,12 @@ export function registerQuestionsTool(pi: ExtensionAPI, onAnswered: (entries: Cl
 	pi.registerTool({
 		name: QUESTIONS_TOOL,
 		label: "Ask the user",
-		description: "Ask the user one or more multiple-choice questions and record the exact answers as workflow clarifications. Use it for decisions that change the plan or implementation; do not use it for questions you can answer by reading the repository.",
-		promptSnippet: "Ask the user structured clarification questions and record the answers",
-		promptGuidelines: [`Use ${QUESTIONS_TOOL} for material ambiguity before finalizing the plan or changing code; batch every open question into one call.`],
+		description: text("tools.workflow_questions.description"),
+		promptSnippet: text("tools.workflow_questions.snippet"),
+		promptGuidelines: [text("tools.workflow_questions.guideline")],
 		parameters: Parameters,
 		async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
-			if (!ctx.hasUI) throw new Error("Clarification questions need an interactive session.");
+			if (!ctx.hasUI) throw new Error(text("tools.workflow_questions.no_ui"));
 			const entries: Clarification[] = [];
 			for (const question of params.questions) {
 				const labels = question.options.map((option) => option.description ? `${option.label} — ${option.description}` : option.label);
@@ -52,7 +53,7 @@ export function registerQuestionsTool(pi: ExtensionAPI, onAnswered: (entries: Cl
 			}
 			await onAnswered(entries);
 			return {
-				content: [{ type: "text", text: entries.map((entry) => `Q: ${entry.question}\nA: ${entry.answer}`).join("\n\n") }],
+				content: [{ type: "text", text: text("tools.workflow_questions.answered", { entries }) }],
 				details: { entries, cancelled: false },
 			};
 		},
@@ -71,7 +72,7 @@ export function registerQuestionsTool(pi: ExtensionAPI, onAnswered: (entries: Cl
 	async function cancelled(entries: Clarification[]) {
 		if (entries.length) await onAnswered(entries);
 		return {
-			content: [{ type: "text" as const, text: entries.length ? `The user stopped early. Recorded answers:\n${entries.map((entry) => `Q: ${entry.question}\nA: ${entry.answer}`).join("\n\n")}` : "The user cancelled without answering. Continue the conversation instead of asking again immediately." }],
+			content: [{ type: "text" as const, text: entries.length ? text("tools.workflow_questions.stopped_early", { entries }) : text("tools.workflow_questions.cancelled") }],
 			details: { entries, cancelled: true },
 		};
 	}
