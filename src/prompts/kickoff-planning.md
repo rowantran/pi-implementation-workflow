@@ -1,3 +1,4 @@
+{{! Usage: Sent as the initial user message when /workflow-plan creates a workflow and starts a planning session. Contains the original ask; the system prompt includes planning.md and shared.md. }}
 Develop a fleshed-out implementation plan for this ask:
 
 {{{ask}}}

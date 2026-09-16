@@ -1,3 +1,4 @@
+{{! Usage: Used as the system prompt for the separate model call that names a new workflow during /workflow-plan, before creating its worktree and planning session. The user message comes from messages.slug_request in strings.toml; shared.md is not appended. }}
 Generate a concise semantic identifier for the user's request.
 Return exactly one lowercase ASCII kebab-case slug of 3 to 8 descriptive words and at most 64 characters.
 

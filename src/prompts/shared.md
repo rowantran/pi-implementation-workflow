@@ -1,3 +1,4 @@
+{{! Usage: Appended after planning.md, implementation.md, or review.md by phaseSystemPrompt() before each agent turn. Supplies the shared workflow files, source-of-truth order, and Markdown guidance. }}
 ## Workflow files
 
 Workflow `{{{id}}}` lives in `{{{root}}}`. Treat these as sources of truth, from highest to lowest priority:
