@@ -55,6 +55,15 @@ code{padding:2px 5px;border-radius:4px;background:var(--inset);font-family:var(-
 details.planned{margin:20px 0;border:1px solid var(--border);border-radius:8px;background:var(--bg)}details.planned>summary{padding:10px 14px;cursor:pointer;font-weight:600;color:var(--heading)}details.planned>div{padding:4px 16px 8px;border-top:1px solid var(--border)}
 .graph{overflow:auto;padding:20px;border:1px solid var(--border);border-radius:8px;background-color:var(--bg);background-image:radial-gradient(var(--border) .7px,transparent .7px);background-size:16px 16px}
 .graph svg{display:block;margin:0 auto;height:auto;overflow:visible}.graph .node{cursor:pointer}.graph .node rect{fill:var(--surface)!important;stroke:var(--border-strong)!important;rx:8;ry:8}.graph .node.done rect{stroke:var(--ok)!important;stroke-width:2px!important}.graph .node .label,.graph .node text{fill:var(--text)!important;color:var(--text)!important}.graph .flowchart-link{stroke:var(--muted)!important}.graph marker path{fill:var(--muted)!important;stroke:var(--muted)!important}
+.graph .node:focus-visible rect{stroke:var(--accent)!important;stroke-width:3px!important}
+.graph-toolbar{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:8px}.graph-toolbar .kicker{margin:0}.graph-toolbar .btn{flex:none}
+html.graph-fullscreen-open{overflow:hidden}
+.graph-dialog{position:fixed;inset:0;width:100vw;max-width:none;height:100vh;height:100dvh;max-height:none;margin:0;padding:20px;border:0;background:var(--surface);color:var(--text)}
+.graph-dialog[open]{display:flex;flex-direction:column;gap:16px}.graph-dialog::backdrop{background:var(--bg)}
+.graph-dialog header{display:flex;align-items:center;justify-content:space-between;gap:12px}.graph-dialog h2{margin:0;font-size:16px}.graph-dialog .btn{flex:none}
+#graph-fullscreen-content{display:flex;flex:1;min-height:0}
+.graph-dialog .graph{display:flex;flex:1;min-width:0;padding:16px}.graph-dialog .mermaid{width:100%;height:100%;min-width:0}
+.graph-dialog .graph svg{width:100%!important;max-width:none!important;height:100%;overflow:hidden}
 .context{position:sticky;top:76px}.context h2{margin:0;padding:14px 18px;border-bottom:1px solid var(--border);font-size:13px;font-weight:600;color:var(--heading)}.context .ask{margin:0;padding:14px 18px;white-space:pre-wrap;overflow-wrap:anywhere;font-size:14px;line-height:22px;border-bottom:1px solid var(--border);max-height:40vh;overflow:auto}
 .clar{padding:14px 18px;border-bottom:1px solid var(--border)}.clar:last-child{border-bottom:0}.clar .q{margin:0 0 6px;color:var(--text-2);font-size:13px}.clar .a{margin:0;white-space:pre-wrap;font-size:14px}.clar .a.custom::after{content:" (typed)";color:var(--faint);font-size:11px}.empty{padding:20px 18px;color:var(--muted);font-size:13px}
 .errors{margin:0 0 20px;padding:14px 16px;border-radius:8px;background:var(--bad-bg);color:var(--bad);font-size:13px}.errors ul{margin:8px 0 0;padding-left:20px}.errors code{background:none;padding:0}
@@ -93,6 +102,10 @@ details.planned{margin:20px 0;border:1px solid var(--border);border-radius:8px;b
     </div></article>
   </section>
 </main>
+<dialog class="graph-dialog" id="graph-dialog" aria-labelledby="graph-dialog-title">
+  <header><h2 id="graph-dialog-title">Dependency graph</h2><button class="btn" id="graph-close" type="button" autofocus>Exit fullscreen <kbd>Esc</kbd></button></header>
+  <div id="graph-fullscreen-content"></div>
+</dialog>
 <script type="application/json" id="data">__DATA__</script>
 <script src="../assets/marked.umd.js"></script>
 <script src="../assets/highlight.min.js"></script>
@@ -167,7 +180,7 @@ function planSections() {
   if (!plan) return [{ id: "errors", label: "Plan status", section: true, html: () => errorBox("The plan directory is not valid yet. The agent must fix these before the plan can be used:", data.planErrors) }];
   const s = [{ id: "goal", label: "Goal", section: true, html: () => '<div class="kicker">Goal</div>' + md(plan.goal) }];
   if (plan.intro) s.push({ id: "intro", label: "Introduction", section: true, html: () => '<div class="kicker">Introduction</div>' + md(plan.intro) });
-  s.push({ id: "graph", label: "Dependency graph", section: true, html: () => '<div class="kicker">Dependency graph</div><p>Arrows point from prerequisites to the changes that need them. Select a node to open it.</p><div class="graph"><div class="mermaid">' + esc(graphSource()) + "</div></div>" });
+  s.push({ id: "graph", label: "Dependency graph", section: true, html: () => '<div class="graph-toolbar"><div class="kicker">Dependency graph</div><button class="btn" id="graph-expand" type="button" aria-haspopup="dialog" aria-controls="graph-dialog">Fullscreen</button></div><p>Arrows point from prerequisites to the changes that need them. Select a node to open it.</p><div class="graph"><div class="mermaid">' + esc(graphSource()) + "</div></div>" });
   s.push({ id: "changes", label: "Changes", group: true });
   for (const c of plan.changes) s.push({ id: "change/" + c.slug, label: numberOf(c.slug) + ". " + c.title, done: c.implemented, html: () => changeHeader(c) + md(c.content) });
   s.push({ id: "testing", label: "Testing", section: true, html: () => '<div class="kicker">End-to-end testing</div>' + md(plan.testing) });
@@ -186,6 +199,30 @@ function reviewSections() {
   }
   return s;
 }
+
+// ---------- fullscreen graph ----------
+let expandedGraph;
+function openGraphFullscreen() {
+  const graph = $("plan-content").querySelector(".graph");
+  if (!graph || expandedGraph) return;
+  expandedGraph = { graph, parent: graph.parentElement, trigger: $("graph-expand") };
+  $("graph-dialog").showModal();
+  $("graph-fullscreen-content").appendChild(graph);
+  document.documentElement.classList.add("graph-fullscreen-open");
+}
+function closeGraphFullscreen() {
+  if (!expandedGraph) return;
+  const { graph, parent, trigger } = expandedGraph;
+  expandedGraph = undefined;
+  parent.appendChild(graph);
+  document.documentElement.classList.remove("graph-fullscreen-open");
+  $("graph-dialog").close();
+  trigger.focus({ preventScroll: true });
+}
+$("plan-content").addEventListener("click", (e) => { if (e.target.closest("#graph-expand")) openGraphFullscreen(); });
+$("graph-close").addEventListener("click", closeGraphFullscreen);
+$("graph-dialog").addEventListener("cancel", (e) => { e.preventDefault(); closeGraphFullscreen(); });
+$("graph-dialog").addEventListener("close", () => { if (!$("graph-dialog").open) closeGraphFullscreen(); });
 
 // ---------- reader ----------
 function reader(name, sections) {
@@ -206,19 +243,26 @@ function reader(name, sections) {
     pos.textContent = (i + 1) + " / " + pages.length;
     $(name + "-prev").disabled = i === 0; $(name + "-next").disabled = i === pages.length - 1;
     content.scrollIntoView({ block: "start" }); window.scrollTo({ top: 0 });
-    runMermaid(content).then(() => wireGraph(content));
+    // Keep this reference if the graph moves into the dialog while Mermaid loads.
+    const graph = content.querySelector(".graph");
+    runMermaid(content).then(() => wireGraph(graph));
   }
   return { show, go: (d) => go(current + d), pages };
 }
-function wireGraph(root) {
-  const svg = root.querySelector(".graph svg");
+function wireGraph(graph) {
+  const svg = graph?.querySelector("svg");
   if (!svg || !plan) return;
   for (const node of svg.querySelectorAll(".node")) {
     const m = /flowchart-n(\d+)-/.exec(node.id);
     if (!m) continue;
     const c = plan.changes[Number(m[1])];
     if (c.implemented) node.classList.add("done");
-    node.addEventListener("click", () => { location.hash = "#plan/change/" + c.slug; });
+    node.setAttribute("tabindex", "0");
+    node.setAttribute("role", "link");
+    node.setAttribute("aria-label", numberOf(c.slug) + ". " + c.title);
+    const openChange = () => { location.hash = "#plan/change/" + c.slug; };
+    node.addEventListener("click", openChange);
+    node.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); openChange(); } });
   }
 }
 
@@ -232,6 +276,7 @@ const readers = { plan: reader("plan", planSections()), review: reader("review",
 if (review || data.reviewErrors.length) { $("review-tab").hidden = false; if (review) $("review-meta").textContent = (review.baseCommit || "").slice(0, 10) + " → " + (review.headCommit || "").slice(0, 10) + (review.reviewedAt ? " · " + new Date(review.reviewedAt).toLocaleString() : ""); }
 let view = "plan";
 function route() {
+  closeGraphFullscreen();
   const [v, ...rest] = location.hash.replace(/^#/, "").split("/");
   view = v === "review" && !$("review-tab").hidden ? "review" : "plan";
   for (const b of document.querySelectorAll(".tabs button")) b.classList.toggle("active", b.dataset.view === view);
@@ -240,7 +285,7 @@ function route() {
 }
 document.querySelector(".tabs").addEventListener("click", (e) => { const b = e.target.closest("button[data-view]"); if (b) location.hash = "#" + b.dataset.view; });
 window.addEventListener("hashchange", route);
-document.addEventListener("keydown", (e) => { if (e.target.closest("input,textarea,select") || e.metaKey || e.ctrlKey || e.altKey) return; if (e.key === "[") readers[view].go(-1); if (e.key === "]") readers[view].go(1); });
+document.addEventListener("keydown", (e) => { if ($("graph-dialog").open || e.target.closest("input,textarea,select") || e.metaKey || e.ctrlKey || e.altKey) return; if (e.key === "[") readers[view].go(-1); if (e.key === "]") readers[view].go(1); });
 const themeKey = "implementation-workflow-theme";
 function applyTheme(t) { document.documentElement.dataset.theme = t; localStorage.setItem(themeKey, t); route(); }
 document.documentElement.dataset.theme = localStorage.getItem(themeKey) || (matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");

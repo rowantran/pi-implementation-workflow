@@ -60,7 +60,7 @@ There is no version history, draft copy, or lock. The plan is a directory you ca
 
 ## Dashboard
 
-Served by each Pi process at `http://127.0.0.1:43121/w/<id>`; if another Pi process already holds the port, the same URL keeps working. The **Plan** tab shows goal, intro, a clickable Mermaid dependency graph, each change with its status and requires/enables links, and the testing stories, with the ask and clarifications in a sidebar. The **Review** tab shows overall verdicts and summary, then each change's verdicts, planned text, and walkthrough. Markdown supports tables, highlighted code, and `mermaid` blocks; `[`/`]` step between sections; the page reloads itself when the file changes. The only global state is `~/.pi/agent/workflows/index.json`, mapping ids to directories.
+Served by each Pi process at `http://127.0.0.1:43121/w/<id>`; if another Pi process already holds the port, the same URL keeps working. The **Plan** tab shows goal, intro, a clickable Mermaid dependency graph, each change with its status and requires/enables links, and the testing stories, with the ask and clarifications in a sidebar. Select **Fullscreen** above the dependency graph to fill the viewport; **Exit fullscreen** or `Esc` returns to the plan, and selecting a node opens its change. The **Review** tab shows overall verdicts and summary, then each change's verdicts, planned text, and walkthrough. Markdown supports tables, highlighted code, and `mermaid` blocks; `[`/`]` step between sections; the page reloads itself when the file changes. The only global state is `~/.pi/agent/workflows/index.json`, mapping ids to directories.
 
 ## Configuration
 
