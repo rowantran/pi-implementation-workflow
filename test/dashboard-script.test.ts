@@ -245,21 +245,36 @@ test("dependency graph fullscreen", async (t) => {
 		assert.equal(app.document.documentElement.classList.contains("graph-fullscreen-open"), false);
 	}
 
-	await t.test("renders an accessible Fullscreen button and a named dialog", async () => {
+	await t.test("renders accessible expand and collapse icons inside the graph", async () => {
 		const state = await setup();
-		const { app, trigger, dialog, close } = state;
+		const { app, graph, trigger, dialog, close } = state;
 		assert.equal(trigger.tagName, "BUTTON");
 		assert.equal(trigger.getAttribute("type"), "button");
-		assert.equal(trigger.textContent.trim(), "Fullscreen");
+		assert.equal(trigger.textContent.trim(), "");
+		assert.equal(trigger.getAttribute("aria-label"), "Fullscreen");
+		assert.equal(trigger.getAttribute("title"), "Fullscreen");
+		assert.equal(trigger.parentElement, graph);
 		assert.equal(trigger.getAttribute("aria-haspopup"), "dialog");
 		assert.equal(trigger.getAttribute("aria-controls"), dialog.id);
 		assert.equal(dialog.tagName, "DIALOG");
 		const label = dialog.getAttribute("aria-labelledby");
 		assert.ok(label);
 		assert.equal(app.document.getElementById(label)?.textContent, "Dependency graph");
-		assert.equal(dialog.querySelector("header button"), close);
+		assert.equal(close.parentElement, graph);
 		assert.equal(close.getAttribute("type"), "button");
-		assert.match(close.textContent, /Exit fullscreen/);
+		assert.equal(close.textContent.trim(), "");
+		assert.equal(close.getAttribute("aria-label"), "Exit fullscreen");
+		assert.equal(close.getAttribute("title"), "Exit fullscreen (Esc)");
+		assert.equal(close.getAttribute("aria-keyshortcuts"), "Escape");
+		for (const button of [trigger, close]) {
+			const icon = button.querySelector("svg");
+			assert.ok(icon);
+			assert.equal(icon.getAttribute("aria-hidden"), "true");
+			assert.equal(icon.getAttribute("focusable"), "false");
+			assert.ok(icon.querySelector("path")?.getAttribute("d"));
+		}
+		assert.notEqual(trigger.querySelector("path")!.getAttribute("d"), close.querySelector("path")!.getAttribute("d"));
+		assert.equal(app.document.querySelector(".graph-toolbar"), null);
 		assertClosed(state);
 		const goal = dashboardHarness(html, "#plan/goal");
 		assert.equal(goal.document.getElementById("graph-expand"), null, "Other plan sections must not show the graph control");
@@ -269,24 +284,24 @@ test("dependency graph fullscreen", async (t) => {
 		await t.test(`${exit} restores the same graph, trigger focus, and page scrolling`, async () => {
 			const state = await setup();
 			const { app, graph, parent, trigger, dialog, fullscreen, close } = state;
-			const svg = graph.querySelector("svg");
+			const svg = graph.querySelector(".mermaid svg");
 			assert.ok(svg);
-			trigger.click(); // Bubbles to the real delegated plan-content listener.
+			trigger.querySelector("path")!.click(); // Icon clicks bubble to the delegated plan-content listener.
 			assert.equal(dialog.open, true);
 			assert.equal(dialog.showModalCalls, 1);
 			assert.equal(graph.parentElement, fullscreen);
 			assert.equal(fullscreen.querySelector(".graph"), graph);
 			assert.equal(parent.querySelector(".graph"), null);
 			assert.equal(app.document.documentElement.classList.contains("graph-fullscreen-open"), true);
-			close.focus();
-			if (exit === "button") close.click();
+			assert.equal(app.document.activeElement, close, "The collapse control receives focus when the dialog opens");
+			if (exit === "button") close.querySelector("path")!.click();
 			// Native Escape dispatches a cancel event; the script must prevent its default action.
 			if (exit === "Escape") assert.equal(dialog.dispatch("cancel").defaultPrevented, true);
 			if (exit === "native close") dialog.close();
 			assertClosed(state);
 			assert.equal(graph.parentElement, parent);
 			assert.equal(parent.querySelector(".graph"), graph);
-			assert.equal(graph.querySelector("svg"), svg);
+			assert.equal(graph.querySelector(".mermaid svg"), svg);
 			assert.equal(app.document.activeElement, trigger);
 			assert.equal(app.mermaidRuns, 1, "Opening and closing must not render a replacement graph");
 		});
@@ -356,7 +371,7 @@ test("dependency graph fullscreen", async (t) => {
 			const renderGate = delayed ? new Promise<void>((resolve) => { finishRender = resolve; }) : undefined;
 			const state = await setup({ renderGate });
 			const { app, graph, trigger, fullscreen } = state;
-			if (delayed) assert.equal(graph.querySelector("svg"), null);
+			if (delayed) assert.equal(graph.querySelector(".mermaid svg"), null);
 			trigger.click();
 			if (delayed) { finishRender(); await setImmediate(); }
 			assert.equal(fullscreen.querySelector(".graph"), graph);
