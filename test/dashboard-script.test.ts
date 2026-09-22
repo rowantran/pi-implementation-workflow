@@ -14,6 +14,7 @@ const require = createRequire(import.meta.url);
 class Events {
 	listeners: Record<string, Array<(event: unknown) => void>> = {};
 	addEventListener(type: string, fn: (event: unknown) => void) { (this.listeners[type] ??= []).push(fn); }
+	dispatchEvent(event: Event) { return !this.dispatch(event.type).defaultPrevented; }
 	dispatch(type: string, details: Record<string, unknown> = {}) {
 		const event = { target: this, ...details, type, defaultPrevented: false, preventDefault() { this.defaultPrevented = true; } };
 		for (const fn of this.listeners[type] ?? []) fn(event);
@@ -141,15 +142,15 @@ function fakeDocument(html: string) {
 	return { document, elements };
 }
 
-function dashboardHarness(html: string, hash = "", options: { renderGate?: Promise<void> } = {}) {
+function dashboardHarness(html: string, hash = "", options: { renderGate?: Promise<void>; width?: number } = {}) {
 	const { document, elements } = fakeDocument(html);
 	const marked = require("marked");
 	const hljs = require("@highlightjs/cdn-assets/highlight.min.js");
-	const window = Object.assign(new Events(), { scrollTo() {} });
+	const window = Object.assign(new Events(), { scrollTo() {}, innerWidth: options.width ?? 1280 });
 	const location = { hash, pathname: "/w/x", href: "http://127.0.0.1/w/x" };
 	let mermaidRuns = 0;
 	const context: Record<string, unknown> = {
-		document, marked, hljs, console, window, location,
+		document, marked, hljs, console, window, location, Event,
 		// Stub the external renderer only; graph wiring, events, fullscreen, and routing run the real script.
 		mermaid: {
 			initialize() {},
@@ -205,12 +206,72 @@ test("dashboard script renders plan and review sections without runtime errors",
 	const overall = runDashboard(html, "#review");
 	assert.match(overall.get("review-content")!.innerHTML, /Summary <strong>bold<\/strong>/);
 
+	// Cross-section comment navigation must keep the quote scroll performed by
+	// setDocument(), rather than overwrite it with the reader's default reset.
+	const app = dashboardHarness(html, "#plan/goal");
+	const scrollOrder: string[] = [];
+	app.elements.get("review-content")!.scrollIntoView = () => { scrollOrder.push("reader start"); };
+	app.window.scrollTo = () => { scrollOrder.push("page top"); };
+	app.context.annotationProbe = { setDocument(document: { id: string }) {
+		assert.equal(document.id, "review/change/define-policy");
+		scrollOrder.push("quote center");
+	} };
+	vm.runInContext("annotations = globalThis.annotationProbe", app.context);
+	app.location.hash = "#review/change/define-policy";
+	app.window.dispatch("hashchange");
+	assert.deepEqual(scrollOrder, ["reader start", "page top", "quote center"]);
+
 	// A plan that is still invalid shows its errors instead of crashing.
 	await writeFiles(location.plan, { "plan.json": "{ not json" });
 	const broken = runDashboard(renderDashboard(await collectDashboardData(location)));
 	assert.match(broken.get("plan-content")!.innerHTML, /plan\.json: invalid JSON/);
 	assert.equal(broken.get("review-tab")!.hidden, true);
 	await rm(repo, { recursive: true, force: true });
+});
+
+test("global comments replace the local view while the same margin moves between tabs", () => {
+	const html = renderDashboard({ id: "comments", ask: "Ask", clarifications: [], planErrors: ["No plan yet"], reviewErrors: ["No review yet"], generatedAt: "now" });
+	const app = dashboardHarness(html, "", { width: 1600 });
+	const get = (id: string) => app.elements.get(id)!;
+	const global = get("global-comments"), margin = get("annotations-margin");
+	const originalParent = global.parentElement;
+	assert.equal(global.hidden, true);
+	assert.equal(get("comments-toggle").getAttribute("aria-expanded"), "false");
+	const views: string[] = [];
+	app.context.annotationProbe = { setDocument() {}, setView(view: string) { views.push(view); margin.hidden = view !== "local"; } };
+	vm.runInContext("annotations = globalThis.annotationProbe", app.context);
+	let resizes = 0;
+	app.window.addEventListener("resize", () => { resizes++; });
+	get("comments-toggle").click();
+	assert.equal(global.hidden, false);
+	assert.equal(margin.hidden, true);
+	assert.equal(get("workspace").classList.contains("all-comments-open"), true);
+	get("comments-close").click();
+	assert.equal(global.hidden, true);
+	assert.equal(margin.hidden, false);
+	assert.equal(app.document.activeElement, get("comments-toggle"));
+	assert.equal(get("workspace").classList.contains("all-comments-open"), false);
+	get("comments-toggle").click();
+	assert.equal(global.hidden, false);
+	assert.equal(margin.hidden, true);
+	assert.deepEqual(views, ["global", "local", "global"]);
+	assert.equal(resizes, 3, "all changes trigger annotation reflow");
+	assert.match(html, /\.workspace\.all-comments-open \.comment-margin\{display:none\}/);
+	assert.match(html, /\.workspace\.all-comments-open \.layout\{grid-template-columns:minmax\(0,1fr\)\}/);
+	const draft = app.document.createElement("div");
+	draft.textContent = "Unfinished comment";
+	margin.appendChild(draft);
+	get("review-tab").click(); app.window.dispatch("hashchange");
+	assert.equal(margin.parentElement, get("review-comments"));
+	assert.equal(draft.parentElement, margin, "navigation must move, not replace, the composer container");
+	assert.equal(global.parentElement, originalParent, "global comments are independent of the tab");
+	app.location.hash = "#plan"; app.window.dispatch("hashchange");
+	assert.equal(margin.parentElement, get("plan-comments"));
+	assert.equal(global.hidden, false);
+	const narrow = dashboardHarness(html, "", { width: 760 });
+	assert.equal(narrow.elements.get("global-comments")!.hidden, true);
+	narrow.elements.get("comments-toggle")!.click();
+	assert.equal(narrow.elements.get("global-comments")!.hidden, false);
 });
 
 test("dependency graph fullscreen", async (t) => {

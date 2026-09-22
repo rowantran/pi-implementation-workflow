@@ -7,7 +7,7 @@ import { parse } from "smol-toml";
  * kickoff messages as Markdown, and all shorter strings (tool metadata, tool
  * results and errors, blocked-tool reasons) in strings.toml.
  */
-export type PromptName = "planning" | "implementation" | "review" | "slug" | "kickoff-planning" | "kickoff-implementation" | "kickoff-review";
+export type PromptName = "planning" | "implementation" | "review" | "slug" | "kickoff-planning" | "kickoff-implementation" | "kickoff-review" | "annotations" | "annotation-reply";
 
 const cache = new Map<string, string>();
 let strings: Record<string, unknown> | undefined;

@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
-import { rm } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
+import { rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { test } from "node:test";
 import { nodeExec } from "../src/git.ts";
@@ -12,6 +13,7 @@ function fakePi(exec: typeof nodeExec) {
 	const commands = new Map<string, any>();
 	const handlers = new Map<string, any[]>();
 	const notifications: string[] = [];
+	const messages: Array<{ content: string; options: unknown }> = [];
 	let activeTools = ["read", "bash", "edit", "write", "grep", "find", "ls"];
 	let sessionName = "";
 	const pi = {
@@ -23,17 +25,21 @@ function fakePi(exec: typeof nodeExec) {
 		getActiveTools: () => activeTools,
 		setActiveTools: (names: string[]) => { activeTools = names; },
 		setSessionName: (name: string) => { sessionName = name; },
+		getSessionName: () => sessionName,
+		sendUserMessage: (content: string, options: unknown) => { messages.push({ content, options }); },
 		appendEntry: () => {},
 		setModel: async () => true,
 		setThinkingLevel: () => {},
 	};
-	const ctx = (cwd: string, entries: unknown[] = []) => ({
+	const ctx = (cwd: string, entries: unknown[] = [], sessionId = randomUUID()) => ({
 		cwd,
 		mode: "tui",
 		hasUI: true,
 		model: undefined,
 		modelRegistry: { find: () => undefined },
-		sessionManager: { getBranch: () => entries },
+		isIdle: () => true,
+		hasPendingMessages: () => false,
+		sessionManager: { getBranch: () => entries, getEntries: () => entries, getSessionId: () => sessionId, getSessionFile: () => join(cwd, `${sessionId}.jsonl`) },
 		ui: { notify: (text: string) => notifications.push(text) },
 	});
 	const emit = async (event: string, payload: unknown, context: unknown) => {
@@ -41,7 +47,7 @@ function fakePi(exec: typeof nodeExec) {
 		for (const handler of handlers.get(event) ?? []) result = (await handler(payload, context)) ?? result;
 		return result;
 	};
-	return { pi, tools, commands, notifications, emit, ctx, activeTools: () => activeTools, sessionName: () => sessionName };
+	return { pi, tools, commands, notifications, messages, emit, ctx, activeTools: () => activeTools, sessionName: () => sessionName };
 }
 
 test("planning session: binding, tool gating, plan save, and system prompt", async () => {
@@ -87,3 +93,89 @@ test("planning session: binding, tool gating, plan save, and system prompt", asy
 	await rm(repo, { recursive: true, force: true });
 	await rm(agentDir, { recursive: true, force: true });
 });
+
+test("dashboard batches reach the latest session, stay pinned through shutdown, and return replies", async (t) => {
+	const { annotationCallbacks } = await import("../src/feedback.ts");
+	const { readReplies } = await import("../src/lib/annotations/server.ts");
+	const { delivered, recipients } = await import("../src/lib/notifications.ts");
+	const { default: extension } = await import("../src/index.ts");
+	const agentDir = await temporaryDirectory("pi-workflow-comments-agent-");
+	process.env.PI_CODING_AGENT_DIR = agentDir;
+	const repo = await initRepository();
+	const { location } = await createWorkflow(nodeExec, { repositoryRoot: repo, id: "comments", ask: "Comment on a review followup" });
+	await writeFiles(location.plan, VALID_PLAN);
+	const sessionId = randomUUID();
+	const entries: any[] = [{ type: "custom", customType: "implementation-workflow", data: { phase: "review", id: location.id, repositoryRoot: repo, worktree: location.worktree } }];
+	let harness = fakePi(nodeExec);
+	extension(harness.pi as any);
+	let context = harness.ctx(location.worktree, entries, sessionId);
+	t.after(async () => {
+		await harness.emit("session_shutdown", { reason: "quit" }, context);
+		await rm(repo, { recursive: true, force: true });
+		await rm(agentDir, { recursive: true, force: true });
+	});
+	await harness.emit("session_start", {}, context);
+	assert.ok(harness.activeTools().includes("workflow_comment_reply"));
+	const registrations = await recipients(join(location.root, "notifications"));
+	assert.equal(registrations[0]?.id, sessionId);
+	assert.equal(registrations[0]?.active, true);
+	const makeComment = (documentId: string) => ({
+		id: randomUUID(), documentId, documentTitle: "Followup", revision: "abc", start: 0, end: 7, quote: "Testing", text: "Why is this necessary?",
+	});
+	const batch = { id: randomUUID(), comments: [makeComment("plan/change/followup"), makeComment("review/change/define-policy")] };
+	const callbacks = annotationCallbacks(location.root);
+	assert.equal((await callbacks.onSubmit(batch)).recipientId, sessionId);
+	await eventually(() => harness.messages.length === 1);
+	assert.deepEqual(harness.messages[0]!.options, { deliverAs: "followUp" });
+	assert.match(harness.messages[0]!.content, /plan\/change\/followup/);
+	assert.match(harness.messages[0]!.content, /review\/change\/define-policy/);
+	assert.match(harness.messages[0]!.content, /workflow_comment_reply/);
+	assert.equal(await delivered(join(location.root, "notifications"), batch.id), false, "queued is not yet persisted delivery");
+
+	await harness.emit("session_shutdown", { reason: "resume" }, context);
+	assert.equal((await recipients(join(location.root, "notifications")))[0]?.active, false);
+	// Another active session cannot consume the already addressed batch.
+	harness = fakePi(nodeExec);
+	extension(harness.pi as any);
+	context = harness.ctx(location.worktree, entries, randomUUID());
+	await harness.emit("session_start", {}, context);
+	await new Promise((resolve) => setTimeout(resolve, 1100));
+	assert.equal(harness.messages.length, 0);
+	await assert.rejects(harness.tools.get("workflow_comment_reply").execute("reply", { batchId: batch.id, commentId: batch.comments[0]!.id, reply: "Wrong session" }, undefined, undefined, context), /addressed to the current session/);
+	await harness.emit("session_shutdown", { reason: "resume" }, context);
+
+	// Resume the original session: the lost in-memory queue is reconstructed from disk.
+	harness = fakePi(nodeExec);
+	extension(harness.pi as any);
+	context = harness.ctx(location.worktree, entries, sessionId);
+	await harness.emit("session_start", {}, context);
+	await eventually(() => harness.messages.length === 1);
+	entries.push({ type: "message", message: { role: "user", content: [{ type: "text", text: harness.messages[0]!.content }] } });
+	await writeFile(context.sessionManager.getSessionFile(), entries.map((entry) => JSON.stringify(entry)).join("\n") + "\n");
+	await eventually(() => delivered(join(location.root, "notifications"), batch.id));
+	assert.equal(harness.messages.length, 1, "polling must not repeatedly queue the same batch");
+	await callbacks.onSubmit(batch); // A browser retry is idempotent.
+	assert.equal((await callbacks.load()).batches.length, 1);
+	const reply = harness.tools.get("workflow_comment_reply");
+	await reply.execute("reply", { batchId: batch.id, commentId: batch.comments[0]!.id, reply: "It covers a missing validation case." }, undefined, undefined, context);
+	const answers = await readReplies(join(location.root, "annotations"), batch.id);
+	assert.equal(answers.length, 1);
+	assert.equal(answers[0]?.text, "It covers a missing validation case.");
+	assert.match(answers[0]?.author ?? "", /^Review:/);
+	assert.equal(answers[0]?.role, "agent");
+	assert.match(answers[0]?.id ?? "", /^agent-[a-f0-9]{64}$/);
+	await reply.execute("reply", { batchId: batch.id, commentId: batch.comments[0]!.id, reply: "It covers a missing validation case." }, undefined, undefined, context);
+	assert.deepEqual(await readReplies(join(location.root, "annotations"), batch.id), answers, "tool-call retries preserve the original answer and timestamp");
+	await assert.rejects(reply.execute("reply", { batchId: batch.id, commentId: batch.comments[0]!.id, reply: "Conflicting retry." }, undefined, undefined, context), /Could not save/);
+	await reply.execute("reply-2:/unsafe-id", { batchId: batch.id, commentId: batch.comments[0]!.id, reply: "Additional detail." }, undefined, undefined, context);
+	assert.equal((await readReplies(join(location.root, "annotations"), batch.id)).length, 2, "a new call appends instead of replacing");
+	assert.equal((await harness.emit("tool_call", { toolName: "write", input: { path: join(location.root, "notifications", "tamper.json") } }, context))?.block, true);
+});
+
+async function eventually(predicate: () => boolean | Promise<boolean>): Promise<void> {
+	const until = Date.now() + 5000;
+	while (!(await predicate())) {
+		assert.ok(Date.now() < until, "timed out waiting for notification delivery");
+		await new Promise((resolve) => setTimeout(resolve, 25));
+	}
+}

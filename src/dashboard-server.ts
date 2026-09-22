@@ -1,13 +1,18 @@
 import { createHash } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
-import { createServer, type Server, type ServerResponse } from "node:http";
+import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
 import type { DashboardConfig } from "./config.ts";
+import { handleAnnotations } from "./lib/annotations/server.ts";
 import { isRecord, isSlug, readOptional } from "./plan.ts";
 
+export type AnnotationCallbacks = (root: string) => Pick<Parameters<typeof handleAnnotations>[2], "directory" | "load" | "onSubmit" | "onReply">;
+
 const ASSETS = new Map([
+	["annotations.js", () => fileURLToPath(new URL("./lib/annotations/browser.js", import.meta.url))],
+	["annotations.css", () => fileURLToPath(new URL("./lib/annotations/annotations.css", import.meta.url))],
 	["marked.umd.js", () => fileURLToPath(new URL("./marked.umd.js", import.meta.resolve("marked")))],
 	["highlight.min.js", () => fileURLToPath(import.meta.resolve("@highlightjs/cdn-assets/highlight.min.js"))],
 	["mermaid.min.js", () => fileURLToPath(new URL("./mermaid.min.js", import.meta.resolve("mermaid")))],
@@ -58,11 +63,11 @@ export async function unregisterDashboard(id: string, path = indexPath()): Promi
  * another pi process is assumed to be serving the same files from disk, so the
  * URL still works and no error is raised. Real bind errors are thrown.
  */
-export function ensureDashboardServer(config: DashboardConfig, index = indexPath()): Promise<void> {
+export function ensureDashboardServer(config: DashboardConfig, index = indexPath(), annotations?: AnnotationCallbacks): Promise<void> {
 	if (owned?.listening) return Promise.resolve();
 	starting ??= new Promise<void>((resolve, reject) => {
 		const server = createServer((request, response) => {
-			handle(request.method ?? "GET", request.url ?? "/", response, index).catch(() => {
+			handle(request, response, index, config, annotations).catch(() => {
 				if (!response.headersSent) send(response, 500, "text/plain", "Internal Server Error\n");
 				else response.destroy();
 			});
@@ -89,14 +94,27 @@ export async function closeDashboardServer(): Promise<void> {
 	await new Promise<void>((resolve) => server.close(() => resolve()));
 }
 
-async function handle(method: string, url: string, response: ServerResponse, index: string): Promise<void> {
+async function handle(request: IncomingMessage, response: ServerResponse, index: string, config: DashboardConfig, annotations?: AnnotationCallbacks): Promise<void> {
+	const method = request.method ?? "GET";
+	const path = new URL(request.url ?? "/", "http://localhost").pathname;
+	const comments = /^\/w\/([a-z0-9-]+)\/annotations$/.exec(path);
+	if (comments) {
+		const root = (await readIndex(index))[comments[1]!];
+		if (!root) return send(response, 404, "text/plain", "Not Found\n");
+		if (!annotations) return send(response, 503, "text/plain", "Comment delivery unavailable. Reload the Pi process serving this dashboard.\n");
+		const host = config.listenHost.includes(":") ? `[${config.listenHost}]` : config.listenHost;
+		const allowedOrigins = [new URL(config.publicBaseUrl).origin, `http://${host}:${config.listenPort}`];
+		if (["127.0.0.1", "::1", "localhost"].includes(config.listenHost)) {
+			allowedOrigins.push(`http://localhost:${config.listenPort}`, `http://127.0.0.1:${config.listenPort}`, `http://[::1]:${config.listenPort}`);
+		}
+		return handleAnnotations(request, response, { ...annotations(root), allowedOrigins });
+	}
 	if (method !== "GET" && method !== "HEAD") return send(response, 405, "text/plain", "Method Not Allowed\n");
-	const path = new URL(url, "http://localhost").pathname;
 	const asset = /\/assets\/([a-z0-9.-]+)$/.exec(path);
 	if (asset) {
 		const resolveAsset = ASSETS.get(asset[1]!);
 		if (!resolveAsset) return send(response, 404, "text/plain", "Not Found\n");
-		return send(response, 200, "text/javascript; charset=utf-8", await readFile(resolveAsset()), method === "HEAD", "public, max-age=86400");
+		return send(response, 200, asset[1]!.endsWith(".css") ? "text/css; charset=utf-8" : "text/javascript; charset=utf-8", await readFile(resolveAsset()), method === "HEAD", "public, max-age=86400");
 	}
 	const dashboard = /\/w\/([a-z0-9-]+)$/.exec(path);
 	if (!dashboard) return send(response, 404, "text/plain", "Not Found\n");

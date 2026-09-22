@@ -5,8 +5,10 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="workflow-revision" content="__REVISION__">
 <title>__TITLE__ · Implementation workflow</title>
+<link rel="stylesheet" href="../assets/annotations.css?v=__REVISION__">
 <style>
 :root{
+  color-scheme:light;
   --bg:#f7f5f4;--surface:#fff;--inset:#ece9e6;--border:#dad5d1;--border-strong:#c1bbb6;
   --text:#2c2c2c;--text-2:#606060;--muted:#655d58;--faint:#a19a94;--heading:#000;
   --accent:#0d6fe1;--accent-bg:#cfe2ff;--ok:#066a2c;--ok-bg:#e5f7e7;--bad:#921921;--bad-bg:#ffe4e1;--warn:#7a4b00;--warn-bg:#fff1d6;
@@ -14,6 +16,7 @@
   --k:#cf222e;--t:#8250df;--l:#0550ae;--s:#0a3069;--v:#953800;--c:#57606a;--g:#116329;
 }
 [data-theme=dark]{
+  color-scheme:dark;
   --bg:#000;--surface:#161412;--inset:#2c2c2c;--border:#2c2c2c;--border-strong:#606060;
   --text:#f7f5f4;--text-2:#dad5d1;--muted:#c1bbb6;--faint:#a19a94;--heading:#fff;
   --accent:#3d8cff;--accent-bg:#0d2c58;--ok:#81d090;--ok-bg:#072810;--bad:#fb8d87;--bad-bg:#330b0b;--warn:#ffcf7a;--warn-bg:#3a2a05;
@@ -27,15 +30,17 @@ header.app{position:sticky;top:0;z-index:10;display:flex;align-items:center;gap:
 .badge{display:inline-flex;align-items:center;height:20px;padding:0 8px;border-radius:6px;background:var(--inset);color:var(--muted);font-size:11px;font-weight:600;font-family:var(--mono)}
 .btn{display:inline-flex;align-items:center;gap:6px;height:30px;padding:0 10px;border:1px solid var(--border-strong);border-radius:8px;background:none;color:var(--text-2);cursor:pointer;font-size:12px}.btn:hover{background:var(--inset)}.btn:disabled{opacity:.4;cursor:default}
 kbd{display:inline-flex;min-width:18px;height:18px;padding:0 4px;align-items:center;justify-content:center;border:1px solid var(--border-strong);border-radius:4px;font-family:var(--mono);font-size:10px;color:var(--muted)}
-main{width:min(1440px,100%);margin:0 auto;padding:28px}.view[hidden]{display:none}
-.layout{display:grid;grid-template-columns:minmax(0,1fr) 320px;gap:24px;align-items:start}
+main{width:min(1540px,100%);margin:0 auto;padding:28px}.view[hidden]{display:none}
+.workspace{display:grid;grid-template-columns:minmax(0,1fr);gap:24px;align-items:start}.workspace.all-comments-open{grid-template-columns:minmax(0,1fr) 290px}.views{min-width:0}
+.layout{display:grid;grid-template-columns:minmax(0,1fr) 290px;gap:24px;align-items:start}.comment-margin{min-width:0;position:relative}
+.workspace.all-comments-open .layout{grid-template-columns:minmax(0,1fr)}.workspace.all-comments-open .comment-margin{display:none}
 .card{background:var(--surface);border:1px solid var(--border);border-radius:14px;overflow:clip}
-.reader{display:grid;grid-template-columns:240px minmax(0,1fr);min-height:600px}
+.reader{display:grid;grid-template-columns:180px minmax(0,1fr);min-height:600px}
 .outline{border-right:1px solid var(--border);background:var(--bg)}.outline-inner{position:sticky;top:76px;max-height:calc(100vh - 100px);overflow:auto;padding:20px 12px;display:flex;flex-direction:column;gap:2px}
 .outline .label{margin:14px 10px 4px;color:var(--faint);font-size:10px;font-weight:700;letter-spacing:.05em;text-transform:uppercase}
 .outline button{width:100%;padding:7px 10px;border:0;border-radius:8px;background:none;color:var(--text-2);cursor:pointer;text-align:left;font-size:13px;line-height:18px}.outline button:hover{background:var(--inset);color:var(--text)}.outline button.section{color:var(--text);font-weight:600}.outline button.active{background:var(--surface);color:var(--accent);font-weight:600;box-shadow:0 1px 2px rgba(0,0,0,.08)}
 .outline button .dot{display:inline-block;width:7px;height:7px;margin-right:7px;border-radius:50%;background:var(--border-strong);vertical-align:middle}.outline button .dot.done{background:var(--ok)}
-.document{min-width:0;padding:clamp(24px,4vw,56px)}
+.document{min-width:0;padding:clamp(24px,2.5vw,44px)}
 .doc-header{display:flex;align-items:baseline;justify-content:space-between;gap:24px;margin:0 0 24px;padding-bottom:18px;border-bottom:1px solid var(--border)}
 .doc-header h1{margin:0;font-family:var(--serif);font-size:30px;font-weight:400;line-height:40px;color:var(--heading)}.doc-header .meta{flex:none;color:var(--muted);font-size:12px;text-align:right;white-space:nowrap}
 .pager{display:flex;align-items:center;justify-content:space-between;gap:12px;margin:0 0 24px;padding-bottom:16px;border-bottom:1px solid var(--border)}.pager .pos{color:var(--muted);font-size:12px}
@@ -66,20 +71,22 @@ html.graph-fullscreen-open{overflow:hidden}
 #graph-fullscreen-content{display:flex;flex:1;min-height:0}
 .graph-dialog .graph{display:flex;flex:1;min-width:0;padding:56px 16px 16px}.graph-dialog .mermaid{width:100%;height:100%;min-width:0}
 .graph-dialog .mermaid svg{width:100%!important;max-width:none!important;height:100%;overflow:hidden}
-.context{position:sticky;top:76px}.context h2{margin:0;padding:14px 18px;border-bottom:1px solid var(--border);font-size:13px;font-weight:600;color:var(--heading)}.context .ask{margin:0;padding:14px 18px;white-space:pre-wrap;overflow-wrap:anywhere;font-size:14px;line-height:22px;border-bottom:1px solid var(--border);max-height:40vh;overflow:auto}
+.context{position:sticky;top:76px;max-height:calc(100vh - 100px);overflow:auto}.context[hidden]{display:none}.comments-close{position:absolute;top:12px;right:10px;border:0;background:transparent;color:var(--muted);cursor:pointer;font-size:20px;width:28px;height:28px}.context>details>summary{padding:14px 18px;cursor:pointer;font-size:13px;border-top:1px solid var(--border)}.context>details h2{margin:0;padding:14px 18px;border-bottom:1px solid var(--border);font-size:13px;font-weight:600;color:var(--heading)}.context .ask{margin:0;padding:14px 18px;white-space:pre-wrap;overflow-wrap:anywhere;font-size:14px;line-height:22px;border-bottom:1px solid var(--border);max-height:40vh;overflow:auto}
 .clar{padding:14px 18px;border-bottom:1px solid var(--border)}.clar:last-child{border-bottom:0}.clar .q{margin:0 0 6px;color:var(--text-2);font-size:13px}.clar .a{margin:0;white-space:pre-wrap;font-size:14px}.clar .a.custom::after{content:" (typed)";color:var(--faint);font-size:11px}.empty{padding:20px 18px;color:var(--muted);font-size:13px}
 .errors{margin:0 0 20px;padding:14px 16px;border-radius:8px;background:var(--bad-bg);color:var(--bad);font-size:13px}.errors ul{margin:8px 0 0;padding-left:20px}.errors code{background:none;padding:0}
-@media(max-width:1000px){.layout{grid-template-columns:1fr}.context{position:static}}
-@media(max-width:720px){.reader{grid-template-columns:1fr}.outline{border-right:0;border-bottom:1px solid var(--border)}.outline-inner{position:static;max-height:none;flex-direction:row;flex-wrap:wrap}.outline .label{display:none}.document{padding:20px}.doc-header{flex-direction:column;gap:6px}}
+@media(max-width:900px){.workspace.all-comments-open{grid-template-columns:minmax(0,1fr)}.context{position:fixed;z-index:15;top:68px;right:16px;bottom:16px;width:min(340px,calc(100vw - 32px));max-height:none;box-shadow:0 8px 36px rgb(0 0 0 / 15%)}}
+@media(max-width:1150px){.reader{grid-template-columns:1fr}.outline{border-right:0;border-bottom:1px solid var(--border)}.outline-inner{position:static;max-height:none;flex-direction:row;flex-wrap:wrap;padding:12px}.outline .label{display:none}.outline button{width:auto}.outline button .dot{display:none}}
+@media(max-width:900px){main{padding:16px}.layout{grid-template-columns:1fr}.comment-margin{padding:0 8px}.document{padding:20px}.doc-header{flex-direction:column;gap:6px}}
+@media(max-width:600px){header.app{padding:0 12px;gap:6px}.brand{font-size:12px}.tabs{margin-left:0}.tabs button{padding:0 10px}.right .badge{display:none}}
 </style>
 </head>
 <body>
 <header class="app">
   <div class="brand">Implementation workflow</div>
   <nav class="tabs"><button data-view="plan">Plan</button><button data-view="review" id="review-tab" hidden>Review</button></nav>
-  <div class="right"><span class="badge" id="workflow-id"></span><button class="btn" id="theme" type="button">Theme</button></div>
+  <div class="right"><span class="badge" id="workflow-id"></span><button class="btn" id="comments-toggle" type="button" aria-controls="global-comments" aria-expanded="false">All comments</button><button class="btn" id="theme" type="button">Theme</button></div>
 </header>
-<main>
+<main><div class="workspace" id="workspace"><div class="views">
   <section class="view" id="plan-view">
     <div class="layout">
       <article class="card"><div class="reader">
@@ -90,10 +97,11 @@ html.graph-fullscreen-open{overflow:hidden}
           <div class="markdown" id="plan-content"></div>
         </div>
       </div></article>
-      <aside class="card context"><h2>Original ask</h2><pre class="ask" id="ask"></pre><h2>Clarifications</h2><div id="clarifications"></div></aside>
+      <aside class="comment-margin" id="plan-comments"><div id="annotations-margin"><div class="empty">Loading comments…</div></div></aside>
     </div>
   </section>
   <section class="view" id="review-view" hidden>
+    <div class="layout">
     <article class="card"><div class="reader">
       <nav class="outline"><div class="outline-inner" id="review-outline"></div></nav>
       <div class="document">
@@ -102,8 +110,14 @@ html.graph-fullscreen-open{overflow:hidden}
         <div class="markdown" id="review-content"></div>
       </div>
     </div></article>
+    <aside class="comment-margin" id="review-comments"></aside>
+    </div>
   </section>
-</main>
+</div><aside class="card context" id="global-comments" aria-label="All workflow comments" hidden>
+  <button class="comments-close" id="comments-close" type="button" aria-label="Close all comments">×</button>
+  <div id="annotations-panel"></div>
+  <details><summary>Original ask and clarifications</summary><h2>Original ask</h2><pre class="ask" id="ask"></pre><h2>Clarifications</h2><div id="clarifications"></div></details>
+</aside></div></main>
 <dialog class="graph-dialog" id="graph-dialog" aria-labelledby="graph-dialog-title">
   <h2 id="graph-dialog-title">Dependency graph</h2>
   <div id="graph-fullscreen-content"></div>
@@ -114,6 +128,7 @@ html.graph-fullscreen-open{overflow:hidden}
 <script>
 const data = JSON.parse(document.getElementById("data").textContent);
 const plan = data.plan, review = data.review;
+let annotations;
 const $ = (id) => document.getElementById(id);
 const esc = (v) => String(v ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 const numberOf = (slug) => plan ? plan.changes.findIndex((c) => c.slug === slug) + 1 : 0;
@@ -254,10 +269,14 @@ function reader(name, sections) {
     current = i;
     if (!pages.length) { content.innerHTML = '<div class="empty">Nothing here yet.</div>'; return; }
     content.innerHTML = pages[i].html();
+    content.dataset.annotationDocument = ["graph", "errors"].includes(pages[i].id) ? "" : name + "/" + pages[i].id;
+    content.dataset.annotationTitle = (name === "plan" ? "Plan" : "Review") + " · " + pages[i].label;
     for (const b of outline.querySelectorAll("button")) b.classList.toggle("active", b.dataset.id === pages[i].id);
     pos.textContent = (i + 1) + " / " + pages.length;
     $(name + "-prev").disabled = i === 0; $(name + "-next").disabled = i === pages.length - 1;
     content.scrollIntoView({ block: "start" }); window.scrollTo({ top: 0 });
+    // A selected comment may now scroll to its quote; do not reset after this.
+    annotations?.setDocument(content.dataset.annotationDocument ? { id: content.dataset.annotationDocument, title: content.dataset.annotationTitle, root: content } : null);
     // Keep this reference if the graph moves into the dialog while Mermaid loads.
     const graph = content.querySelector(".graph");
     runMermaid(content).then(() => wireGraph(graph));
@@ -296,6 +315,7 @@ function route() {
   view = v === "review" && !$("review-tab").hidden ? "review" : "plan";
   for (const b of document.querySelectorAll(".tabs button")) b.classList.toggle("active", b.dataset.view === view);
   $("plan-view").hidden = view !== "plan"; $("review-view").hidden = view !== "review";
+  $(view + "-comments").appendChild($("annotations-margin"));
   readers[view].show(rest.join("/") || readers[view].pages[0]?.id);
 }
 document.querySelector(".tabs").addEventListener("click", (e) => { const b = e.target.closest("button[data-view]"); if (b) location.hash = "#" + b.dataset.view; });
@@ -305,12 +325,37 @@ const themeKey = "implementation-workflow-theme";
 function applyTheme(t) { document.documentElement.dataset.theme = t; localStorage.setItem(themeKey, t); route(); }
 document.documentElement.dataset.theme = localStorage.getItem(themeKey) || (matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
 $("theme").addEventListener("click", () => applyTheme(document.documentElement.dataset.theme === "dark" ? "light" : "dark"));
+function showAllComments(open) {
+  $("global-comments").hidden = !open;
+  $("workspace").classList.toggle("all-comments-open", open);
+  $("comments-toggle").setAttribute("aria-expanded", String(open));
+  annotations?.setView(open ? "global" : "local");
+  // Only one comment view is visible. Reflow the margin when returning to it.
+  window.dispatchEvent(new Event("resize"));
+}
+$("comments-toggle").addEventListener("click", () => showAllComments($("global-comments").hidden));
+$("comments-close").addEventListener("click", () => { showAllComments(false); $("comments-toggle").focus(); });
+showAllComments(false);
 route();
-// Reload when the file on disk changed, checked whenever the tab regains focus.
+// Do not refresh away a composer, even if a draft starts during the fetch.
 const revision = document.querySelector('meta[name="workflow-revision"]').content;
-async function checkRevision() { try { const html = await (await fetch(location.pathname, { cache: "no-store" })).text(); const m = /workflow-revision" content="([^"]+)"/.exec(html); if (m && m[1] !== revision) location.reload(); } catch {} }
+async function checkRevision() { if (annotations?.hasDrafts()) return; try { const html = await (await fetch(location.pathname, { cache: "no-store" })).text(); const m = /workflow-revision" content="([^"]+)"/.exec(html); if (m && m[1] !== revision && !annotations?.hasDrafts()) location.reload(); } catch {} }
 window.addEventListener("focus", checkRevision);
 document.addEventListener("visibilitychange", () => { if (!document.hidden) checkRevision(); });
+// The annotation library owns selection, highlights, drafts, submission, and reply UI.
+// This page only supplies the current document, navigation, and the HTTP endpoint.
+import(new URL("../assets/annotations.js?v=__REVISION__", location.href).href).then(({ createAnnotations }) => {
+  annotations = createAnnotations({
+    container: $("annotations-panel"), marginContainer: $("annotations-margin"), endpoint: location.pathname.replace(/\/$/, "") + "/annotations",
+    storageKey: "workflow-annotations:" + location.origin + location.pathname,
+    navigate: (id) => { location.hash = "#" + id; },
+  });
+  annotations.setView($("global-comments").hidden ? "local" : "global");
+  const content = $(view + "-content");
+  annotations.setDocument(content.dataset.annotationDocument ? { id: content.dataset.annotationDocument, title: content.dataset.annotationTitle, root: content } : null);
+  const refresh = setInterval(() => { if (!document.hidden) checkRevision(); }, 3000);
+  window.addEventListener("pagehide", (event) => { if (!event.persisted) { clearInterval(refresh); annotations.destroy(); } });
+}).catch(() => { $("annotations-margin").textContent = "Comments could not load. Reload the dashboard or its Pi server."; });
 </script>
 </body>
 </html>
