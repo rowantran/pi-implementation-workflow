@@ -1,10 +1,11 @@
-import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, realpath, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { nodeExec } from "../src/git.ts";
 
 export async function temporaryDirectory(prefix = "pi-workflow-test-"): Promise<string> {
-	return mkdtemp(join(tmpdir(), prefix));
+	// Git resolves /tmp to /private/tmp on macOS; use the same canonical path.
+	return realpath(await mkdtemp(join(tmpdir(), prefix)));
 }
 
 export async function writeFiles(root: string, files: Record<string, string>): Promise<void> {

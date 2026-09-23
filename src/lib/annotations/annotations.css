@@ -1,0 +1,145 @@
+/* Translucent warm tints retain the document's own text and syntax colors. */
+::highlight(annotations-saved) { background-color: var(--annotation-saved-background, rgb(227 177 54 / 16%)); }
+::highlight(annotations-draft) { background-color: var(--annotation-draft-background, rgb(227 177 54 / 12%)); }
+::highlight(annotations-hover) { background-color: var(--annotation-hover-background, rgb(227 177 54 / 28%)); }
+::highlight(annotations-focus) { background-color: var(--annotation-focus-background, rgb(227 177 54 / 32%)); }
+
+.annotations-panel {
+  --annotation-border: var(--border, color-mix(in srgb, CanvasText 12%, Canvas));
+  --annotation-surface: var(--surface, Canvas);
+  --annotation-muted: var(--muted, color-mix(in srgb, CanvasText 65%, Canvas));
+  color: inherit;
+  font: inherit;
+  font-size: 13px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+.annotations-panel, .annotations-panel * { box-sizing: border-box; }
+.annotations-panel [hidden] { display: none !important; }
+.annotations-panel h2 { margin: 0; font-size: 13px; font-weight: 600; }
+.annotations-panel p { margin: 0; }
+.annotations-panel button,
+.annotations-panel textarea {
+  box-sizing: border-box;
+  max-width: 100%;
+  border: 1px solid var(--annotation-border);
+  border-radius: 6px;
+  padding: 6px 9px;
+  color: inherit;
+  background: var(--annotation-surface);
+  font: inherit;
+}
+.annotations-panel button { cursor: pointer; }
+.annotations-panel button:hover { background: color-mix(in srgb, currentColor 5%, var(--annotation-surface)); }
+.annotations-panel button:disabled { opacity: .45; cursor: default; }
+.annotations-panel :is(button, textarea):focus-visible { outline: 2px solid var(--accent, #528cdd); outline-offset: 3px; }
+.annotations-panel textarea { display: block; width: 100%; min-height: 84px; resize: vertical; line-height: 1.5; }
+.annotations-panel textarea::placeholder { color: var(--annotation-muted); }
+.annotations-toolbar { padding: 6px 0 16px; }
+.annotations-target { margin-top: 4px !important; font-size: 11px; color: var(--annotation-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.annotations-hint { margin: 12px 0 8px !important; font-size: 12px; color: var(--annotation-muted); }
+.annotations-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.annotations-actions button { font-size: 12px; }
+.annotations-panel :is(.annotations-send, .annotations-save) { background: var(--accent, #336fa8); border-color: transparent; color: white; }
+.annotations-panel :is(.annotations-send, .annotations-save):hover { filter: brightness(.95); }
+.annotations-status { margin-top: 10px !important; color: var(--annotation-muted); font-size: 12px; }
+.annotations-draft-count { display: block; margin-top: 8px; font-size: 11px; color: var(--annotation-muted); }
+.annotations-empty { padding: 10px 0; color: var(--annotation-muted); font-size: 12px; }
+
+/* The rail shares document scrolling, rather than sticking to the viewport. */
+.annotations-rail { position: relative; }
+.annotations-bubbles { display: contents; }
+.annotations-bubble {
+  position: relative;
+  width: 100%;
+  margin: 0 0 12px;
+  padding: 12px;
+  border: 1px solid var(--annotation-border);
+  border-radius: 10px;
+  background: var(--annotation-surface);
+  box-shadow: 0 2px 7px rgb(0 0 0 / 4%);
+}
+.annotations-rail[data-positioned] .annotations-bubble { position: absolute; inset-inline: 0; margin: 0; }
+.annotations-bubble::before {
+  content: "";
+  position: absolute;
+  inset-inline-start: -13px;
+  top: 18px;
+  width: 12px;
+  border-top: 1px solid var(--annotation-border);
+}
+.annotations-comment { cursor: pointer; outline-offset: 2px; }
+.annotations-comment[data-hovered=true] { outline: 2px solid color-mix(in srgb, #c19b4c 70%, var(--annotation-border)); }
+.annotations-comment:focus-visible { outline: 2px solid var(--accent, #528cdd); }
+.annotations-bubble[data-focused=true] {
+  border-color: color-mix(in srgb, #c19b4c 50%, var(--annotation-border));
+  box-shadow: 0 3px 12px rgb(0 0 0 / 7%);
+}
+.annotations-comment-meta { display: flex; flex-wrap: wrap; gap: 6px; align-items: baseline; font-size: 10px; color: var(--annotation-muted); }
+.annotations-comment-meta strong { color: var(--text, CanvasText); font-size: 12px; font-weight: 600; }
+.annotations-comment-meta .annotations-author-agent { color: var(--accent, #528cdd); }
+.annotations-state { margin-inline-start: auto; }
+.annotations-panel .annotations-quote-button {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  width: 100%;
+  overflow: hidden;
+  margin: 8px 0;
+  padding: 0 0 0 8px;
+  border: 0;
+  border-inline-start: 2px solid rgb(198 163 83 / 35%);
+  border-radius: 0;
+  color: var(--annotation-muted);
+  background: transparent;
+  font-size: 11px;
+  text-align: start;
+  white-space: pre-wrap;
+}
+.annotations-panel .annotations-quote-button:hover { color: inherit; background: transparent; }
+.annotations-comment-text, .annotations-reply p { white-space: pre-wrap; }
+.annotations-comment-text { font-size: 13px; }
+.annotations-reply { margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--annotation-border); }
+.annotations-reply .annotations-comment-meta { margin-bottom: 4px; }
+.annotations-panel .annotations-hidden-messages {
+  display: flex; align-items: center; gap: 6px; width: 100%; margin: 10px 0 0; padding: 0;
+  border: 0; background: none; color: var(--annotation-muted); font-size: 11px;
+}
+.annotations-hidden-messages::before { content: "⋯"; font-size: 16px; line-height: 1; }
+.annotations-panel .annotations-hidden-messages:hover { color: var(--accent, #528cdd); background: none; }
+.annotations-thread-editor { margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--annotation-border); cursor: auto; }
+.annotations-thread-editor .annotations-actions { margin-top: 8px; }
+.annotations-reply p { font-size: 12px; }
+.annotations-bubble:not([data-focused=true]) :is(.annotations-comment-text, .annotations-reply p) {
+  display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; overflow: hidden;
+}
+.annotations-bubble:not([data-focused=true]) .annotations-reply:not(:last-of-type) { display: none; }
+.annotations-panel :is(.annotations-expand, .annotations-delete, .annotations-resolve) { margin-top: 8px; padding: 0; border: 0; background: none; color: var(--annotation-muted); font-size: 11px; }
+.annotations-panel :is(.annotations-delete, .annotations-expand + .annotations-resolve) { margin-inline-start: 10px; }
+.annotations-panel :is(.annotations-expand, .annotations-delete, .annotations-resolve):hover { color: inherit; background: none; text-decoration: underline; }
+.annotations-stale { margin-top: 8px !important; color: var(--annotation-muted); font-size: 11px; }
+.annotations-composer { z-index: 1; max-height: calc(100dvh - 92px); overflow: auto; }
+.annotations-composer[data-detached]::before { display: none; }
+.annotations-document { margin-bottom: 8px !important; font-size: 11px; color: var(--annotation-muted); }
+.annotations-quote { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; overflow: hidden; margin: 0 0 10px; padding-inline-start: 8px; border-inline-start: 2px solid rgb(198 163 83 / 35%); font-size: 11px; color: var(--annotation-muted); white-space: pre-wrap; }
+.annotations-composer .annotations-actions { margin-top: 10px; }
+
+/* The global view replaces the margin; its cards use normal list flow. */
+.annotations-global { padding: 18px 16px; }
+.annotations-global h2 { display: flex; align-items: center; gap: 8px; padding-inline-end: 24px; }
+.annotations-count { color: var(--annotation-muted); font-size: 11px; font-weight: 400; }
+.annotations-caption { margin: 6px 0 16px !important; font-size: 11px; color: var(--annotation-muted); }
+.annotations-global-list { list-style: none; margin: 0; padding: 0; }
+.annotations-global-list > .annotations-comment { margin: 0 -6px; padding: 16px 6px; border-top: 1px solid var(--annotation-border); border-radius: 6px; }
+.annotations-global .annotations-toolbar h2 { display: none; }
+.annotations-global .annotations-composer::before { display: none; }
+.annotations-global .annotations-composer { max-height: none; }
+.annotations-panel .annotations-resolved-toggle { margin-bottom: 12px; font-size: 11px; }
+.annotations-comment[data-resolved=true] .annotations-state { color: var(--annotation-muted); }
+.annotations-global-list > .annotations-comment[data-focused=true] { background: color-mix(in srgb, #e3b136 5%, transparent); }
+.annotations-global-list .annotations-delete { margin-inline-start: 0; }
+.annotations-global-list .annotations-comment[data-focused=true] .annotations-quote-button { display: block; max-height: 12em; overflow: auto; }
+@media (max-width: 900px) {
+  .annotations-rail .annotations-bubble { position: relative; inset: auto; margin-bottom: 12px; }
+  .annotations-bubble::before { display: none; }
+}

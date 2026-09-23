@@ -15,6 +15,7 @@ import { loadConfig, type Phase as ConfigPhase, type WorkflowConfig } from "./co
 import { writeDashboard } from "./dashboard.ts";
 import { closeDashboardServer, dashboardUrl, ensureDashboardServer, registerDashboard, unregisterDashboard } from "./dashboard-server.ts";
 import { git, nodeExec, repositoryIdentity, worktreeStatus, type ExecFn } from "./git.ts";
+import { annotationCallbacks, monitorFeedback, replyToFeedback } from "./feedback.ts";
 import { isSlug, loadPlan } from "./plan.ts";
 import { bulletList, phaseSystemPrompt, renderPrompt, text } from "./prompts.ts";
 import { QUESTIONS_TOOL, registerQuestionsTool } from "./questions.ts";
@@ -45,7 +46,8 @@ interface SessionBinding {
 const BINDING_ENTRY = "implementation-workflow";
 const PLAN_SAVE_TOOL = "workflow_plan_save";
 const REVIEW_SAVE_TOOL = "workflow_review_save";
-const WORKFLOW_TOOLS = [PLAN_SAVE_TOOL, REVIEW_SAVE_TOOL, QUESTIONS_TOOL];
+const COMMENT_REPLY_TOOL = "workflow_comment_reply";
+const WORKFLOW_TOOLS = [PLAN_SAVE_TOOL, REVIEW_SAVE_TOOL, QUESTIONS_TOOL, COMMENT_REPLY_TOOL];
 const PHASE_LABEL: Record<SessionPhase, string> = { planning: "Planning", implementation: "Implement", review: "Review" };
 const PHASE_CONFIG: Record<SessionPhase, ConfigPhase> = { planning: "planning", implementation: "implementing", review: "reviewing" };
 
@@ -57,6 +59,7 @@ export default function implementationWorkflow(pi: ExtensionAPI): void {
 	let baseTools: string[] = [];
 	let configPromise: Promise<WorkflowConfig> | undefined;
 	let knownIds: string[] = [];
+	let stopFeedback: (() => Promise<void>) | undefined;
 	const config = (): Promise<WorkflowConfig> => (configPromise ??= loadConfig(getAgentDir()));
 
 	// ---------- tools ----------
@@ -112,6 +115,25 @@ export default function implementationWorkflow(pi: ExtensionAPI): void {
 		renderResult: (result, _options, theme) => new Text(resultText(result, theme), 0, 0),
 	});
 
+	pi.registerTool({
+		name: COMMENT_REPLY_TOOL,
+		label: "Reply to dashboard comment",
+		description: text("tools.workflow_comment_reply.description"),
+		promptSnippet: text("tools.workflow_comment_reply.snippet"),
+		promptGuidelines: [text("tools.workflow_comment_reply.guideline")],
+		parameters: Type.Object({
+			batchId: Type.String({ description: text("tools.workflow_comment_reply.parameters.batch_id") }),
+			commentId: Type.String({ description: text("tools.workflow_comment_reply.parameters.comment_id") }),
+			reply: Type.String({ minLength: 1, maxLength: 8000, description: text("tools.workflow_comment_reply.parameters.reply") }),
+		}, { additionalProperties: false }),
+		async execute(toolCallId, params, _signal, _onUpdate, ctx) {
+			const bound = requireBinding();
+			await replyToFeedback(bound.root, ctx.sessionManager.getSessionId(), params.batchId, params.commentId, params.reply,
+				pi.getSessionName() ?? sessionName(phase!, bound.id, ""), toolCallId);
+			return { content: [{ type: "text", text: text("tools.workflow_comment_reply.saved") }], details: { commentId: params.commentId } };
+		},
+	});
+
 	registerQuestionsTool(pi, async (entries) => {
 		const bound = requireBinding();
 		await appendClarifications(bound, entries);
@@ -135,7 +157,7 @@ export default function implementationWorkflow(pi: ExtensionAPI): void {
 		try {
 			const settings = await config();
 			await registerDashboard(bound.id, bound.root);
-			await ensureDashboardServer(settings.dashboard);
+			await ensureDashboardServer(settings.dashboard, undefined, annotationCallbacks);
 			return dashboardUrl(settings.dashboard, bound.id);
 		} catch {
 			return undefined;
@@ -147,7 +169,7 @@ export default function implementationWorkflow(pi: ExtensionAPI): void {
 			await writeDashboard(bound);
 			const settings = await config();
 			await registerDashboard(bound.id, bound.root);
-			await ensureDashboardServer(settings.dashboard);
+			await ensureDashboardServer(settings.dashboard, undefined, annotationCallbacks);
 			const url = dashboardUrl(settings.dashboard, bound.id);
 			ctx.ui.notify(`Workflow dashboard: ${ctx.mode === "tui" && getCapabilities().hyperlinks ? hyperlink(url, url) : url}`, "info");
 		} catch (error) {
@@ -193,7 +215,7 @@ export default function implementationWorkflow(pi: ExtensionAPI): void {
 		const extra = phase === "planning" ? [PLAN_SAVE_TOOL, QUESTIONS_TOOL]
 			: phase === "implementation" ? [PLAN_SAVE_TOOL, QUESTIONS_TOOL]
 			: [PLAN_SAVE_TOOL, REVIEW_SAVE_TOOL];
-		pi.setActiveTools([...base, ...extra]);
+		pi.setActiveTools([...base, ...extra, COMMENT_REPLY_TOOL]);
 	}
 
 	async function applyModelOverride(ctx: ExtensionContext): Promise<void> {
@@ -364,7 +386,8 @@ export default function implementationWorkflow(pi: ExtensionAPI): void {
 		const raw = (event.input as { path?: unknown }).path;
 		if (typeof raw !== "string") return;
 		const target = resolve(ctx.cwd, raw.replace(/^@/, ""));
-		if (target === resolve(location.manifest) || target === resolve(location.clarifications)) {
+		if (target === resolve(location.manifest) || target === resolve(location.clarifications) ||
+			isInside(target, resolve(location.root, "notifications")) || isInside(target, resolve(location.root, "annotations"))) {
 			return { block: true, reason: text("messages.blocked_managed_file", { file: relative(location.root, target) }) };
 		}
 		if (phase === "planning" && !isInside(target, location.plan)) {
@@ -376,6 +399,8 @@ export default function implementationWorkflow(pi: ExtensionAPI): void {
 	});
 
 	pi.on("session_start", async (_event, ctx) => {
+		await stopFeedback?.();
+		stopFeedback = undefined;
 		baseTools = pi.getActiveTools().filter((name) => !WORKFLOW_TOOLS.includes(name));
 		const binding = bindingFrom(ctx.sessionManager.getBranch());
 		phase = undefined;
@@ -399,9 +424,16 @@ export default function implementationWorkflow(pi: ExtensionAPI): void {
 		pi.setSessionName(sessionName(phase, location.id, plan.ok ? plan.value.title : ""));
 		await applyModelOverride(ctx);
 		await showDashboard(ctx, location);
+		try {
+			stopFeedback = await monitorFeedback(pi, ctx, location.root, sessionName(phase, location.id, plan.ok ? plan.value.title : ""));
+		} catch (error) {
+			ctx.ui.notify(`Could not monitor dashboard comments: ${message(error)}`, "warning");
+		}
 	});
 
 	pi.on("session_shutdown", async (event) => {
+		await stopFeedback?.();
+		stopFeedback = undefined;
 		if (event?.reason === "new" || event?.reason === "resume" || event?.reason === "fork") return;
 		await closeDashboardServer();
 	});

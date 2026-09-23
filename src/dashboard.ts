@@ -6,6 +6,9 @@ import { loadReview, type Review } from "./review.ts";
 import { readClarifications, readWorkflow, type Clarification, type WorkflowLocation } from "./workflow.ts";
 
 const TEMPLATE = readFileSync(new URL("./dashboard.html", import.meta.url), "utf8");
+// Asset URLs use this page revision, so annotation-only updates must invalidate it too.
+const ANNOTATION_ASSETS = ["browser.js", "annotations.css"].map((name) =>
+	readFileSync(new URL(`./lib/annotations/${name}`, import.meta.url), "utf8")).join("\0");
 
 export interface DashboardData {
 	id: string;
@@ -44,7 +47,7 @@ export async function collectDashboardData(location: WorkflowLocation): Promise<
 
 export function renderDashboard(data: DashboardData): string {
 	const { generatedAt: _generatedAt, ...visible } = data;
-	const revision = createHash("sha256").update(TEMPLATE).update("\0").update(JSON.stringify(visible)).digest("hex").slice(0, 16);
+	const revision = createHash("sha256").update(TEMPLATE).update("\0").update(ANNOTATION_ASSETS).update("\0").update(JSON.stringify(visible)).digest("hex").slice(0, 16);
 	const json = JSON.stringify(data).replaceAll("<", "\\u003c").replaceAll("\u2028", "\\u2028").replaceAll("\u2029", "\\u2029");
 	return TEMPLATE
 		.replaceAll("__REVISION__", revision)

@@ -19,6 +19,19 @@ invalid = "The review is not complete yet:\n{{{errors}}}"
 missing = "No review directory exists at {{{path}}}."
 saved = "Saved review of {{{changes}}} changes. Overall: necessary {{{necessary}}}, sufficient {{{sufficient}}}, testing {{{testing}}}.{{#url}}\nDashboard: {{{url}}}{{/url}}"
 
+[tools.workflow_comment_reply]
+description = "Append a plain-text answer to a workflow dashboard thread. Use the root batch and comment IDs. Either the root batch or a user follow-up in that thread must be addressed to this session. Each new tool call appends an answer without replacing earlier replies or reopening a resolved thread."
+snippet = "Append an answer to a dashboard thread so the user can read it in the browser"
+guideline = "Use workflow_comment_reply to answer each dashboard comment; a terminal-only response is not visible in the dashboard."
+unknown = "This thread does not exist or has no root batch or follow-up addressed to the current session. Use the root batch and comment IDs from the dashboard notification."
+failed = "Could not save the comment reply. Check that the workflow directory is available and the reply is nonempty, then retry."
+saved = "Reply saved to the workflow dashboard."
+
+[tools.workflow_comment_reply.parameters]
+batch_id = "Root batch ID from the dashboard notification, not the follow-up notification ID"
+comment_id = "Root comment ID from that batch"
+reply = "Plain-text answer to append to the user's thread"
+
 [tools.workflow_questions]
 description = "Ask the user one or more multiple-choice questions and record the exact answers as workflow clarifications. Use it for decisions that change the plan or implementation; do not use it for questions you can answer by reading the repository."
 snippet = "Ask the user structured clarification questions and record the answers"
@@ -37,6 +50,7 @@ option_description = "Trade-off or consequence, one sentence"
 allow_other = "Offer a free-text answer as well; default true"
 
 [messages]
+annotation_marker = "Dashboard comments — batch {{{id}}}"
 unbound = "This session is not bound to a workflow. Run /workflow-plan, /workflow-implement, or /workflow-review first."
 blocked_managed_file = "{{{file}}} is managed by the workflow and read-only."
 blocked_planning = "Planning sessions may only edit files under {{{plan}}}. Code changes happen in /workflow-implement."

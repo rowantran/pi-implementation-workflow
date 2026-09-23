@@ -49,6 +49,8 @@ An `[id]` argument is optional: commands fall back to the session's workflow, th
 │   ├── review.json        # overall + per-slug { necessary, sufficient, testing } verdicts
 │   ├── summary.md         # cross-cutting findings
 │   └── changes/<slug>.md  # literate walkthrough of what was implemented
+├── notifications/         # recipients, immutable comment batches/followups, delivery receipts
+├── annotations/           # request token, agent reply history, resolution events
 └── dashboard.html
 ```
 
@@ -56,11 +58,39 @@ Sources of truth, highest first: the ask in `workflow.json`, `clarifications.jso
 
 `workflow_plan_save` rejects unknown fields, bad or duplicate slugs, reading-order mismatches, unknown or cyclic dependencies, empty Markdown, change files without a nonempty `## Testing` section, and orphan change files. `workflow_review_save` requires valid verdict statuses (`yes | partial | no | needs-human-review`), nonempty explanations and walkthroughs, and coverage of every change except followups still marked unimplemented; it stamps the reviewed commit range.
 
-There is no version history, draft copy, or lock. The plan is a directory you can also edit by hand. `.workflows/` and `.worktrees/` are added to `.git/info/exclude`.
+The plan has no version history, draft copy, or lock. It is a directory you can also edit by hand. `.workflows/` and `.worktrees/` are added to `.git/info/exclude`.
 
 ## Dashboard
 
 Served by each Pi process at `http://127.0.0.1:43121/w/<id>`; if another Pi process already holds the port, the same URL keeps working. The **Plan** tab shows goal, intro, a clickable Mermaid dependency graph, each change with its status and requires/enables links, and the testing stories, with the ask and clarifications in a sidebar. Select the fullscreen icon in the dependency graph's top-right corner to fill the viewport; the collapse icon in the same corner or `Esc` returns to the plan, and selecting a node opens its change. The **Review** tab shows overall verdicts and summary, then each change's verdicts, planned text, and walkthrough. Markdown supports tables, highlighted code, and `mermaid` blocks; `[`/`]` step between sections; the page reloads itself when the file changes. The only global state is `~/.pi/agent/workflows/index.json`, mapping ids to directories.
+
+### Comments
+
+Select text in a Plan or Review section, choose **Add comment**, write a question, and choose **Add to drafts**. You can collect comments across both tabs before choosing **Send comments**. Drafts and unfinished comments or replies survive navigation and reloads in the same browser. Click a draft card to edit it, then choose **Save draft**. Dashboard refreshes wait while you have drafts.
+
+Comments route automatically to the workflow session most recently opened or resumed. There is no recipient picker. Heartbeats do not change that choice, and an older active session does not take over when the latest session goes offline. New comments wait for that session to resume. A reviewer therefore receives comments on Plan followups as well as Review text. Routing is fixed when each batch or thread reply is first saved; retries and later session changes never redirect saved messages. A new reply goes to the current workflow session with the original quotation and thread history, even if another session answered earlier.
+
+Subtle translucent highlights mark commented text. Hover over a highlight to strengthen it and outline its comment card. Click the highlight, **Show thread**, or anywhere on a card to focus the thread and write a reply. Click unannotated text or page background to deselect it without discarding unfinished replies. Headers show **You** or **Agent**, followed by the timestamp; **Agent** uses the dashboard's blue accent. Collapsed bubbles show the original comment and latest reply, with a clickable hidden-message count between them when earlier replies are omitted.
+
+Use **Ctrl+Enter** on Windows/Linux or **Cmd+Enter** on Mac to submit the focused editor: add/save a comment draft or send a reply. Plain Enter still inserts a newline.
+
+Floating bubbles sit beside passages in the current section and move down only enough to avoid overlap. **All comments** replaces those local bubbles with a global sidebar across Plan and Review, newest activity first, with drafts at the end. Clicking a global card also opens its source section. The two comment views are never shown together. On narrow screens the global view is a drawer and local bubbles stack below the document.
+
+Choose **Resolve thread** to remove a thread's highlight and local bubble. Resolved threads remain in the global view under **Show resolved**, where **Reopen thread** makes them available for replies again. Resolving does not interrupt the agent, and a late answer does not reopen the thread.
+
+Each loaded workflow session checks its notification topic about once per second. It sends addressed batches to Pi as user messages (follow-ups when busy), and acknowledges them only after they appear in the saved session file. Browser retries reuse a batch ID. The underlying transport is at-least-once; the Pi adapter checks message IDs in session history before redelivering after a restart. If Pi rejects or discards a send before recording it, delivery is retried after 30 seconds when Pi and its message queue are idle. The agent uses `workflow_comment_reply` to save an answer beneath each comment. Answers appear without refreshing the page. If you restrict Pi's tools with `--tools`, include `workflow_comment_reply` in the allowlist.
+
+Highlights use native browser APIs, not extra HTML wrappers. Changed sections retain their original quotations in All comments, but do not guess where to move highlights or margin bubbles. Diagrams cannot be annotated. Browsers without the CSS Custom Highlight API still support quoted comments. Comments and replies are plain text; this is not a collaborative document editor.
+
+**Security:** submissions require a same-origin request token and a recognized Host/Origin. These checks protect against cross-site submissions, not against other people who can access the dashboard. Keep the default loopback listener unless you intend trusted network users to be able to submit messages to your agent.
+
+### Library boundaries
+
+- [`src/lib/annotations/`](src/lib/annotations/README.md) owns selection, highlighting, browser drafts, the comment/reply UI, and HTTP validation. Its server accepts `load`, `onSubmit`, and `onReply` callbacks; it knows nothing about Pi or workflows.
+- [`src/lib/notifications.ts`](src/lib/notifications.README.md) owns file-backed topics, recipient registration, polling, immutable notifications, and receipts. It knows nothing about annotations or Pi.
+- [`src/feedback.ts`](src/feedback.ts) connects those callbacks to a workflow topic and translates notifications into Pi user messages. This is the only adapter between the two libraries and Pi.
+
+Both mini-libraries use platform APIs only. There is no new runtime dependency, database, message broker, or frontend build step.
 
 ## Configuration
 
@@ -87,7 +117,7 @@ npm install
 npm test      # typecheck + node --test (includes the prompt-string lint)
 ```
 
-Pi loads `src/index.ts` directly; there is no build step. Module map: `index.ts` commands, session binding, tool gating · `plan.ts` / `review.ts` directory validation · `workflow.ts` worktrees and files · `dashboard*.ts` + `dashboard.html` · `questions.ts` · `config.ts` · `prompts.ts` template loading.
+Pi loads `src/index.ts` directly; there is no build step. Module map: `index.ts` commands, session binding, tool gating · `plan.ts` / `review.ts` directory validation · `workflow.ts` worktrees and files · `dashboard*.ts` + `dashboard.html` · `feedback.ts` Pi/annotations/notifications adapter · `lib/` standalone mini-libraries · `questions.ts` · `config.ts` · `prompts.ts` template loading.
 
 ## License
 
